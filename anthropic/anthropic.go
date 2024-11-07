@@ -18,6 +18,7 @@ type Model struct {
 	apiKey   string
 	model    string
 	endpoint string
+	debug    bool
 }
 
 func New(apiKey, model string) *Model {
@@ -26,6 +27,11 @@ func New(apiKey, model string) *Model {
 		model:    model,
 		endpoint: "https://api.anthropic.com/v1/messages",
 	}
+}
+
+func (m *Model) WithDebug(debug bool) *Model {
+	m.debug = debug
+	return m
 }
 
 func (m *Model) WithEndpoint(endpoint string) *Model {
@@ -64,6 +70,10 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
+	if m.debug {
+		fmt.Printf("Request: %s\n%s\n", m.endpoint, string(jsonData))
+	}
+
 	req, err := http.NewRequest("POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
@@ -77,7 +87,12 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		return &Stream{err: fmt.Errorf("error making request: %w", err)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return &Stream{err: fmt.Errorf("%s", resp.Status)}
+		if m.debug {
+			data, _ := io.ReadAll(resp.Body)
+			return &Stream{err: fmt.Errorf("%s\n%s", resp.Status, data)}
+		} else {
+			return &Stream{err: fmt.Errorf("%s", resp.Status)}
+		}
 	}
 
 	return &Stream{model: m.model, stream: resp.Body}
