@@ -61,7 +61,7 @@ var RunShellCmd = tools.Func(
 	"run_shell_cmd",
 	func(r tools.Runner, p RunShellCmdParams) tools.Result {
 		// Run the shell command and capture the output or error.
-		cmd := exec.Command("sh", "-c", p.Command)
+		cmd := exec.CommandContext(r.Context(), "sh", "-c", p.Command)
 		output, err := cmd.CombinedOutput() // Combines both STDOUT and STDERR
 		if err != nil {
 			return tools.Error(fmt.Sprintf("%s \033[31m(%d)\033[0m", p.Command, cmd.ProcessState.ExitCode()), fmt.Errorf("%w: %s", err, output))

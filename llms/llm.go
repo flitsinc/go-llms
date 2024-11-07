@@ -1,6 +1,7 @@
 package llms
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -41,14 +42,23 @@ func New(provider Provider, allTools ...tools.Tool) *LLM {
 // which updates will come in. The LLM will use the tools available and keep
 // generating more messages until it's done using tools.
 func (l *LLM) Chat(message string) <-chan Update {
-	return l.ChatUsingContent(content.FromText(message))
+	return l.ChatWithContext(context.Background(), message)
+}
+
+// ChatWithContext sends a text message to the LLM and immediately returns a
+// channel over which updates will come in. The LLM will use the tools available
+// and keep generating more messages until it's done using tools. The provided
+// context can be used to pass values to tools, set deadlines, cancel, etc.
+func (l *LLM) ChatWithContext(ctx context.Context, message string) <-chan Update {
+	return l.ChatUsingContent(ctx, content.FromText(message))
 }
 
 // ChatUsingContent sends a message (which can contain images) to the LLM and
 // immediately returns a channel over which updates will come in. The LLM will
 // use the tools available and keep generating more messages until it's done
-// using tools.
-func (l *LLM) ChatUsingContent(message content.Content) <-chan Update {
+// using tools. The provided context can be used to pass values to tools, set
+// deadlines, cancel, etc.
+func (l *LLM) ChatUsingContent(ctx context.Context, message content.Content) <-chan Update {
 	l.messages = append(l.messages, Message{
 		Role:    "user",
 		Content: message,
@@ -60,13 +70,19 @@ func (l *LLM) ChatUsingContent(message content.Content) <-chan Update {
 	go func() {
 		defer close(updateChan)
 		for {
-			shouldContinue, err := l.step(updateChan)
-			if err != nil {
-				updateChan <- ErrorUpdate{Error: err}
+			select {
+			case <-ctx.Done():
+				updateChan <- ErrorUpdate{Error: ctx.Err()}
 				return
-			}
-			if !shouldContinue {
-				return
+			default:
+				shouldContinue, err := l.step(ctx, updateChan)
+				if err != nil {
+					updateChan <- ErrorUpdate{Error: err}
+					return
+				}
+				if !shouldContinue {
+					return
+				}
 			}
 		}
 	}()
@@ -90,7 +106,7 @@ func (l *LLM) SetDebug(enabled bool) {
 	l.debug = enabled
 }
 
-func (l *LLM) step(updateChan chan<- Update) (bool, error) {
+func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) {
 	var systemPrompt content.Content
 	if l.SystemPrompt != nil {
 		systemPrompt = l.SystemPrompt()
@@ -129,28 +145,43 @@ func (l *LLM) step(updateChan chan<- Update) (bool, error) {
 		}
 	}()
 
-	// A future version of Go will allow us to use range on the function below:
-	// for status := range stream.Iter() {
-	stream.Iter()(func(status StreamStatus) bool {
-		switch status {
-		case StreamStatusText:
-			updateChan <- TextUpdate{Text: stream.Text()}
-		case StreamStatusToolCallBegin:
-			tool := l.toolbox.Get(stream.ToolCall().Name)
-			if tool == nil {
-				// TODO: This should be handled more gracefully.
-				panic(fmt.Sprintf("tool %q not found", stream.ToolCall().Name))
-			}
-			updateChan <- ToolStartUpdate{Tool: tool}
-		case StreamStatusToolCallReady:
-			messages := l.runToolCall(l.toolbox, stream.ToolCall(), updateChan)
-			toolMessages = append(toolMessages, messages...)
-		}
-		return true
-	})
+	done := make(chan bool)
+	var streamErr error
 
-	if err := stream.Err(); err != nil {
-		return false, fmt.Errorf("error streaming: %w", err)
+	go func() {
+	loop:
+		for status := range stream.Iter() {
+			select {
+			case <-ctx.Done():
+				streamErr = ctx.Err()
+				break loop
+			default:
+				switch status {
+				case StreamStatusText:
+					updateChan <- TextUpdate{Text: stream.Text()}
+				case StreamStatusToolCallBegin:
+					tool := l.toolbox.Get(stream.ToolCall().Name)
+					if tool == nil {
+						// TODO: This should be handled more gracefully.
+						panic(fmt.Sprintf("tool %q not found", stream.ToolCall().Name))
+					}
+					updateChan <- ToolStartUpdate{Tool: tool}
+				case StreamStatusToolCallReady:
+					messages := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
+					toolMessages = append(toolMessages, messages...)
+				}
+			}
+		}
+		done <- true
+	}()
+
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-done:
+		if streamErr != nil {
+			return false, fmt.Errorf("error streaming: %w", streamErr)
+		}
 	}
 
 	// Add the fully assembled message plus tool call results to the message history.
@@ -173,7 +204,7 @@ func (l *LLM) step(updateChan chan<- Update) (bool, error) {
 	return len(toolMessages) > 0, nil
 }
 
-func (l *LLM) runToolCall(toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) []Message {
+func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) []Message {
 	if toolCall.ID != "" {
 		// As a sanity check, make sure we don't try to run the same tool call twice.
 		for _, message := range l.messages {
@@ -184,7 +215,7 @@ func (l *LLM) runToolCall(toolbox *tools.Toolbox, toolCall ToolCall, updateChan 
 	}
 
 	t := toolbox.Get(toolCall.Name)
-	runner := tools.NewRunner(toolbox, func(status string) {
+	runner := tools.NewRunner(ctx, toolbox, func(status string) {
 		updateChan <- ToolStatusUpdate{Status: status, Tool: t}
 	})
 
