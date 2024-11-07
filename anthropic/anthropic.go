@@ -225,13 +225,10 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 				if !found {
 					panic(fmt.Sprintf("unsupported data URI format %q", v.URL))
 				}
-				ci.Image = &image{
-					Type: "image",
-					Source: source{
-						Type:      "base64",
-						MediaType: mimeType,
-						Data:      data,
-					},
+				ci.Source = &source{
+					Type:      "base64",
+					MediaType: mimeType,
+					Data:      data,
 				}
 			} else {
 				// TODO: Download the image URL and turn it into base64.

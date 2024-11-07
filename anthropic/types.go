@@ -31,9 +31,11 @@ func (cl contentList) MarshalJSON() ([]byte, error) {
 }
 
 type contentItem struct {
-	Type  string `json:"type"`
-	Text  string `json:"text,omitempty"`
-	Image *image `json:"image,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+
+	// Source of an image.
+	Source *source `json:"source,omitempty"`
 
 	// Tool use from assistant messages.
 
@@ -45,11 +47,6 @@ type contentItem struct {
 
 	ToolUseID string      `json:"tool_use_id,omitempty"`
 	Content   contentList `json:"content,omitempty"`
-}
-
-type image struct {
-	Type   string `json:"type"`
-	Source source `json:"source"`
 }
 
 type source struct {
