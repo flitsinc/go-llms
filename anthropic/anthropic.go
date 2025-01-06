@@ -51,7 +51,7 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 
 	payload := map[string]any{
 		"model":      m.model,
-		"max_tokens": 1024,
+		"max_tokens": 4096,
 		"messages":   apiMessages,
 		"stream":     true,
 	}
@@ -127,8 +127,32 @@ func (s *Stream) ToolCall() llms.ToolCall {
 }
 
 func (s *Stream) CostUSD() float64 {
-	// TODO: Implement cost calculation based on Anthropic's pricing
-	return 0.0
+	if s.usage == nil {
+		return 0.0
+	}
+
+	var inputCost, outputCost float64
+	switch {
+	case strings.HasPrefix(s.model, "claude-3-opus"):
+		inputCost = 15.00 / 1_000_000
+		outputCost = 75.00 / 1_000_000
+	case strings.HasPrefix(s.model, "claude-3-5-sonnet"):
+		inputCost = 3.00 / 1_000_000
+		outputCost = 15.00 / 1_000_000
+	case strings.HasPrefix(s.model, "claude-3-sonnet"):
+		inputCost = 3.00 / 1_000_000
+		outputCost = 15.00 / 1_000_000
+	case strings.HasPrefix(s.model, "claude-3-5-haiku"):
+		inputCost = 0.80 / 1_000_000
+		outputCost = 4.00 / 1_000_000
+	case strings.HasPrefix(s.model, "claude-3-haiku"):
+		inputCost = 0.25 / 1_000_000
+		outputCost = 1.25 / 1_000_000
+	default:
+		return 0.0
+	}
+
+	return float64(s.usage.InputTokens)*inputCost + float64(s.usage.OutputTokens)*outputCost
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {
@@ -189,6 +213,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			case "message_delta":
 				if event.Delta.Usage != nil {
 					s.usage = event.Delta.Usage
+				}
+				if event.Delta.StopReason != "" && event.Delta.StopReason != "tool_use" && event.Delta.StopReason != "end_turn" {
+					s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
+					return
 				}
 			case "message_stop":
 				return
