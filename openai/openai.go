@@ -117,17 +117,86 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
+type pricing struct {
+	inputCost  float64 // per million tokens
+	outputCost float64 // per million tokens
+}
+
+var modelPricing = map[string]pricing{
+	// GPT-4.5 models
+	"gpt-4.5-preview":            {75.00, 150.00},
+	"gpt-4.5-preview-2025-02-27": {75.00, 150.00},
+
+	// GPT-4o models
+	"gpt-4o":                             {2.50, 10.00},
+	"gpt-4o-2024-08-06":                  {2.50, 10.00},
+	"gpt-4o-2024-11-20":                  {2.50, 10.00},
+	"gpt-4o-2024-05-13":                  {5.00, 15.00},
+	"gpt-4o-audio-preview":               {2.50, 10.00},
+	"gpt-4o-audio-preview-2024-12-17":    {2.50, 10.00},
+	"gpt-4o-audio-preview-2024-10-01":    {2.50, 10.00},
+	"gpt-4o-realtime-preview":            {5.00, 20.00},
+	"gpt-4o-realtime-preview-2024-12-17": {5.00, 20.00},
+	"gpt-4o-realtime-preview-2024-10-01": {5.00, 20.00},
+	"chatgpt-4o-latest":                  {5.00, 15.00},
+
+	// GPT-4o mini models
+	"gpt-4o-mini":                             {0.15, 0.60},
+	"gpt-4o-mini-2024-07-18":                  {0.15, 0.60},
+	"gpt-4o-mini-audio-preview":               {0.15, 0.60},
+	"gpt-4o-mini-audio-preview-2024-12-17":    {0.15, 0.60},
+	"gpt-4o-mini-realtime-preview":            {0.60, 2.40},
+	"gpt-4o-mini-realtime-preview-2024-12-17": {0.60, 2.40},
+
+	// O1 models
+	"o1":                    {15.00, 60.00},
+	"o1-2024-12-17":         {15.00, 60.00},
+	"o1-preview-2024-09-12": {15.00, 60.00},
+	"o1-pro":                {150.00, 600.00},
+	"o1-pro-2025-03-19":     {150.00, 600.00},
+	"o1-mini":               {1.10, 4.40},
+	"o1-mini-2024-09-12":    {1.10, 4.40},
+
+	// O3 models
+	"o3-mini":            {1.10, 4.40},
+	"o3-mini-2025-01-31": {1.10, 4.40},
+
+	// GPT-4 Turbo models
+	"gpt-4-turbo":               {10.00, 30.00},
+	"gpt-4-turbo-2024-04-09":    {10.00, 30.00},
+	"gpt-4-0125-preview":        {10.00, 30.00},
+	"gpt-4-1106-preview":        {10.00, 30.00},
+	"gpt-4-1106-vision-preview": {10.00, 30.00},
+
+	// GPT-4 models
+	"gpt-4":          {30.00, 60.00},
+	"gpt-4-0613":     {30.00, 60.00},
+	"gpt-4-0314":     {30.00, 60.00},
+	"gpt-4-32k":      {60.00, 120.00},
+	"gpt-4-32k-0613": {60.00, 120.00},
+
+	// GPT-3.5 models
+	"gpt-3.5-turbo":          {0.50, 1.50},
+	"gpt-3.5-turbo-0125":     {0.50, 1.50},
+	"gpt-3.5-turbo-1106":     {1.00, 2.00},
+	"gpt-3.5-turbo-0613":     {1.50, 2.00},
+	"gpt-3.5-0301":           {1.50, 2.00},
+	"gpt-3.5-turbo-instruct": {1.50, 2.00},
+	"gpt-3.5-turbo-16k-0613": {3.00, 4.00},
+
+	// Older models
+	"davinci-002": {2.00, 2.00},
+	"babbage-002": {0.40, 0.40},
+}
+
 func (s *Stream) CostUSD() float64 {
-	switch s.model {
-	case "gpt-4o":
-		const inputCost = 5   // per million tokens
-		const outputCost = 15 // per million tokens
-		inputTokens, outputTokens := s.Usage()
-		return float64(inputTokens)*inputCost/1e6 + float64(outputTokens)*outputCost/1e6
-	default:
-		// FIXME
-		panic(fmt.Sprintf("unknown model: %q", s.model))
+	pricing, ok := modelPricing[s.model]
+	if !ok {
+		return 0 // Unknown model
 	}
+
+	inputTokens, outputTokens := s.Usage()
+	return float64(inputTokens)*pricing.inputCost/1e6 + float64(outputTokens)*pricing.outputCost/1e6
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {

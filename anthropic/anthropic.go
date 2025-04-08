@@ -127,29 +127,40 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
+type pricing struct {
+	inputCost  float64 // per million tokens
+	outputCost float64 // per million tokens
+}
+
+var modelPricing = map[string]pricing{
+	// Claude 3.7 models
+	"claude-3-7-sonnet": {3.00, 15.00},
+
+	// Claude 3.5 models
+	"claude-3-5-sonnet": {3.00, 15.00},
+	"claude-3-5-haiku":  {0.80, 4.00},
+
+	// Claude 3 models
+	"claude-3-opus":   {15.00, 75.00},
+	"claude-3-sonnet": {3.00, 15.00},
+	"claude-3-haiku":  {0.25, 1.25},
+}
+
 func (s *Stream) CostUSD() float64 {
-	var inputCost, outputCost float64
-	switch {
-	case strings.HasPrefix(s.model, "claude-3-opus"):
-		inputCost = 15.00 / 1_000_000
-		outputCost = 75.00 / 1_000_000
-	case strings.HasPrefix(s.model, "claude-3-5-sonnet"):
-		inputCost = 3.00 / 1_000_000
-		outputCost = 15.00 / 1_000_000
-	case strings.HasPrefix(s.model, "claude-3-sonnet"):
-		inputCost = 3.00 / 1_000_000
-		outputCost = 15.00 / 1_000_000
-	case strings.HasPrefix(s.model, "claude-3-5-haiku"):
-		inputCost = 0.80 / 1_000_000
-		outputCost = 4.00 / 1_000_000
-	case strings.HasPrefix(s.model, "claude-3-haiku"):
-		inputCost = 0.25 / 1_000_000
-		outputCost = 1.25 / 1_000_000
-	default:
-		return 0.0
+	// First try exact model name
+	if pricing, ok := modelPricing[s.model]; ok {
+		return float64(s.inputTokens)*pricing.inputCost/1e6 + float64(s.outputTokens)*pricing.outputCost/1e6
 	}
 
-	return float64(s.inputTokens)*inputCost + float64(s.outputTokens)*outputCost
+	// Then try prefix matching
+	for prefix, pricing := range modelPricing {
+		if strings.HasPrefix(s.model, prefix) {
+			return float64(s.inputTokens)*pricing.inputCost/1e6 + float64(s.outputTokens)*pricing.outputCost/1e6
+		}
+	}
+
+	// Default return 0 for unknown models
+	return 0.0
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {
