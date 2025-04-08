@@ -104,7 +104,8 @@ type Stream struct {
 	err      error
 	message  llms.Message
 	lastText string
-	usage    *usage
+
+	inputTokens, outputTokens int
 }
 
 func (s *Stream) Err() error {
@@ -127,10 +128,6 @@ func (s *Stream) ToolCall() llms.ToolCall {
 }
 
 func (s *Stream) CostUSD() float64 {
-	if s.usage == nil {
-		return 0.0
-	}
-
 	var inputCost, outputCost float64
 	switch {
 	case strings.HasPrefix(s.model, "claude-3-opus"):
@@ -152,14 +149,11 @@ func (s *Stream) CostUSD() float64 {
 		return 0.0
 	}
 
-	return float64(s.usage.InputTokens)*inputCost + float64(s.usage.OutputTokens)*outputCost
+	return float64(s.inputTokens)*inputCost + float64(s.outputTokens)*outputCost
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {
-	if s.usage == nil {
-		return 0, 0
-	}
-	return s.usage.InputTokens, s.usage.OutputTokens
+	return s.inputTokens, s.outputTokens
 }
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
@@ -180,6 +174,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			switch event.Type {
 			case "message_start":
 				s.message.Role = event.Message.Role
+				if event.Message.Usage != nil {
+					s.inputTokens += event.Message.Usage.InputTokens
+					s.outputTokens += event.Message.Usage.OutputTokens
+				}
 			case "content_block_delta":
 				switch event.Delta.Type {
 				case "text_delta":
@@ -212,7 +210,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 			case "message_delta":
 				if event.Delta.Usage != nil {
-					s.usage = event.Delta.Usage
+					s.inputTokens += event.Delta.Usage.InputTokens
+					s.outputTokens += event.Delta.Usage.OutputTokens
 				}
 				if event.Delta.StopReason != "" && event.Delta.StopReason != "tool_use" && event.Delta.StopReason != "end_turn" {
 					s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
