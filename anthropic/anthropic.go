@@ -244,7 +244,11 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 		switch v := item.(type) {
 		case *content.Text:
 			ci.Type = "text"
-			ci.Text = v.Text
+			if strings.TrimSpace(v.Text) == "" {
+				ci.Text = "(Empty)"
+			} else {
+				ci.Text = v.Text
+			}
 		case *content.ImageURL:
 			ci.Type = "image"
 			if dataValue, found := strings.CutPrefix(v.URL, "data:"); found {
