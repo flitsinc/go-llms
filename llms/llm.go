@@ -162,8 +162,8 @@ func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				case StreamStatusToolCallBegin:
 					tool := l.toolbox.Get(stream.ToolCall().Name)
 					if tool == nil {
-						// TODO: This should be handled more gracefully.
-						panic(fmt.Sprintf("tool %q not found", stream.ToolCall().Name))
+						streamErr = fmt.Errorf("tool %q not found", stream.ToolCall().Name)
+						break loop
 					}
 					updateChan <- ToolStartUpdate{Tool: tool}
 				case StreamStatusToolCallReady:
