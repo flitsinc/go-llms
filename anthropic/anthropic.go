@@ -15,10 +15,11 @@ import (
 )
 
 type Model struct {
-	apiKey   string
-	model    string
-	endpoint string
-	debug    bool
+	apiKey    string
+	model     string
+	endpoint  string
+	debug     bool
+	maxTokens int
 }
 
 func New(apiKey, model string) *Model {
@@ -39,6 +40,11 @@ func (m *Model) WithEndpoint(endpoint string) *Model {
 	return m
 }
 
+func (m *Model) WithMaxTokens(maxTokens int) *Model {
+	m.maxTokens = maxTokens
+	return m
+}
+
 func (m *Model) Company() string {
 	return "Anthropic"
 }
@@ -50,10 +56,12 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 	}
 
 	payload := map[string]any{
-		"model":      m.model,
-		"max_tokens": 4096,
-		"messages":   apiMessages,
-		"stream":     true,
+		"model":    m.model,
+		"messages": apiMessages,
+		"stream":   true,
+	}
+	if m.maxTokens > 0 {
+		payload["max_tokens"] = m.maxTokens
 	}
 
 	if systemPrompt != nil {

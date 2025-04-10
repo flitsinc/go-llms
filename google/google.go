@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -20,15 +21,15 @@ type Model struct {
 	endpoint        string
 	maxOutputTokens int
 	temperature     float64
+	topK            int
 	topP            float64
 }
 
 func New(model string) *Model {
 	return &Model{
-		model:           model,
-		maxOutputTokens: 8192,
-		temperature:     1,
-		topP:            0.95,
+		model:       model,
+		temperature: math.NaN(),
+		topP:        math.NaN(),
 	}
 }
 
@@ -56,6 +57,11 @@ func (m *Model) WithTemperature(temperature float64) *Model {
 	return m
 }
 
+func (m *Model) WithTopK(topK int) *Model {
+	m.topK = topK
+	return m
+}
+
 func (m *Model) WithTopP(topP float64) *Model {
 	m.topP = topP
 	return m
@@ -77,11 +83,6 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 
 	payload := map[string]any{
 		"contents": apiMessages,
-		"generationConfig": map[string]any{
-			"maxOutputTokens": m.maxOutputTokens,
-			"temperature":     m.temperature,
-			"topP":            m.topP,
-		},
 		"safetySettings": []map[string]any{
 			{
 				"category":  "HARM_CATEGORY_HATE_SPEECH",
@@ -100,6 +101,23 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 				"threshold": "BLOCK_ONLY_HIGH",
 			},
 		},
+	}
+
+	generationConfig := map[string]any{}
+	if m.maxOutputTokens > 0 {
+		generationConfig["maxOutputTokens"] = m.maxOutputTokens
+	}
+	if !math.IsNaN(m.temperature) {
+		generationConfig["temperature"] = m.temperature
+	}
+	if !math.IsNaN(m.topP) {
+		generationConfig["topP"] = m.topP
+	}
+	if m.topK > 0 {
+		generationConfig["topK"] = m.topK
+	}
+	if len(generationConfig) > 0 {
+		payload["generationConfig"] = generationConfig
 	}
 
 	if systemPrompt != nil {

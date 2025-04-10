@@ -18,6 +18,8 @@ type Model struct {
 	accessToken string
 	model       string
 	endpoint    string
+
+	maxCompletionTokens int
 }
 
 func New(accessToken, model string) *Model {
@@ -30,6 +32,11 @@ func New(accessToken, model string) *Model {
 
 func (m *Model) WithEndpoint(endpoint string) *Model {
 	m.endpoint = endpoint
+	return m
+}
+
+func (m *Model) WithMaxCompletionTokens(maxCompletionTokens int) *Model {
+	m.maxCompletionTokens = maxCompletionTokens
 	return m
 }
 
@@ -57,6 +64,10 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		"messages":       apiMessages,
 		"stream":         true,
 		"stream_options": map[string]any{"include_usage": true},
+	}
+
+	if m.maxCompletionTokens > 0 {
+		payload["max_completion_tokens"] = m.maxCompletionTokens
 	}
 
 	if tools != nil {
