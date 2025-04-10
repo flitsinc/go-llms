@@ -18,7 +18,7 @@ type Item interface {
 }
 
 type Text struct {
-	Text string
+	Text string `json:"text"`
 }
 
 func (t *Text) Type() Type {
@@ -26,7 +26,7 @@ func (t *Text) Type() Type {
 }
 
 type ImageURL struct {
-	URL string
+	URL string `json:"image_url"`
 }
 
 func (iu *ImageURL) Type() Type {
@@ -34,7 +34,7 @@ func (iu *ImageURL) Type() Type {
 }
 
 type JSON struct {
-	Data json.RawMessage
+	Data json.RawMessage `json:"data"`
 }
 
 func (j *JSON) Type() Type {
@@ -95,4 +95,71 @@ func (c *Content) Append(text string) {
 		}
 	}
 	*c = append(*c, &Text{Text: text})
+}
+
+// MarshalJSON implements the json.Marshaler interface for Content.
+func (c Content) MarshalJSON() ([]byte, error) {
+	items := make([]map[string]any, len(c))
+	for i, item := range c {
+		// First marshal the concrete item
+		itemData, err := json.Marshal(item)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal item: %w", err)
+		}
+
+		// Unmarshal into a map to work with it
+		var itemMap map[string]any
+		if err := json.Unmarshal(itemData, &itemMap); err != nil {
+			return nil, fmt.Errorf("failed to process item: %w", err)
+		}
+
+		// Add the type field
+		itemMap["type"] = item.Type()
+		items[i] = itemMap
+	}
+
+	return json.Marshal(items)
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Content.
+func (c *Content) UnmarshalJSON(data []byte) error {
+	// Unmarshal as an array of items with type info
+	var items []json.RawMessage
+	if err := json.Unmarshal(data, &items); err != nil {
+		return err
+	}
+
+	result := make(Content, 0, len(items))
+	for _, itemData := range items {
+		// Extract just the type field first
+		var typeContainer struct {
+			Type Type `json:"type"`
+		}
+		if err := json.Unmarshal(itemData, &typeContainer); err != nil {
+			return fmt.Errorf("failed to extract item type: %w", err)
+		}
+
+		// Create and unmarshal the appropriate concrete type
+		var item Item
+		switch typeContainer.Type {
+		case TypeText:
+			item = &Text{}
+		case TypeImageURL:
+			item = &ImageURL{}
+		case TypeJSON:
+			item = &JSON{}
+		default:
+			return fmt.Errorf("unknown content item type: %q", typeContainer.Type)
+		}
+
+		// Unmarshal the full data into the concrete type
+		if err := json.Unmarshal(itemData, item); err != nil {
+			return fmt.Errorf("failed to unmarshal %q item: %w", typeContainer.Type, err)
+		}
+
+		result = append(result, item)
+	}
+
+	*c = result
+	return nil
 }

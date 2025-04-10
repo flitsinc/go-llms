@@ -5,7 +5,7 @@ import (
 )
 
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments json.RawMessage
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
 }
