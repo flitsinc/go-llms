@@ -11,9 +11,16 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 - 🔍 Debug mode for development
 - 💰 Cost tracking for API usage
 
+### On the roadmap
+
+- [ ] 🗃️ Prompt caching
+- [ ] 🧠 Reasoning
+- [ ] ☎️ Realtime streaming (WebRTC)
+- [ ] 🖼️ Image output
+
 ## Requirements
 
-- Go 1.23.2 or later
+- Go 1.24.2 or later
 
 ## Installation
 
@@ -32,16 +39,16 @@ import (
     "fmt"
     "os"
 
-    "github.com/blixt/go-llms/anthropic"
     "github.com/blixt/go-llms/content"
     "github.com/blixt/go-llms/llms"
+    "github.com/blixt/go-llms/openai"
     "github.com/blixt/go-llms/tools"
 )
 
 func main() {
-    // Create a new LLM instance with Anthropic's Claude
+    // Create a new LLM instance with OpenAI's o3-mini model
     llm := llms.New(
-        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-5-sonnet-latest"),
+        openai.New(os.Getenv("OPENAI_API_KEY"), "o3-mini"),
     )
 
     // Optional: Set a system prompt
@@ -95,9 +102,9 @@ var RunCommand = tools.Func[CommandParams](
 )
 
 func main() {
-    // Create LLM with tools
+    // Create a new LLM instance using Anthropic's Claude with tools
     llm := llms.New(
-        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-5-sonnet-latest"),
+        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"),
         RunCommand,
     )
 
@@ -124,13 +131,13 @@ The library currently supports:
 
 - Anthropic (Claude models)
 - Google (Gemini API and Vertex AI)
-- OpenAI (GPT models)
+- OpenAI (GPT/O models)
 
 Each provider can be initialized with their respective configuration:
 
 ```go
 // Anthropic
-llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-5-sonnet-latest"))
+llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"))
 
 // Google Gemini
 llm := llms.New(google.New("gemini-pro").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))
@@ -139,7 +146,7 @@ llm := llms.New(google.New("gemini-pro").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY
 llm := llms.New(google.New("gemini-pro").WithVertexAI(accessToken, projectID, region))
 
 // OpenAI
-llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4"))
+llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4o"))
 ```
 
 You can easily implement new providers by implementing the `Provider` interface:
