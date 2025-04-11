@@ -47,6 +47,8 @@ func main() {
 			fmt.Printf("%s)\n", update.Result.Label())
 		}
 	}
+
+	fmt.Println()
 }
 
 // How to define a tool:

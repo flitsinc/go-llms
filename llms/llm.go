@@ -105,6 +105,20 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 	return updateChan
 }
 
+// AddExternalTools adds one or more external tools to the LLM's toolbox. Unlike
+// regular tools, external tools are usually forwarded to some other code
+// (sometimes over the network) and handled there, before a result is produced.
+// For this reason, a list of tool definitions can be provided, and then the
+// tool name and its raw JSON parameters are passed into the handler.
+func (l *LLM) AddExternalTools(schemas []tools.FunctionSchema, handler func(r tools.Runner, funcName string, params json.RawMessage) tools.Result) {
+	for _, schema := range schemas {
+		funcName := schema.Name
+		l.AddTool(tools.Func(funcName, schema.Description, funcName, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return handler(r, funcName, params)
+		}))
+	}
+}
+
 // AddTool adds a new tool to the LLM's toolbox. If the toolbox doesn't exist
 // yet, it will be created. Tools allow the LLM to perform actions beyond just
 // generating text, such as fetching data, running calculations, or interacting
@@ -192,6 +206,9 @@ func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) 
 					}
 					updateChan <- ToolStartUpdate{Tool: tool}
 				case StreamStatusToolCallReady:
+					// TODO: We may want to support parallel tool calls, which
+					// means the results would need to be collected later (and
+					// maybe out of sequence).
 					messages := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
 					toolMessages = append(toolMessages, messages...)
 				}
