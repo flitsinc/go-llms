@@ -11,8 +11,12 @@ type Message struct {
 	Name string `json:"name,omitempty"`
 	// Content is the message content.
 	Content content.Content `json:"content"`
-	// ToolCalls is the list of tool calls that this message is part of.
+	// ToolCalls represents the list of tools that an assistant message is invoking.
+	// This field is used when the message is from an assistant (Role="assistant") that is calling tools.
+	// Each ToolCall contains an ID, name of the tool being called, and arguments to pass to the tool.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	// ToolCallID is the ID of the tool call that this message is part of.
+	// ToolCallID identifies which tool call a message is responding to.
+	// This field is used when the message is a tool response (Role="tool") that is responding to a previous tool call.
+	// It should match the ID of the original ToolCall that this message is responding to.
 	ToolCallID string `json:"tool_call_id,omitempty"`
 }
