@@ -146,30 +146,29 @@ func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		return false, fmt.Errorf("LLM returned error response: %w", err)
 	}
 
-	// Write the entire message history to the file debug.yaml. The function is
-	// deferred so that we get data even if a panic occurs.
-	defer func() {
-		if !l.debug {
-			return
-		}
-		var toolsSchema []*tools.FunctionSchema
-		if l.toolbox != nil {
-			for _, tool := range l.toolbox.All() {
-				toolsSchema = append(toolsSchema, tool.Schema())
+	if l.debug {
+		// Write the entire message history to the file debug.yaml. The function
+		// is deferred so that we get data even if a panic occurs.
+		defer func() {
+			var toolsSchema []*tools.FunctionSchema
+			if l.toolbox != nil {
+				for _, tool := range l.toolbox.All() {
+					toolsSchema = append(toolsSchema, tool.Schema())
+				}
 			}
-		}
-		debugData := map[string]any{
-			// Prefixed with numbers so the keys remain in this order.
-			"1_receivedMessage": stream.Message(),
-			"2_toolResults":     toolMessages,
-			"3_sentMessages":    l.lastSentMessages,
-			"4_systemPrompt":    systemPrompt,
-			"5_availableTools":  toolsSchema,
-		}
-		if debugYAML, err := yaml.Marshal(debugData); err == nil {
-			os.WriteFile("debug.yaml", debugYAML, 0644)
-		}
-	}()
+			debugData := map[string]any{
+				// Prefixed with numbers so the keys remain in this order.
+				"1_receivedMessage": stream.Message(),
+				"2_toolResults":     toolMessages,
+				"3_sentMessages":    l.lastSentMessages,
+				"4_systemPrompt":    systemPrompt,
+				"5_availableTools":  toolsSchema,
+			}
+			if debugYAML, err := yaml.Marshal(debugData); err == nil {
+				os.WriteFile("debug.yaml", debugYAML, 0644)
+			}
+		}()
+	}
 
 	done := make(chan bool)
 	var streamErr error
