@@ -149,15 +149,17 @@ func (l *LLM) TotalCost() float64 {
 // detailed information about each interaction to a debug.yaml file, including
 // the message history, tool calls, and other relevant data. This is useful for
 // troubleshooting and understanding the LLM's behavior.
-func (l *LLM) WithDebug() {
+func (l *LLM) WithDebug() *LLM {
 	l.debug = true
+	return l
 }
 
 // WithMaxTurns sets the maximum number of turns the LLM will make. This is
 // useful to prevent infinite loops or excessive usage. A value of 0 means no
 // limit. A value of 1 means the LLM will only ever do one API call, and so on.
-func (l *LLM) WithMaxTurns(maxTurns int) {
+func (l *LLM) WithMaxTurns(maxTurns int) *LLM {
 	l.maxTurns = maxTurns
+	return l
 }
 
 func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) {
