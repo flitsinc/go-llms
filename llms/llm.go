@@ -138,12 +138,12 @@ func (l *LLM) TotalCost() float64 {
 	return l.totalCost
 }
 
-// SetDebug enables or disables debug mode. When debug mode is enabled, the LLM
-// will write detailed information about each interaction to a debug.yaml file,
-// including the message history, tool calls, and other relevant data. This is
-// useful for troubleshooting and understanding the LLM's behavior.
-func (l *LLM) SetDebug(enabled bool) {
-	l.debug = enabled
+// WithDebug enables debug mode. When debug mode is enabled, the LLM will write
+// detailed information about each interaction to a debug.yaml file, including
+// the message history, tool calls, and other relevant data. This is useful for
+// troubleshooting and understanding the LLM's behavior.
+func (l *LLM) WithDebug() {
+	l.debug = true
 }
 
 func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) {

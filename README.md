@@ -163,7 +163,8 @@ type Provider interface {
 Enable debug mode to write detailed interaction logs to `debug.yaml`:
 
 ```go
-llm.SetDebug(true)
+llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4o")).
+    WithDebug()
 ```
 
 The debug file includes:

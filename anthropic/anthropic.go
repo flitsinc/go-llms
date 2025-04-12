@@ -32,8 +32,8 @@ func New(apiKey, model string) *Model {
 	}
 }
 
-func (m *Model) WithDebug(debug bool) *Model {
-	m.debug = debug
+func (m *Model) WithDebug() *Model {
+	m.debug = true
 	return m
 }
 
