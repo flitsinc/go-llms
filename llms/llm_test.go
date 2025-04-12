@@ -434,3 +434,113 @@ func TestCancellation(t *testing.T) {
 	require.True(t, ok, "Update should be ErrorUpdate")
 	assert.Contains(t, errorUpdate.Error.Error(), "context canceled")
 }
+
+// TestMaxTurns tests that the WithMaxTurns functionality properly limits the number of turns
+func TestMaxTurns(t *testing.T) {
+	// Create a mock provider that always makes a tool call to force multiple turns
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{"test_tool"}, // Will only call this tool on first turn
+	}
+
+	// Create a test tool
+	type TestToolParams struct {
+		TestParam string `json:"test_param"`
+	}
+
+	testTool := tools.Func("Test Tool", "A test tool for testing", "test_tool",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Test tool result", map[string]any{
+				"result": fmt.Sprintf("Processed: %s", p.TestParam),
+			})
+		})
+
+	// Create an LLM with the test tool and max 1 turn
+	llm := New(mockProv, testTool)
+	llm.WithMaxTurns(1)
+
+	// Start chat and collect updates
+	var updates []Update
+	for update := range llm.Chat("Test message") {
+		updates = append(updates, update)
+	}
+
+	// We should get:
+	// 1. A TextUpdate with the initial assistant message
+	// 2. A ToolStartUpdate for "test_tool"
+	// 3. A ToolDoneUpdate with the result
+	// 4. An ErrorUpdate with ErrMaxTurnsReached (since max turns = 1)
+
+	// Verify we have the right number of updates
+	require.Equal(t, 4, len(updates), "Should receive exactly 4 updates")
+
+	// Verify the first three updates are the expected types
+	_, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "First update should be TextUpdate")
+
+	_, ok = updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Second update should be ToolStartUpdate")
+
+	_, ok = updates[2].(ToolDoneUpdate)
+	require.True(t, ok, "Third update should be ToolDoneUpdate")
+
+	// The last update should be an error update with ErrMaxTurnsReached
+	errorUpdate, ok := updates[3].(ErrorUpdate)
+	require.True(t, ok, "Fourth update should be ErrorUpdate")
+	assert.ErrorIs(t, errorUpdate.Error, ErrMaxTurnsReached, "Error should be ErrMaxTurnsReached")
+
+	// Verify turn count
+	assert.Equal(t, 1, llm.turns, "Turn count should be 1")
+}
+
+// TestMaxTurnsComplete tests that an LLM with sufficient max turns completes successfully
+func TestMaxTurnsComplete(t *testing.T) {
+	// Create a mock provider that makes a tool call on first turn
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{"test_tool"},
+	}
+
+	// Create a test tool
+	type TestToolParams struct {
+		TestParam string `json:"test_param"`
+	}
+
+	testTool := tools.Func("Test Tool", "A test tool for testing", "test_tool",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Test tool result", map[string]any{
+				"result": fmt.Sprintf("Processed: %s", p.TestParam),
+			})
+		})
+
+	// Create an LLM with the test tool and max 2 turns (which should be sufficient to complete)
+	llm := New(mockProv, testTool)
+	llm.WithMaxTurns(2)
+
+	// Start chat and collect updates
+	var updates []Update
+	for update := range llm.Chat("Test message") {
+		updates = append(updates, update)
+	}
+
+	// We should get:
+	// 1. A TextUpdate with the initial assistant message
+	// 2. A ToolStartUpdate for "test_tool"
+	// 3. A ToolDoneUpdate with the result from "test_tool"
+	// 4. A TextUpdate with the final response after processing tool result
+
+	// Verify we have exactly 4 updates (no error)
+	require.Equal(t, 4, len(updates), "Should receive exactly 4 updates")
+
+	// None of the updates should be an error
+	for i, update := range updates {
+		_, ok := update.(ErrorUpdate)
+		assert.False(t, ok, "Update %d should not be an error update", i)
+	}
+
+	// Verify the last update is a text update (the final response)
+	finalTextUpdate, ok := updates[3].(TextUpdate)
+	require.True(t, ok, "Final update should be TextUpdate")
+	assert.Equal(t, "I've processed the results from the tool.", finalTextUpdate.Text)
+
+	// Verify turn count is 2
+	assert.Equal(t, 2, llm.turns, "Turn count should be 2")
+}

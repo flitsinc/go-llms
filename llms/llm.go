@@ -3,6 +3,7 @@ package llms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -13,13 +14,19 @@ import (
 	"github.com/blixt/go-llms/tools"
 )
 
+var (
+	ErrMaxTurnsReached = errors.New("max turns reached")
+)
+
 // LLM represents the interface to an LLM provider, maintaining state between
 // individual calls, for example when tool calling is being performed. Note that
 // this is NOT thread safe for this reason.
 type LLM struct {
-	provider         Provider
+	provider Provider
+	toolbox  *tools.Toolbox
+
+	turns, maxTurns  int
 	lastSentMessages []Message
-	toolbox          *tools.Toolbox
 
 	totalCost float64
 	debug     bool
@@ -90,7 +97,7 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 				updateChan <- ErrorUpdate{Error: ctx.Err()}
 				return
 			default:
-				shouldContinue, err := l.step(ctx, updateChan)
+				shouldContinue, err := l.turn(ctx, updateChan)
 				if err != nil {
 					updateChan <- ErrorUpdate{Error: err}
 					return
@@ -146,7 +153,19 @@ func (l *LLM) WithDebug() {
 	l.debug = true
 }
 
-func (l *LLM) step(ctx context.Context, updateChan chan<- Update) (bool, error) {
+// WithMaxTurns sets the maximum number of turns the LLM will make. This is
+// useful to prevent infinite loops or excessive usage. A value of 0 means no
+// limit. A value of 1 means the LLM will only ever do one API call, and so on.
+func (l *LLM) WithMaxTurns(maxTurns int) {
+	l.maxTurns = maxTurns
+}
+
+func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) {
+	if l.maxTurns > 0 && l.turns >= l.maxTurns {
+		return false, ErrMaxTurnsReached
+	}
+	l.turns++
+
 	var systemPrompt content.Content
 	if l.SystemPrompt != nil {
 		systemPrompt = l.SystemPrompt()
