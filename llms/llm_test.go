@@ -558,3 +558,228 @@ func TestMaxTurnsComplete(t *testing.T) {
 	// Verify turn count is 2
 	assert.Equal(t, 2, llm.turns, "Turn count should be 2")
 }
+
+// TestToolCallIDs tests that tool call IDs flow correctly through the update chain
+func TestToolCallIDs(t *testing.T) {
+	// Create a mock provider that makes multiple tool calls to test IDs
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{"tool1", "tool2", "tool3"},
+	}
+
+	// Create test tools
+	type TestToolParams struct {
+		TestParam string `json:"test_param"`
+	}
+
+	tool1 := tools.Func("Tool 1", "Test tool 1", "tool1",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Tool 1 result", map[string]any{"result": "tool1 result"})
+		})
+
+	tool2 := tools.Func("Tool 2", "Test tool 2", "tool2",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Tool 2 result", map[string]any{"result": "tool2 result"})
+		})
+
+	tool3 := tools.Func("Tool 3", "Test tool 3", "tool3",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Tool 3 result", map[string]any{"result": "tool3 result"})
+		})
+
+	// Create an LLM with the test tools
+	llm := New(mockProv, tool1, tool2, tool3)
+
+	// Start chat and collect updates
+	var updates []Update
+	for update := range llm.Chat("Test multiple tool calls") {
+		updates = append(updates, update)
+	}
+
+	// We should have 7 updates:
+	// 1. Initial text
+	// 2. Tool1 start
+	// 3. Tool1 done
+	// 4. Tool2 start
+	// 5. Tool2 done
+	// 6. Tool3 start
+	// 7. Tool3 done
+	// 8. Final text after all tools
+
+	require.GreaterOrEqual(t, len(updates), 8, "Should receive at least 8 updates")
+
+	// Verify the first update is text
+	_, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "First update should be TextUpdate")
+
+	// Verify tool call IDs are correctly propagated
+	// Tool 1
+	tool1Start, ok := updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Second update should be ToolStartUpdate for tool1")
+	assert.Equal(t, "tool1", tool1Start.Tool.FuncName())
+	assert.Equal(t, "tool1-id-0", tool1Start.ToolCallID)
+
+	tool1Done, ok := updates[2].(ToolDoneUpdate)
+	require.True(t, ok, "Third update should be ToolDoneUpdate for tool1")
+	assert.Equal(t, "tool1", tool1Done.Tool.FuncName())
+	assert.Equal(t, tool1Start.ToolCallID, tool1Done.ToolCallID, "ToolCallID should be the same in start and done updates")
+
+	// Tool 2
+	tool2Start, ok := updates[3].(ToolStartUpdate)
+	require.True(t, ok, "Fourth update should be ToolStartUpdate for tool2")
+	assert.Equal(t, "tool2", tool2Start.Tool.FuncName())
+	assert.Equal(t, "tool2-id-1", tool2Start.ToolCallID)
+
+	tool2Done, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Fifth update should be ToolDoneUpdate for tool2")
+	assert.Equal(t, "tool2", tool2Done.Tool.FuncName())
+	assert.Equal(t, tool2Start.ToolCallID, tool2Done.ToolCallID, "ToolCallID should be the same in start and done updates")
+
+	// Tool 3
+	tool3Start, ok := updates[5].(ToolStartUpdate)
+	require.True(t, ok, "Sixth update should be ToolStartUpdate for tool3")
+	assert.Equal(t, "tool3", tool3Start.Tool.FuncName())
+	assert.Equal(t, "tool3-id-2", tool3Start.ToolCallID)
+
+	tool3Done, ok := updates[6].(ToolDoneUpdate)
+	require.True(t, ok, "Seventh update should be ToolDoneUpdate for tool3")
+	assert.Equal(t, "tool3", tool3Done.Tool.FuncName())
+	assert.Equal(t, tool3Start.ToolCallID, tool3Done.ToolCallID, "ToolCallID should be the same in start and done updates")
+
+	// Verify tool call IDs are unique across different tool calls
+	assert.NotEqual(t, tool1Start.ToolCallID, tool2Start.ToolCallID, "ToolCallIDs should be unique across different tool calls")
+	assert.NotEqual(t, tool2Start.ToolCallID, tool3Start.ToolCallID, "ToolCallIDs should be unique across different tool calls")
+	assert.NotEqual(t, tool1Start.ToolCallID, tool3Start.ToolCallID, "ToolCallIDs should be unique across different tool calls")
+
+	// Final update should be text
+	_, ok = updates[7].(TextUpdate)
+	require.True(t, ok, "Final update should be TextUpdate")
+}
+
+// TestEmptyToolCallID tests that the LLM properly returns an error when a tool call
+// has an empty ID
+func TestEmptyToolCallID(t *testing.T) {
+	// Create a mock provider that returns tool calls with empty IDs
+	mockProv := &mockEmptyIDProvider{}
+
+	// Create a test tool
+	type TestToolParams struct {
+		TestParam string `json:"test_param"`
+	}
+
+	testTool := tools.Func("Test Tool", "A test tool for testing", "test_tool",
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success("Test tool result", map[string]any{
+				"result": "Processed test param",
+			})
+		})
+
+	// Create an LLM with the test tool
+	llm := New(mockProv, testTool)
+
+	// Start chat and collect updates
+	var updates []Update
+	for update := range llm.Chat("Test message") {
+		updates = append(updates, update)
+	}
+
+	// We expect to receive two updates:
+	// 1. A TextUpdate with the initial assistant message
+	// 2. An ErrorUpdate with a message about the missing tool call ID
+	require.Equal(t, 2, len(updates), "Should receive exactly 2 updates")
+
+	// First update should be text
+	_, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "First update should be TextUpdate")
+
+	// Second update should be an error about the missing tool call ID
+	errorUpdate, ok := updates[1].(ErrorUpdate)
+	require.True(t, ok, "Second update should be ErrorUpdate")
+	assert.Contains(t, errorUpdate.Error.Error(), "missing tool call ID", "Error should mention missing tool call ID")
+	assert.Contains(t, errorUpdate.Error.Error(), "test_tool", "Error should include the tool name")
+
+	// Verify the LLM's Err() method also returns the error
+	require.Error(t, llm.Err(), "LLM.Err() should return an error")
+	assert.Contains(t, llm.Err().Error(), "missing tool call ID", "LLM.Err() should contain the error message")
+}
+
+// mockEmptyIDProvider is a provider that returns tool calls with empty IDs
+type mockEmptyIDProvider struct{}
+
+func (m *mockEmptyIDProvider) Company() string {
+	return "Test Company"
+}
+
+func (m *mockEmptyIDProvider) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+	return &mockEmptyIDStream{}
+}
+
+// mockEmptyIDStream is a stream that returns tool calls with empty IDs
+type mockEmptyIDStream struct {
+	message Message
+}
+
+func (s *mockEmptyIDStream) Err() error { return nil }
+
+func (s *mockEmptyIDStream) Iter() func(func(StreamStatus) bool) {
+	return func(yield func(StreamStatus) bool) {
+		// First yield text
+		if !yield(StreamStatusText) {
+			return
+		}
+
+		// Then yield a tool call with an empty ID
+		s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
+			ID:        "", // Empty ID should cause an error
+			Name:      "test_tool",
+			Arguments: json.RawMessage(`{"test_param":"test_value"}`),
+		})
+
+		// The stream should stop after this yields an error in the LLM
+		// since the implementation breaks the loop when an error is detected
+		yield(StreamStatusToolCallBegin)
+
+		// No need to yield StreamStatusToolCallReady since the LLM should
+		// stop processing after detecting the empty ID
+	}
+}
+
+func (s *mockEmptyIDStream) Message() Message {
+	if s.message.Content == nil {
+		s.message = Message{
+			Role:      "assistant",
+			Content:   content.FromText("This is a test message."),
+			ToolCalls: s.message.ToolCalls,
+		}
+	}
+	return s.message
+}
+
+func (s *mockEmptyIDStream) Text() string { return "This is a test message." }
+
+func (s *mockEmptyIDStream) ToolCall() ToolCall {
+	if len(s.message.ToolCalls) > 0 {
+		return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+	}
+	return ToolCall{}
+}
+
+func (s *mockEmptyIDStream) CostUSD() float64 { return 0.0001 }
+
+func (s *mockEmptyIDStream) Usage() (inputTokens, outputTokens int) { return 10, 20 }
+
+// TestSuccessfulChat tests that a successful chat returns nil from Err()
+func TestSuccessfulChat(t *testing.T) {
+	// Create a mock provider
+	mockProv := &mockProvider{}
+
+	// Create an LLM
+	llm := New(mockProv)
+
+	// Start chat and consume all updates
+	for range llm.Chat("Test message") {
+		// Just consume the updates
+	}
+
+	// Verify no error is returned
+	assert.NoError(t, llm.Err(), "LLM.Err() should return nil for successful chat")
+}
