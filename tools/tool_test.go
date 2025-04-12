@@ -2,7 +2,6 @@ package tools
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -191,7 +190,7 @@ func TestValidateJSONWithArrayAndObject(t *testing.T) {
 func TestToolFunctionErrorHandling(t *testing.T) {
 	testFunc := func(r Runner, p AdvancedParams) Result {
 		if p.ID == 0 {
-			return Error(fmt.Errorf("ID cannot be zero"))
+			return Errorf("ID cannot be zero")
 		}
 		return Success(map[string]any{
 			"id":       p.ID,

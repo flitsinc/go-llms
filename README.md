@@ -178,7 +178,7 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
     // Get the specific tool call details from the context
     toolCall, ok := llms.GetToolCall(r.Context())
     if !ok {
-        return tools.Error(errors.New("Could not get tool call details from context"))
+        return tools.Errorf("Could not get tool call details from context")
     }
 
     // Typically, you would now:

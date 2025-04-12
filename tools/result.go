@@ -52,6 +52,10 @@ func Error(err error) Result {
 	return ErrorWithLabel("", err)
 }
 
+func Errorf(format string, args ...any) Result {
+	return ErrorWithLabel("", fmt.Errorf(format, args...))
+}
+
 func ErrorWithLabel(label string, err error) Result {
 	if err == nil {
 		panic("tools: cannot create error result with nil error")
@@ -165,6 +169,10 @@ func (b *ResultBuilder) AddImageURL(name, dataURI string) error {
 
 func (b *ResultBuilder) Error(err error) Result {
 	return b.ErrorWithLabel("", err)
+}
+
+func (b *ResultBuilder) Errorf(format string, args ...any) Result {
+	return b.ErrorWithLabel("", fmt.Errorf(format, args...))
 }
 
 func (b *ResultBuilder) ErrorWithLabel(label string, err error) Result {

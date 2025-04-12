@@ -1101,7 +1101,7 @@ func TestNilSystemPrompt(t *testing.T) {
 // mockToolWithError always returns an error.
 var mockToolWithError = tools.Func("Error Tool", "A tool that always errors", "error_tool",
 	func(r tools.Runner, p TestToolParams) tools.Result {
-		return tools.Error(fmt.Errorf("internal tool error detail"))
+		return tools.Errorf("internal tool error detail")
 	})
 
 // TestRunToolCallWithError tests the behavior when a called tool returns an error.
@@ -1203,7 +1203,7 @@ var toolThatChecksContext = tools.Func("Context Checker Tool", "Checks for ToolC
 	func(r tools.Runner, p TestToolParams) tools.Result {
 		tc, ok := GetToolCall(r.Context())
 		if !ok {
-			return tools.Error(fmt.Errorf("ToolCall not found in context or wrong type"))
+			return tools.Errorf("ToolCall not found in context or wrong type")
 		}
 		return tools.Success(map[string]any{"tool_call_id": tc.ID})
 	})
