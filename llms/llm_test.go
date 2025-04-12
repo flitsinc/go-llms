@@ -379,6 +379,10 @@ func TestErrorHandling(t *testing.T) {
 	errorUpdate, ok := updates[0].(ErrorUpdate)
 	require.True(t, ok, "Update should be ErrorUpdate")
 	assert.Contains(t, errorUpdate.Error.Error(), "test error")
+
+	// Verify the LLM's Err() method also returns the error
+	require.Error(t, llm.Err(), "LLM.Err() should return an error")
+	assert.Contains(t, llm.Err().Error(), "test error", "LLM.Err() should contain the error message")
 }
 
 // Mock provider that always returns an error
@@ -433,6 +437,10 @@ func TestCancellation(t *testing.T) {
 	errorUpdate, ok := updates[0].(ErrorUpdate)
 	require.True(t, ok, "Update should be ErrorUpdate")
 	assert.Contains(t, errorUpdate.Error.Error(), "context canceled")
+
+	// Verify the LLM's Err() method also returns the cancellation error
+	require.Error(t, llm.Err(), "LLM.Err() should return an error")
+	assert.Contains(t, llm.Err().Error(), "context canceled", "LLM.Err() should contain the cancellation error")
 }
 
 // TestMaxTurns tests that the WithMaxTurns functionality properly limits the number of turns
@@ -487,6 +495,10 @@ func TestMaxTurns(t *testing.T) {
 	errorUpdate, ok := updates[3].(ErrorUpdate)
 	require.True(t, ok, "Fourth update should be ErrorUpdate")
 	assert.ErrorIs(t, errorUpdate.Error, ErrMaxTurnsReached, "Error should be ErrMaxTurnsReached")
+
+	// Verify the LLM's Err() method also returns the max turns error
+	require.Error(t, llm.Err(), "LLM.Err() should return an error")
+	assert.ErrorIs(t, llm.Err(), ErrMaxTurnsReached, "LLM.Err() should return ErrMaxTurnsReached")
 
 	// Verify turn count
 	assert.Equal(t, 1, llm.turns, "Turn count should be 1")

@@ -30,6 +30,7 @@ type LLM struct {
 
 	totalCost float64
 	debug     bool
+	err       error // Last error encountered during operation
 
 	// SystemPrompt should return the system prompt for the LLM. It's a function
 	// to allow the system prompt to dynamically change throughout a single
@@ -86,6 +87,8 @@ func (l *LLM) ChatUsingContent(ctx context.Context, message content.Content) <-c
 // etc.
 func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan Update {
 	l.lastSentMessages = messages
+	// Reset error state for new chat
+	l.err = nil
 	// Send off the user's message to the LLM, and keep asking the LLM for more
 	// responses for as long as it's making tool calls.
 	updateChan := make(chan Update)
@@ -94,11 +97,16 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 		for {
 			select {
 			case <-ctx.Done():
-				updateChan <- ErrorUpdate{Error: ctx.Err()}
+				l.err = ctx.Err()
+				if l.err == nil {
+					l.err = context.Canceled
+				}
+				updateChan <- ErrorUpdate{Error: l.err}
 				return
 			default:
 				shouldContinue, err := l.turn(ctx, updateChan)
 				if err != nil {
+					l.err = err // Assign the error to l.err here
 					updateChan <- ErrorUpdate{Error: err}
 					return
 				}
@@ -160,6 +168,13 @@ func (l *LLM) WithDebug() *LLM {
 func (l *LLM) WithMaxTurns(maxTurns int) *LLM {
 	l.maxTurns = maxTurns
 	return l
+}
+
+// Err returns the last error encountered during LLM operation. This is useful
+// for checking errors after a Chat loop completes. Returns nil if no error
+// occurred.
+func (l *LLM) Err() error {
+	return l.err
 }
 
 func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) {
