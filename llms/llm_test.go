@@ -523,13 +523,17 @@ func TestAddExternalTools(t *testing.T) {
 
 	// Arrange: External tool setup
 	externalSchemas := []tools.FunctionSchema{
-		{Name: "search" /*...*/, Parameters: tools.ValueSchema{ /*...*/ }},
-		{Name: "database" /*...*/, Parameters: tools.ValueSchema{ /*...*/ }},
+		{Name: "search", Description: "Perform a search", Parameters: tools.ValueSchema{ /*...*/ }},
+		{Name: "database", Description: "Query a database", Parameters: tools.ValueSchema{ /*...*/ }},
 	}
 	externalToolCalls := make(map[string]json.RawMessage)
-	handler := func(r tools.Runner, funcName string, params json.RawMessage) tools.Result {
-		externalToolCalls[funcName] = params
-		switch funcName {
+	handler := func(r tools.Runner, params json.RawMessage) tools.Result {
+		tc, ok := GetToolCall(r.Context())
+		if !ok {
+			return tools.Error("ToolCall not found in context", nil)
+		}
+		externalToolCalls[tc.Name] = params
+		switch tc.Name {
 		case "search":
 			return tools.Success("Search results", map[string]any{"results": []string{"result1", "result2"}})
 		case "database":

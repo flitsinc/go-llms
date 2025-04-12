@@ -133,13 +133,12 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 // regular tools, external tools are usually forwarded to some other code
 // (sometimes over the network) and handled there, before a result is produced.
 // For this reason, a list of tool definitions can be provided, and then the
-// tool name and its raw JSON parameters are passed into the handler.
-func (l *LLM) AddExternalTools(schemas []tools.FunctionSchema, handler func(r tools.Runner, funcName string, params json.RawMessage) tools.Result) {
+// tool's raw JSON parameters are passed into the handler. The handler can use
+// `GetToolCall(r.Context())` to retrieve the `ToolCall` object, which includes
+// the function name (`Name`) and the unique `ID` for the specific call.
+func (l *LLM) AddExternalTools(schemas []tools.FunctionSchema, handler func(r tools.Runner, params json.RawMessage) tools.Result) {
 	for _, schema := range schemas {
-		funcName := schema.Name
-		l.AddTool(tools.Func(funcName, schema.Description, funcName, func(r tools.Runner, params json.RawMessage) tools.Result {
-			return handler(r, funcName, params)
-		}))
+		l.AddTool(tools.Func(schema.Name, schema.Description, schema.Name, handler))
 	}
 }
 

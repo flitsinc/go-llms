@@ -130,6 +130,93 @@ func main() {
 }
 ```
 
+## External Tools
+
+Sometimes, you might have a set of predefined tool schemas (perhaps from an external source or another system) that you want the LLM to be able to use. `AddExternalTools` allows you to provide these schemas along with a single handler function.
+
+This is useful when the logic for handling multiple tools is centralized, or when you need to dynamically add tools based on external definitions.
+
+The handler function receives the `tools.Runner` and the raw JSON parameters for the called tool. You can use `llms.GetToolCall(r.Context())` within the handler to retrieve the specific `ToolCall` instance, which includes the function name (`tc.Name`) and unique call ID (`tc.ID`), allowing you to dispatch to the correct logic.
+
+```go
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+    "os"
+
+    "github.com/blixt/go-llms/anthropic"
+    "github.com/blixt/go-llms/llms"
+    "github.com/blixt/go-llms/tools"
+)
+
+// Example external tool schemas (could come from a config file, API, etc.)
+var externalToolSchemas = []tools.FunctionSchema{
+    {
+        Name: "get_stock_price",
+        /* ... */
+    },
+    {
+        Name: "get_weather",
+        /* ... */
+    },
+}
+
+func main() {
+    llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"))
+
+    // Add external tools and their handler
+    llm.AddExternalTools(externalToolSchemas, handleExternalTool)
+
+    // Now the LLM can use "get_stock_price" and "get_weather"
+    for update := range llm.Chat("What's the weather in London?") {
+        switch update := update.(type) {
+        case llms.TextUpdate:
+            fmt.Print(update.Text)
+        case llms.ToolStartUpdate:
+            fmt.Printf("(Using tool: %s)\n", update.Tool.Label())
+        case llms.ToolDoneUpdate:
+            fmt.Printf("(Tool result: %s - %s)\n", update.Tool.Label(), update.Result.Label())
+        }
+    }
+    if err := llm.Err(); err != nil {
+        panic(err)
+    }
+}
+
+// Single handler that forwards external tool calls.
+func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
+    // Get the specific tool call details from the context
+    toolCall, ok := llms.GetToolCall(r.Context())
+    if !ok {
+        return tools.Error("Could not get tool call details from context", nil)
+    }
+
+    // Typically, you would now:
+    // 1. Construct a request to your external API endpoint (e.g., using http.Client).
+    targetURL := fmt.Sprintf("https://api.example.com/tool?name=%s", toolCall.Name)
+    req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(params))
+    // ... set headers, handle error ...
+
+    // 2. Execute the request.
+    resp, err := httpClient.Do(req)
+    // ... handle error ...
+
+    // 3. Process the response.
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        // Handle API error
+        return tools.Error(...)
+    }
+    bodyBytes, err := io.ReadAll(resp.Body)
+    // ... handle error ...
+
+    // 4. Return the result based on the response body.
+    return tools.SuccessJSON(fmt.Sprintf("%s result", toolCall.Name), json.RawMessage(bodyBytes))
+}
+```
+
 ## Provider Support
 
 The library currently supports:
