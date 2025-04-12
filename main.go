@@ -34,8 +34,6 @@ func main() {
 	// Chat returns a channel of updates.
 	for update := range llm.Chat("Give me a random number between 1 and 100!") {
 		switch update := update.(type) {
-		case llms.ErrorUpdate:
-			panic(update.Error)
 		case llms.TextUpdate:
 			// Received for each chunk of text from the LLM.
 			fmt.Print(update.Text)
@@ -46,6 +44,11 @@ func main() {
 			// Received after the LLM finished sending arguments and the tool ran.
 			fmt.Printf("%s)\n", update.Result.Label())
 		}
+	}
+
+	// Check for errors at the end of the chat
+	if err := llm.Err(); err != nil {
+		panic(err)
 	}
 
 	fmt.Println()

@@ -59,11 +59,14 @@ func main() {
     // Start a chat conversation
     for update := range llm.Chat("What's the capital of France?") {
         switch update := update.(type) {
-        case llms.ErrorUpdate:
-            panic(update.Error)
         case llms.TextUpdate:
             fmt.Print(update.Text)
         }
+    }
+    
+    // Check for errors after the chat completes
+    if err := llm.Err(); err != nil {
+        panic(err)
     }
 }
 ```
@@ -111,9 +114,6 @@ func main() {
     // Chat with tool usage
     for update := range llm.Chat("List files in the current directory") {
         switch update := update.(type) {
-        case llms.ErrorUpdate:
-            fmt.Println("Error:", update.Error)
-            return
         case llms.TextUpdate:
             fmt.Print(update.Text)
         case llms.ToolStartUpdate:
@@ -121,6 +121,11 @@ func main() {
         case llms.ToolDoneUpdate:
             fmt.Printf("(Tool result: %s)\n", update.Result.Label())
         }
+    }
+    
+    // Check for errors after the chat completes
+    if err := llm.Err(); err != nil {
+        panic(err)
     }
 }
 ```

@@ -89,9 +89,18 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 	l.lastSentMessages = messages
 	// Reset error state for new chat
 	l.err = nil
+
+	updateChan := make(chan Update)
+
+	// Check if context is already cancelled before starting goroutine
+	if err := ctx.Err(); err != nil {
+		l.err = err
+		close(updateChan) // Close channel immediately
+		return updateChan // Return the closed channel
+	}
+
 	// Send off the user's message to the LLM, and keep asking the LLM for more
 	// responses for as long as it's making tool calls.
-	updateChan := make(chan Update)
 	go func() {
 		defer close(updateChan)
 		for {
@@ -101,13 +110,13 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 				if l.err == nil {
 					l.err = context.Canceled
 				}
-				updateChan <- ErrorUpdate{Error: l.err}
+				// Just close the channel and let the caller check Err()
 				return
 			default:
 				shouldContinue, err := l.turn(ctx, updateChan)
 				if err != nil {
-					l.err = err // Assign the error to l.err here
-					updateChan <- ErrorUpdate{Error: err}
+					l.err = err
+					// Just close the channel and let the caller check Err()
 					return
 				}
 				if !shouldContinue {
@@ -293,19 +302,21 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 
 func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) []Message {
 	if toolCall.ID == "" {
-		fmt.Printf("\ntool call (%s) is missing an ID\n", toolCall.Name)
-		return []Message{}
+		panic(fmt.Sprintf("tool call (%s) is missing an ID", toolCall.Name))
 	}
 
 	// As a sanity check, make sure we don't try to run the same tool call twice.
 	for _, message := range l.lastSentMessages {
 		if message.ToolCallID == toolCall.ID {
-			fmt.Printf("\ntool call %q (%s) has already been run\n", toolCall.ID, toolCall.Name)
+			panic(fmt.Sprintf("tool call %q (%s) has already been run", toolCall.ID, toolCall.Name))
 		}
 	}
 
 	t := toolbox.Get(toolCall.Name)
 	runner := tools.NewRunner(ctx, toolbox, func(status string) {
+		// TODO: Add tests to verify that ToolStatusUpdate messages are correctly
+		//       received by the caller through the update channel. This might
+		//       require a more sophisticated mock runner or test setup.
 		updateChan <- ToolStatusUpdate{
 			ToolCallID: toolCall.ID,
 			Status:     status,
@@ -329,8 +340,13 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	}
 
 	if images := result.Images(); len(images) > 0 {
+		// TODO: Revisit this image handling logic. Faking a user message feels
+		//       like a workaround. Explore if the Message/Content system can be
+		//       extended to support images directly within tool results, or find
+		//       a cleaner mechanism to associate images with their originating
+		//       tool call without polluting the user message history synthetically.
 		// "tool" messages can't actually contain image content. So we need to
-		// fake an assistant message instead.
+		// fake a user message instead.
 		message := Message{
 			Role: "user",
 			// TODO: Support more than one image name.

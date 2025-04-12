@@ -10,7 +10,6 @@ const (
 	UpdateTypeToolStart  UpdateType = "tool_start"
 	UpdateTypeToolStatus UpdateType = "tool_status"
 	UpdateTypeToolDone   UpdateType = "tool_done"
-	UpdateTypeError      UpdateType = "error"
 	UpdateTypeText       UpdateType = "text"
 )
 
@@ -45,14 +44,6 @@ type ToolDoneUpdate struct {
 
 func (u ToolDoneUpdate) Type() UpdateType {
 	return UpdateTypeToolDone
-}
-
-type ErrorUpdate struct {
-	Error error
-}
-
-func (u ErrorUpdate) Type() UpdateType {
-	return UpdateTypeError
 }
 
 type TextUpdate struct {
