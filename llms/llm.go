@@ -235,12 +235,21 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				case StreamStatusText:
 					updateChan <- TextUpdate{Text: stream.Text()}
 				case StreamStatusToolCallBegin:
-					tool := l.toolbox.Get(stream.ToolCall().Name)
-					if tool == nil {
-						streamErr = fmt.Errorf("tool %q not found", stream.ToolCall().Name)
+					toolCall := stream.ToolCall()
+					if toolCall.ID == "" {
+						streamErr = fmt.Errorf("missing tool call ID for tool %q", toolCall.Name)
 						break loop
 					}
-					updateChan <- ToolStartUpdate{Tool: tool}
+
+					tool := l.toolbox.Get(toolCall.Name)
+					if tool == nil {
+						streamErr = fmt.Errorf("tool %q not found", toolCall.Name)
+						break loop
+					}
+					updateChan <- ToolStartUpdate{
+						ToolCallID: toolCall.ID,
+						Tool:       tool,
+					}
 				case StreamStatusToolCallReady:
 					// TODO: We may want to support parallel tool calls, which
 					// means the results would need to be collected later (and
@@ -283,33 +292,39 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 }
 
 func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) []Message {
-	if toolCall.ID != "" {
-		// As a sanity check, make sure we don't try to run the same tool call twice.
-		for _, message := range l.lastSentMessages {
-			if message.ToolCallID == toolCall.ID {
-				fmt.Printf("\ntool call %q (%s) has already been run\n", toolCall.ID, toolCall.Name)
-			}
+	if toolCall.ID == "" {
+		fmt.Printf("\ntool call (%s) is missing an ID\n", toolCall.Name)
+		return []Message{}
+	}
+
+	// As a sanity check, make sure we don't try to run the same tool call twice.
+	for _, message := range l.lastSentMessages {
+		if message.ToolCallID == toolCall.ID {
+			fmt.Printf("\ntool call %q (%s) has already been run\n", toolCall.ID, toolCall.Name)
 		}
 	}
 
 	t := toolbox.Get(toolCall.Name)
 	runner := tools.NewRunner(ctx, toolbox, func(status string) {
-		updateChan <- ToolStatusUpdate{Status: status, Tool: t}
+		updateChan <- ToolStatusUpdate{
+			ToolCallID: toolCall.ID,
+			Status:     status,
+			Tool:       t,
+		}
 	})
 
 	result := toolbox.Run(runner, toolCall.Name, json.RawMessage(toolCall.Arguments))
-	updateChan <- ToolDoneUpdate{Result: result, Tool: t}
-
-	callID := toolCall.ID
-	if callID == "" {
-		callID = toolCall.Name
+	updateChan <- ToolDoneUpdate{
+		ToolCallID: toolCall.ID,
+		Result:     result,
+		Tool:       t,
 	}
 
 	messages := []Message{
 		{
 			Role:       "tool",
 			Content:    content.FromRawJSON(result.JSON()),
-			ToolCallID: callID,
+			ToolCallID: toolCall.ID,
 		},
 	}
 

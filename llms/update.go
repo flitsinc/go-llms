@@ -19,7 +19,8 @@ type Update interface {
 }
 
 type ToolStartUpdate struct {
-	Tool tools.Tool
+	ToolCallID string
+	Tool       tools.Tool
 }
 
 func (u ToolStartUpdate) Type() UpdateType {
@@ -27,8 +28,9 @@ func (u ToolStartUpdate) Type() UpdateType {
 }
 
 type ToolStatusUpdate struct {
-	Status string
-	Tool   tools.Tool
+	ToolCallID string
+	Status     string
+	Tool       tools.Tool
 }
 
 func (u ToolStatusUpdate) Type() UpdateType {
@@ -36,8 +38,9 @@ func (u ToolStatusUpdate) Type() UpdateType {
 }
 
 type ToolDoneUpdate struct {
-	Result tools.Result
-	Tool   tools.Tool
+	ToolCallID string
+	Result     tools.Result
+	Tool       tools.Tool
 }
 
 func (u ToolDoneUpdate) Type() UpdateType {

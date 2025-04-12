@@ -215,12 +215,14 @@ func TestChatFlow(t *testing.T) {
 	require.True(t, ok, "Second update should be ToolStartUpdate")
 	assert.Equal(t, "Test Tool", toolStartUpdate.Tool.Label())
 	assert.Equal(t, "test_tool", toolStartUpdate.Tool.FuncName())
+	assert.Equal(t, "test_tool-id-0", toolStartUpdate.ToolCallID, "ToolCallID should match the ID from the message")
 
 	// Third update should be tool done
 	toolDoneUpdate, ok := updates[2].(ToolDoneUpdate)
 	require.True(t, ok, "Third update should be ToolDoneUpdate")
 	assert.Equal(t, "Test Tool", toolDoneUpdate.Tool.Label())
-	assert.JSONEq(t, `{"result":"Processed: test_value_test_tool"}`, string(toolDoneUpdate.Result.JSON()))
+	assert.Equal(t, "test_tool-id-0", toolDoneUpdate.ToolCallID, "ToolCallID should match the ID from the message")
+	assert.JSONEq(t, `{"result":"Processed: test_value_test_tool"}`, string(toolDoneUpdate.Result.JSON()), "Search should return correct result")
 
 	// Fourth update should be the final text response after tool processing
 	secondTextUpdate, ok := updates[3].(TextUpdate)
