@@ -48,21 +48,41 @@ func (r *result) Images() []Image {
 	return r.images
 }
 
-func Error(label string, err error) Result {
-	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err))
+func Error(err error) Result {
+	return ErrorWithLabel("", err)
+}
+
+func ErrorWithLabel(label string, err error) Result {
+	if err == nil {
+		panic("tools: cannot create error result with nil error")
+	}
+	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err.Error()))
+	if label == "" {
+		label = fmt.Sprintf("Error: %s", err)
+	}
 	return &result{label, content, err, nil}
 }
 
-func Success(label string, content any) Result {
-	jsonContent, err := json.Marshal(content)
-	if err != nil {
-		return Error(label, err)
+func Success(content any) Result {
+	var label string
+	if stringer, ok := content.(fmt.Stringer); ok {
+		label = stringer.String()
+		if len(label) > 50 {
+			label = label[:50]
+		}
 	}
-	return &result{label, jsonContent, nil, nil}
+	return SuccessWithLabel(label, content)
 }
 
-func SuccessJSON(label string, content json.RawMessage) Result {
-	return &result{label, content, nil, nil}
+func SuccessWithLabel(label string, content any) Result {
+	jsonContent, err := json.Marshal(content)
+	if err != nil {
+		return ErrorWithLabel(label, err)
+	}
+	if label == "" {
+		label = "success"
+	}
+	return &result{label, jsonContent, nil, nil}
 }
 
 type ResultBuilder struct {
@@ -143,19 +163,38 @@ func (b *ResultBuilder) AddImageURL(name, dataURI string) error {
 	return nil
 }
 
-func (b *ResultBuilder) Error(label string, err error) Result {
-	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err))
+func (b *ResultBuilder) Error(err error) Result {
+	return b.ErrorWithLabel("", err)
+}
+
+func (b *ResultBuilder) ErrorWithLabel(label string, err error) Result {
+	if err == nil {
+		panic("tools: cannot create error result with nil error in ResultBuilder")
+	}
+	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err.Error()))
+	if label == "" {
+		label = fmt.Sprintf("Error: %s", err)
+	}
 	return &result{label, content, err, b.images}
 }
 
-func (b *ResultBuilder) Success(label string, content any) Result {
+func (b *ResultBuilder) Success(content any) Result {
+	var label string
+	if stringer, ok := content.(fmt.Stringer); ok {
+		label = stringer.String()
+		if len(label) > 50 {
+			label = label[:50]
+		}
+	}
+	return b.SuccessWithLabel(label, content)
+}
+func (b *ResultBuilder) SuccessWithLabel(label string, content any) Result {
 	jsonContent, err := json.Marshal(content)
 	if err != nil {
-		return b.Error(label, err)
+		return b.ErrorWithLabel(label, err)
+	}
+	if label == "" {
+		label = "Success"
 	}
 	return &result{label, jsonContent, nil, b.images}
-}
-
-func (b *ResultBuilder) SuccessJSON(label string, content json.RawMessage) Result {
-	return &result{label, content, nil, b.images}
 }

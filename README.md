@@ -98,7 +98,7 @@ var RunCommand = tools.Func[CommandParams](
     "Run a shell command and return the output",
     "run_command",
     func(r tools.Runner, p CommandParams) tools.Result {
-        return tools.Success(p.Command, map[string]any{
+        return tools.SuccessWithLabel(p.Command, map[string]any{
             "output": "Command output would go here",
         })
     },
@@ -139,18 +139,6 @@ This is useful when the logic for handling multiple tools is centralized, or whe
 The handler function receives the `tools.Runner` and the raw JSON parameters for the called tool. You can use `llms.GetToolCall(r.Context())` within the handler to retrieve the specific `ToolCall` instance, which includes the function name (`tc.Name`) and unique call ID (`tc.ID`), allowing you to dispatch to the correct logic.
 
 ```go
-package main
-
-import (
-    "encoding/json"
-    "fmt"
-    "os"
-
-    "github.com/blixt/go-llms/anthropic"
-    "github.com/blixt/go-llms/llms"
-    "github.com/blixt/go-llms/tools"
-)
-
 // Example external tool schemas (could come from a config file, API, etc.)
 var externalToolSchemas = []tools.FunctionSchema{
     {
@@ -190,7 +178,7 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
     // Get the specific tool call details from the context
     toolCall, ok := llms.GetToolCall(r.Context())
     if !ok {
-        return tools.Error("Could not get tool call details from context", nil)
+        return tools.Error(errors.New("Could not get tool call details from context"))
     }
 
     // Typically, you would now:
@@ -213,7 +201,7 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
     // ... handle error ...
 
     // 4. Return the result based on the response body.
-    return tools.SuccessJSON(fmt.Sprintf("%s result", toolCall.Name), json.RawMessage(bodyBytes))
+    return tools.Success(json.RawMessage(bodyBytes))
 }
 ```
 

@@ -69,7 +69,7 @@ var RunShellCmd = tools.Func(
 		cmd := exec.CommandContext(r.Context(), "sh", "-c", p.Command)
 		output, err := cmd.CombinedOutput() // Combines both STDOUT and STDERR
 		if err != nil {
-			return tools.Error(fmt.Sprintf("%s \033[31m(%d)\033[0m", p.Command, cmd.ProcessState.ExitCode()), fmt.Errorf("%w: %s", err, output))
+			return tools.ErrorWithLabel(fmt.Sprintf("%s \033[31m(%d)\033[0m", p.Command, cmd.ProcessState.ExitCode()), fmt.Errorf("%w: %s", err, output))
 		}
-		return tools.Success(p.Command, map[string]any{"output": string(output)})
+		return tools.SuccessWithLabel(p.Command, map[string]any{"output": string(output)})
 	})

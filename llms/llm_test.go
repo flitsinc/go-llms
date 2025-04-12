@@ -22,7 +22,7 @@ type TestToolParams struct {
 
 var testTool = tools.Func("Test Tool", "A test tool for testing", "test_tool",
 	func(r tools.Runner, p TestToolParams) tools.Result {
-		return tools.Success("Test tool result", map[string]any{
+		return tools.Success(map[string]any{
 			"result": fmt.Sprintf("Processed: %s", p.TestParam),
 		})
 	})
@@ -483,7 +483,10 @@ func (s *mockEmptyIDStream) Usage() (inputTokens, outputTokens int) { return 10,
 // TestAddExternalTools tests adding external tools via schemas.
 func TestAddExternalTools(t *testing.T) {
 	// Arrange: Mock provider, LLM with regular tools
-	mockProv := &mockProvider{}
+	mockProv := &mockProvider{
+		// Configure mock to call the external tools
+		toolCallsToMake: []string{"search", "database"},
+	}
 
 	// Define tools locally within the test
 	type TestCalculatorParams struct {
@@ -505,7 +508,7 @@ func TestAddExternalTools(t *testing.T) {
 					result *= n
 				}
 			}
-			return tools.Success("Calculator result", map[string]any{"result": result})
+			return tools.Success(map[string]any{"result": result})
 		})
 
 	type TestWeatherParams struct {
@@ -513,7 +516,7 @@ func TestAddExternalTools(t *testing.T) {
 	}
 	weather := tools.Func("Weather", "Get weather information", "weather",
 		func(r tools.Runner, p TestWeatherParams) tools.Result {
-			return tools.Success("Weather info", map[string]any{
+			return tools.Success(map[string]any{
 				"temperature": 72,
 				"condition":   "sunny",
 			})
@@ -530,55 +533,86 @@ func TestAddExternalTools(t *testing.T) {
 	handler := func(r tools.Runner, params json.RawMessage) tools.Result {
 		tc, ok := GetToolCall(r.Context())
 		if !ok {
-			return tools.Error("ToolCall not found in context", nil)
+			// This path should ideally not be hit in the refactored test, but handle defensively.
+			// Since we now panic on nil errors, we must return a real error.
+			return tools.ErrorWithLabel("ToolCall not found in context", fmt.Errorf("context missing tool call"))
 		}
 		externalToolCalls[tc.Name] = params
 		switch tc.Name {
 		case "search":
-			return tools.Success("Search results", map[string]any{"results": []string{"result1", "result2"}})
+			// Simulate receiving specific args for assertion
+			assert.JSONEq(t, `{"test_param":"test_value_search"}`, string(params))
+			return tools.Success(map[string]any{"results": []string{"result1", "result2"}})
 		case "database":
-			return tools.Success("Database results", map[string]any{"rows": 10})
+			// Simulate receiving specific args for assertion
+			assert.JSONEq(t, `{"test_param":"test_value_database"}`, string(params))
+			return tools.Success(map[string]any{"rows": 10})
 		default:
-			return tools.Error("Unknown tool", nil)
+			return tools.ErrorWithLabel("Unknown external tool", fmt.Errorf("unknown tool: %s", tc.Name))
 		}
 	}
 
 	// Act: Add external tools
 	llm.AddExternalTools(externalSchemas, handler)
 
-	// Assert: Toolbox contents
+	// Assert: Toolbox contents (verify all tools are present)
 	assert.Equal(t, 4, len(llm.toolbox.All()), "Toolbox should have 4 tools")
 	assert.NotNil(t, llm.toolbox.Get("calculator"), "Calculator tool should exist")
 	assert.NotNil(t, llm.toolbox.Get("weather"), "Weather tool should exist")
 	assert.NotNil(t, llm.toolbox.Get("search"), "Search tool should exist")
 	assert.NotNil(t, llm.toolbox.Get("database"), "Database tool should exist")
 
-	// Assert: Tool execution (regular)
-	calcParams := json.RawMessage(`{"numbers":[2,3,4],"op":"add"}`)
-	calcResult := llm.toolbox.Get("calculator").Run(tools.NopRunner, calcParams)
-	assert.NoError(t, calcResult.Error())
-	assert.JSONEq(t, `{"result":9}`, string(calcResult.JSON()))
-	weatherParams := json.RawMessage(`{"location":"New York"}`)
-	weatherResult := llm.toolbox.Get("weather").Run(tools.NopRunner, weatherParams)
-	assert.NoError(t, weatherResult.Error())
-	assert.JSONEq(t, `{"temperature":72,"condition":"sunny"}`, string(weatherResult.JSON()))
+	// Act: Run chat to trigger the mock tool calls
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Run search and database tools")
 
-	// Assert: Tool execution (external)
-	searchParams := json.RawMessage(`{"query":"test query"}`)
-	searchResult := llm.toolbox.Get("search").Run(tools.NopRunner, searchParams)
-	assert.NoError(t, searchResult.Error())
-	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(searchResult.JSON()))
-	assert.JSONEq(t, `{"query":"test query"}`, string(externalToolCalls["search"]), "External tool should receive correct parameters")
-	dbParams := json.RawMessage(`{"sql":"SELECT * FROM test"}`)
-	dbResult := llm.toolbox.Get("database").Run(tools.NopRunner, dbParams)
-	assert.NoError(t, dbResult.Error())
-	assert.JSONEq(t, `{"rows":10}`, string(dbResult.JSON()))
-	assert.JSONEq(t, `{"sql":"SELECT * FROM test"}`, string(externalToolCalls["database"]), "External tool should receive correct parameters")
+	// Assert: No LLM error during the flow
+	assert.NoError(t, llm.Err(), "Chat flow should complete without LLM error")
 
-	// Assert: Provider receives full toolbox
-	llm.provider.Generate(nil, []Message{}, llm.toolbox)
+	// Assert: Updates received for the full flow (Text -> Search -> Database -> Text)
+	// Expected updates: Text, Start(Search), Done(Search), Start(DB), Done(DB), Text(Final)
+	require.Equal(t, 6, len(updates), "Should receive 6 updates for the full flow")
+
+	_, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "Update 0 should be TextUpdate")
+
+	searchStart, ok := updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Update 1 should be ToolStartUpdate (search)")
+	assert.Equal(t, "search", searchStart.Tool.FuncName())
+	assert.Equal(t, "search-id-0", searchStart.ToolCallID)
+
+	searchDone, ok := updates[2].(ToolDoneUpdate)
+	require.True(t, ok, "Update 2 should be ToolDoneUpdate (search)")
+	assert.Equal(t, "search", searchDone.Tool.FuncName())
+	assert.Equal(t, searchStart.ToolCallID, searchDone.ToolCallID)
+	require.NoError(t, searchDone.Result.Error())
+	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(searchDone.Result.JSON()))
+
+	dbStart, ok := updates[3].(ToolStartUpdate)
+	require.True(t, ok, "Update 3 should be ToolStartUpdate (database)")
+	assert.Equal(t, "database", dbStart.Tool.FuncName())
+	assert.Equal(t, "database-id-1", dbStart.ToolCallID)
+
+	dbDone, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate (database)")
+	assert.Equal(t, "database", dbDone.Tool.FuncName())
+	assert.Equal(t, dbStart.ToolCallID, dbDone.ToolCallID)
+	require.NoError(t, dbDone.Result.Error())
+	assert.JSONEq(t, `{"rows":10}`, string(dbDone.Result.JSON()))
+
+	finalText, ok := updates[5].(TextUpdate)
+	require.True(t, ok, "Update 5 should be TextUpdate (final)")
+	assert.Equal(t, "I've processed the results from the tool.", finalText.Text)
+
+	// Assert: External tool handler received correct parameters (verified via externalToolCalls map)
+	assert.Contains(t, externalToolCalls, "search", "Search tool handler should have been called")
+	assert.Contains(t, externalToolCalls, "database", "Database tool handler should have been called")
+	// The JSONEq assertions for params are now inside the handler
+
+	// Assert: Provider receives full toolbox (this was checked implicitly by Generate call in runTestChat)
 	assert.True(t, mockProv.generateCalled, "Provider's Generate method should be called")
-	assert.Equal(t, 4, mockProv.toolboxToolsCount, "All 4 tools should be available to the provider")
+	assert.Equal(t, 4, mockProv.toolboxToolsCount, "All 4 tools should be available to the provider in the first Generate call")
 }
 
 // TestToolCallIDsFlow tests that tool call IDs flow correctly through the update chain.
@@ -599,13 +633,13 @@ func TestToolCallIDsFlow(t *testing.T) {
 		TestParam string `json:"test_param"`
 	}
 	tool1 := tools.Func("Tool 1", "Test tool 1", "tool1", func(r tools.Runner, p Tool1Params) tools.Result {
-		return tools.Success("Tool 1 result", map[string]any{"result": "tool1 result"})
+		return tools.Success(map[string]any{"result": "tool1 result"})
 	})
 	tool2 := tools.Func("Tool 2", "Test tool 2", "tool2", func(r tools.Runner, p Tool2Params) tools.Result {
-		return tools.Success("Tool 2 result", map[string]any{"result": "tool2 result"})
+		return tools.Success(map[string]any{"result": "tool2 result"})
 	})
 	tool3 := tools.Func("Tool 3", "Test tool 3", "tool3", func(r tools.Runner, p Tool3Params) tools.Result {
-		return tools.Success("Tool 3 result", map[string]any{"result": "tool3 result"})
+		return tools.Success(map[string]any{"result": "tool3 result"})
 	})
 
 	llm, _ := setupTestLLM(t, mockProv, tool1, tool2, tool3)
@@ -658,7 +692,7 @@ func TestAddToolWithNilToolbox(t *testing.T) {
 	// Arrange: Tool to add
 	simpleTool := tools.Func("Simple Tool", "A simple tool", "simple_tool",
 		func(r tools.Runner, p TestToolParams) tools.Result {
-			return tools.Success("Simple result", map[string]any{"response": p.TestParam})
+			return tools.Success(map[string]any{"response": p.TestParam})
 		})
 
 	// Act: Add the tool
@@ -1067,7 +1101,7 @@ func TestNilSystemPrompt(t *testing.T) {
 // mockToolWithError always returns an error.
 var mockToolWithError = tools.Func("Error Tool", "A tool that always errors", "error_tool",
 	func(r tools.Runner, p TestToolParams) tools.Result {
-		return tools.Error("tool failed", fmt.Errorf("internal tool error detail"))
+		return tools.Error(fmt.Errorf("internal tool error detail"))
 	})
 
 // TestRunToolCallWithError tests the behavior when a called tool returns an error.
@@ -1102,7 +1136,7 @@ func TestRunToolCallWithError(t *testing.T) {
 	require.NotNil(t, doneUpdate.Result, "Result should not be nil")
 	assert.Error(t, doneUpdate.Result.Error(), "Result error should not be nil")
 	assert.Contains(t, doneUpdate.Result.Error().Error(), "internal tool error detail", "Result error should contain tool's internal error")
-	assert.Equal(t, "tool failed", doneUpdate.Result.Label(), "Result label should match the error message")
+	assert.Equal(t, "Error: internal tool error detail", doneUpdate.Result.Label(), "Result label should match the error message") // Default label from Error()
 	// Check JSON representation - only contains the detail error
 	assert.JSONEq(t, `{"error":"internal tool error detail"}`, string(doneUpdate.Result.JSON()))
 
@@ -1122,7 +1156,7 @@ func TestRunToolCallWithError(t *testing.T) {
 var mockToolForStatusTest = tools.Func("Status Tool", "A tool used for status test", "status_tool",
 	func(r tools.Runner, p TestToolParams) tools.Result {
 		time.Sleep(10 * time.Millisecond) // Simulate work
-		return tools.Success("Status result", map[string]any{"status": "done"})
+		return tools.Success(map[string]any{"status": "done"})
 	})
 
 // TestToolStatusUpdates verifies the basic flow when a tool (potentially with status updates) runs.
@@ -1169,9 +1203,9 @@ var toolThatChecksContext = tools.Func("Context Checker Tool", "Checks for ToolC
 	func(r tools.Runner, p TestToolParams) tools.Result {
 		tc, ok := GetToolCall(r.Context())
 		if !ok {
-			return tools.Error("Context check failed", fmt.Errorf("ToolCall not found in context or wrong type"))
+			return tools.Error(fmt.Errorf("ToolCall not found in context or wrong type"))
 		}
-		return tools.Success("Context check success", map[string]any{"tool_call_id": tc.ID})
+		return tools.Success(map[string]any{"tool_call_id": tc.ID})
 	})
 
 // TestToolCallInContext verifies that the ToolCall struct is correctly placed in the context

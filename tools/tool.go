@@ -37,11 +37,11 @@ func Func[Params any](label, description, funcName string, fn func(r Runner, par
 		funcName:    funcName,
 		fn: func(r Runner, params json.RawMessage) Result {
 			if err := t.validateParams(params); err != nil {
-				return Error("LLM misbehaved", fmt.Errorf("validation error for %s: %w", funcName, err))
+				return ErrorWithLabel("LLM misbehaved", fmt.Errorf("validation error for %s: %w", funcName, err))
 			}
 			var p Params
 			if err := json.Unmarshal(params, &p); err != nil {
-				return Error("LLM misbehaved", fmt.Errorf("unmarshal error for %s: %w", funcName, err))
+				return ErrorWithLabel("LLM misbehaved", fmt.Errorf("unmarshal error for %s: %w", funcName, err))
 			}
 			return fn(r, p)
 		},

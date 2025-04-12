@@ -57,7 +57,7 @@ func TestGenerateSchema(t *testing.T) {
 // TestToolRun_CorrectData verifies that the tool functions correctly with valid input data.
 func TestToolRun_CorrectData(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
@@ -76,7 +76,7 @@ func TestToolRun_CorrectData(t *testing.T) {
 // TestToolRun_OptionalFieldAbsent verifies that the tool handles the absence of optional fields correctly.
 func TestToolRun_OptionalFieldAbsent(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
@@ -95,7 +95,7 @@ func TestToolRun_OptionalFieldAbsent(t *testing.T) {
 // TestToolRun_MissingRequiredField verifies that the tool correctly handles missing required fields.
 func TestToolRun_MissingRequiredField(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
@@ -114,7 +114,7 @@ func TestToolRun_MissingRequiredField(t *testing.T) {
 // TestToolRun_InvalidDataType checks that the tool correctly identifies incorrect data types in input.
 func TestToolRun_InvalidDataType(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
@@ -134,7 +134,7 @@ func TestToolRun_InvalidDataType(t *testing.T) {
 // TestToolRun_UnexpectedFields verifies that the tool ignores fields that are not defined in the schema.
 func TestToolRun_UnexpectedFields(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
@@ -163,7 +163,7 @@ type AdvancedParams struct {
 // TestValidateJSONWithArrayAndObject tests validation of both array and nested object fields.
 func TestValidateJSONWithArrayAndObject(t *testing.T) {
 	testFunc := func(r Runner, p AdvancedParams) Result {
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"id":       p.ID,
 			"features": p.Features,
 			"profile":  p.Profile,
@@ -191,9 +191,9 @@ func TestValidateJSONWithArrayAndObject(t *testing.T) {
 func TestToolFunctionErrorHandling(t *testing.T) {
 	testFunc := func(r Runner, p AdvancedParams) Result {
 		if p.ID == 0 {
-			return Error("Test", fmt.Errorf("ID cannot be zero"))
+			return Error(fmt.Errorf("ID cannot be zero"))
 		}
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"id":       p.ID,
 			"features": p.Features,
 			"profile":  p.Profile,
@@ -229,7 +229,7 @@ func TestToolFunctionReport(t *testing.T) {
 
 	testFunc := func(r Runner, p Params) Result {
 		r.Report("running")
-		return Success("Test", map[string]any{
+		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
 			"email":   p.Email,
