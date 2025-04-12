@@ -1157,3 +1157,52 @@ func TestToolStatusUpdates(t *testing.T) {
 	assert.NoError(t, doneUpdate.Result.Error())
 	assert.JSONEq(t, `{"status":"done"}`, string(doneUpdate.Result.JSON()))
 }
+
+// --- Test for ToolCall in Context ---
+
+// toolThatChecksContext retrieves the ToolCall from the context and returns its ID.
+var toolThatChecksContext = tools.Func("Context Checker Tool", "Checks for ToolCall in context", "context_checker_tool",
+	func(r tools.Runner, p TestToolParams) tools.Result {
+		tc, ok := GetToolCall(r.Context())
+		if !ok {
+			return tools.Error("Context check failed", fmt.Errorf("ToolCall not found in context or wrong type"))
+		}
+		return tools.Success("Context check success", map[string]any{"tool_call_id": tc.ID})
+	})
+
+// TestToolCallInContext verifies that the ToolCall struct is correctly placed in the context
+// and accessible by the tool function via the runner.
+func TestToolCallInContext(t *testing.T) {
+	// Arrange: Provider that calls the context checking tool
+	expectedToolCallID := "context_checker_tool-id-0"
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{"context_checker_tool"},
+	}
+	llm, _ := setupTestLLM(t, mockProv, toolThatChecksContext)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: No LLM-level error
+	assert.NoError(t, llm.Err())
+
+	// Assert: Correct updates received (Text, ToolStart, ToolDone, Final Text)
+	require.Equal(t, 4, len(updates), "Should receive 4 standard updates")
+	_, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "Update 0 should be TextUpdate")
+	startUpdate, ok := updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Update 1 should be ToolStartUpdate")
+	assert.Equal(t, expectedToolCallID, startUpdate.ToolCallID, "ToolCallID in start update should match expected")
+	doneUpdate, ok := updates[2].(ToolDoneUpdate)
+	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
+	_, ok = updates[3].(TextUpdate)
+	require.True(t, ok, "Update 3 should be TextUpdate")
+
+	// Assert: ToolDoneUpdate contains the correct ToolCallID extracted from the context
+	assert.Equal(t, "context_checker_tool", doneUpdate.Tool.FuncName())
+	assert.Equal(t, expectedToolCallID, doneUpdate.ToolCallID, "ToolCallID in done update should match expected")
+	require.NoError(t, doneUpdate.Result.Error())
+	assert.JSONEq(t, fmt.Sprintf(`{"tool_call_id":%q}`, expectedToolCallID), string(doneUpdate.Result.JSON()))
+}

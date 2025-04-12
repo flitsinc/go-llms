@@ -313,7 +313,9 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	}
 
 	t := toolbox.Get(toolCall.Name)
-	runner := tools.NewRunner(ctx, toolbox, func(status string) {
+	// Create a new context with the ToolCall value
+	ctxWithValue := context.WithValue(ctx, ToolCallContextKey, toolCall)
+	runner := tools.NewRunner(ctxWithValue, toolbox, func(status string) {
 		// TODO: Add tests to verify that ToolStatusUpdate messages are correctly
 		//       received by the caller through the update channel. This might
 		//       require a more sophisticated mock runner or test setup.
