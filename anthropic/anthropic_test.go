@@ -431,20 +431,6 @@ func TestAnthropicStreamHandling(t *testing.T) {
 	})
 }
 
-// Mock io.Reader that returns controlled errors
-type errorReader struct {
-	readErr error
-}
-
-func (er *errorReader) Read(p []byte) (n int, err error) {
-	// Return 0 bytes read and the configured error
-	if er.readErr != nil {
-		return 0, er.readErr
-	}
-	// Or return EOF if no specific error is set?
-	return 0, io.EOF
-}
-
 func TestAnthropicGenerateHttpError(t *testing.T) {
 	// This test doesn't use the stream iteration but checks errors during initial request
 	// We don't have an easy way to mock http.DefaultClient here without interfaces or libraries.

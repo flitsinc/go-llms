@@ -160,7 +160,7 @@ func TestMessageFromLLM_Anthropic(t *testing.T) {
 					assert.JSONEq(t, string(expectedItem.Input), string(actualItem.Input), "Content item Input mismatch at index %d", i)
 				} else {
 					// Expect actual input to be nil or empty if expected is nil
-					assert.True(t, actualItem.Input == nil || len(actualItem.Input) == 0, "Expected nil or empty Input, got %s at index %d", actualItem.Input, i)
+					assert.True(t, len(actualItem.Input) == 0, "Expected nil or empty Input, got %s at index %d", actualItem.Input, i)
 				}
 				assert.Equal(t, expectedItem.ToolUseID, actualItem.ToolUseID, "Content item ToolUseID mismatch at index %d", i)
 				// Compare nested content for tool_result
