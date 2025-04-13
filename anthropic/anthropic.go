@@ -211,6 +211,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		lastToolCallIndex := -1
+		var resetNextArgumentsDelta bool
 		// The Anthropic SSE stream follows this pattern:
 		// 1. message_start - contains initial message metadata
 		// 2. For each content block:
@@ -247,9 +248,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				switch event.ContentBlock.Type {
 				case "tool_use":
 					lastToolCallIndex = event.Index
+					resetNextArgumentsDelta = true
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
-						ID:   event.ContentBlock.ID,
-						Name: event.ContentBlock.Name,
+						ID:        event.ContentBlock.ID,
+						Name:      event.ContentBlock.Name,
+						Arguments: event.ContentBlock.Input,
 					})
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return
@@ -270,10 +273,19 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 				case "input_json_delta":
 					// Tool use JSON delta - append to tool call arguments
-					s.message.ToolCalls[len(s.message.ToolCalls)-1].Arguments = append(
-						s.message.ToolCalls[len(s.message.ToolCalls)-1].Arguments,
-						[]byte(event.Delta.PartialJSON)...,
-					)
+					if event.Delta.PartialJSON == "" {
+						continue
+					}
+					index := len(s.message.ToolCalls) - 1
+					if resetNextArgumentsDelta {
+						s.message.ToolCalls[index].Arguments = json.RawMessage(event.Delta.PartialJSON)
+						resetNextArgumentsDelta = false
+					} else {
+						s.message.ToolCalls[index].Arguments = append(
+							s.message.ToolCalls[index].Arguments,
+							[]byte(event.Delta.PartialJSON)...,
+						)
+					}
 					if !yield(llms.StreamStatusToolCallData) {
 						return
 					}

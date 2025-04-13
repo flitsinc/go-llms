@@ -91,10 +91,11 @@ type messageEvent struct {
 
 // contentBlock represents the initial state of a content block
 type contentBlock struct {
-	Type string `json:"type"`           // Type of content block: "text", "tool_use", "thinking"
-	Text string `json:"text,omitempty"` // Initial text content (typically empty)
-	ID   string `json:"id,omitempty"`   // Unique ID for the content block (used for tool_use blocks)
-	Name string `json:"name,omitempty"` // For tool_use blocks, name of the tool being called
+	Type  string          `json:"type"`            // Type of content block: "text", "tool_use", "thinking"
+	Text  string          `json:"text,omitempty"`  // Initial text content (typically empty)
+	ID    string          `json:"id,omitempty"`    // Unique ID for the content block (used for tool_use blocks)
+	Name  string          `json:"name,omitempty"`  // For tool_use blocks, name of the tool being called
+	Input json.RawMessage `json:"input,omitempty"` // Arguments passed to the tool
 }
 
 // delta represents incremental updates in content_block_delta events
