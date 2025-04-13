@@ -79,11 +79,19 @@ func TestMessageUnmarshalJSON(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "user message with text",
+			name: "user message with text array",
 			json: `{"role":"user","content":[{"type":"text","text":"Hello, world!"}]}`,
 			want: Message{
 				Role:    "user",
 				Content: content.FromText("Hello, world!"),
+			},
+		},
+		{
+			name: "user message with simple string content",
+			json: `{"role":"user","content":"Hello, simple string!"}`,
+			want: Message{
+				Role:    "user",
+				Content: content.FromText("Hello, simple string!"),
 			},
 		},
 		{
@@ -94,6 +102,19 @@ func TestMessageUnmarshalJSON(t *testing.T) {
 				Name:    "AI",
 				Content: content.FromText("How can I help you?"),
 			},
+		},
+		{
+			name: "message with null content",
+			json: `{"role":"user","content":null}`,
+			want: Message{
+				Role:    "user",
+				Content: nil, // Expect nil or empty content
+			},
+		},
+		{
+			name:    "message with invalid content type",
+			json:    `{"role":"user","content":12345}`,
+			wantErr: true,
 		},
 		{
 			name: "tool message with JSON",
