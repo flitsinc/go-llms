@@ -134,9 +134,8 @@ func TestMessageFromLLM_Anthropic(t *testing.T) {
 		{
 			name:  "Empty message",
 			input: llms.Message{Role: "assistant", Content: nil, ToolCalls: nil},
-			// Anthropic might require content, but our conversion handles it gracefully.
-			// Expecting an assistant message with empty content list.
-			expected: message{Role: "assistant", Content: contentList{}},
+			// The new logic in messageFromLLM ensures empty content gets [{type: "text", text: ""}].
+			expected: message{Role: "assistant", Content: contentList{{Type: "text", Text: ""}}},
 		},
 	}
 

@@ -355,12 +355,12 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 		var ci contentItem
 		switch v := item.(type) {
 		case *content.Text:
-			ci.Type = "text"
+			// Skip text blocks that are empty or contain only whitespace.
 			if strings.TrimSpace(v.Text) == "" {
-				ci.Text = "(Empty)"
-			} else {
-				ci.Text = v.Text
+				continue
 			}
+			ci.Type = "text"
+			ci.Text = v.Text
 		case *content.ImageURL:
 			ci.Type = "image"
 			if dataValue, found := strings.CutPrefix(v.URL, "data:"); found {
@@ -389,28 +389,21 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 }
 
 func messageFromLLM(m llms.Message) message {
-	if m.Role == "tool" {
-		// Convert the llms.Message content (potentially multi-part) into the Anthropic
-		// tool_result content block format.
-		anthropicToolResultContent := contentFromLLM(m.Content)
-
+	apiContent := contentFromLLM(m.Content)
+	switch m.Role {
+	case "tool":
 		// Anthropic expects tool results to be from the user, wrapped in a specific structure.
 		return message{
 			Role: "user",
 			Content: []contentItem{
 				{
 					Type:      "tool_result",
-					ToolUseID: m.ToolCallID, // Use the llms.Message ToolCallID
-					Content:   anthropicToolResultContent,
+					ToolUseID: m.ToolCallID,
+					Content:   apiContent,
 				},
 			},
 		}
-	}
-
-	// Handle regular messages (system, user, assistant)
-	apiContent := contentFromLLM(m.Content)
-	// Append tool_use blocks if the message is from the assistant and has tool calls.
-	if m.Role == "assistant" {
+	case "assistant":
 		for _, toolCall := range m.ToolCalls {
 			apiContent = append(apiContent, contentItem{
 				Type:  "tool_use",
@@ -419,6 +412,9 @@ func messageFromLLM(m llms.Message) message {
 				Input: toolCall.Arguments,
 			})
 		}
+	}
+	if len(m.Content) == 0 {
+		apiContent = []contentItem{{Type: "text", Text: ""}}
 	}
 	return message{
 		Role:    m.Role,

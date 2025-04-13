@@ -457,18 +457,13 @@ func TestContentFromLLMEdgeCases(t *testing.T) {
 	t.Run("Empty Text Content", func(t *testing.T) {
 		llmContent := content.FromText("")
 		apiContent := contentFromLLM(llmContent)
-		require.Len(t, apiContent, 1)
-		assert.Equal(t, "text", apiContent[0].Type)
-		// Check the logic in anthropic.go - it maps empty strings to "(Empty)"
-		assert.Equal(t, "(Empty)", apiContent[0].Text, "Empty text should be represented as '(Empty)'")
+		require.Len(t, apiContent, 0, "Empty text should result in an empty content list from contentFromLLM")
 	})
 
 	t.Run("Whitespace Only Text Content", func(t *testing.T) {
 		llmContent := content.FromText("   \n\t ")
 		apiContent := contentFromLLM(llmContent)
-		require.Len(t, apiContent, 1)
-		assert.Equal(t, "text", apiContent[0].Type)
-		assert.Equal(t, "(Empty)", apiContent[0].Text, "Whitespace-only text should be represented as '(Empty)'")
+		require.Len(t, apiContent, 0, "Whitespace-only text should result in an empty content list from contentFromLLM")
 	})
 
 	t.Run("JSON Content", func(t *testing.T) {
