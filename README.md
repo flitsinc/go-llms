@@ -93,7 +93,7 @@ type CommandParams struct {
 }
 
 // Create a shell command tool
-var RunCommand = tools.Func[CommandParams](
+var RunCommand = tools.Func(
     "Run Command",
     "Run a shell command and return the output",
     "run_command",

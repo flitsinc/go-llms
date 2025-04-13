@@ -113,12 +113,25 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		return &Stream{err: fmt.Errorf("error making request: %w", err)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		if m.debug {
-			data, _ := io.ReadAll(resp.Body)
-			return &Stream{err: fmt.Errorf("%s\n%s", resp.Status, data)}
-		} else {
-			return &Stream{err: fmt.Errorf("%s", resp.Status)}
+		defer resp.Body.Close()
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr == nil && len(bodyBytes) > 0 {
+			var anthropicErr struct {
+				Type  string `json:"type"`
+				Error struct {
+					Type    string `json:"type"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if jsonErr := json.Unmarshal(bodyBytes, &anthropicErr); jsonErr == nil && anthropicErr.Type == "error" {
+				// Successfully parsed the Anthropic error format
+				return &Stream{err: fmt.Errorf("%s: %s: %s", resp.Status, anthropicErr.Error.Type, anthropicErr.Error.Message)}
+			}
+			// Body read okay, but JSON parsing failed or structure mismatch.
+			// Fall through to return status only.
 		}
+		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
+		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
 	return &Stream{model: m.model, stream: resp.Body}

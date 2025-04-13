@@ -92,7 +92,25 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		return &Stream{err: fmt.Errorf("error making request: %w", err)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		// TODO: Consider parsing the body for a more specific error.
+		defer resp.Body.Close()
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+
+		if readErr == nil && len(bodyBytes) > 0 {
+			var openAIError struct {
+				Error struct {
+					Message string `json:"message"`
+					Type    string `json:"type"`
+				} `json:"error"`
+			}
+
+			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
+				// Successfully parsed the OpenAI error format
+				return &Stream{err: fmt.Errorf("%s: %s: %s", resp.Status, openAIError.Error.Type, openAIError.Error.Message)}
+			}
+			// Body read okay, but JSON parsing failed or structure mismatch.
+			// Fall through to return status only.
+		}
+		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
