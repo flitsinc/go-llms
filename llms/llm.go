@@ -137,8 +137,9 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 // `GetToolCall(r.Context())` to retrieve the `ToolCall` object, which includes
 // the function name (`Name`) and the unique `ID` for the specific call.
 func (l *LLM) AddExternalTools(schemas []tools.FunctionSchema, handler func(r tools.Runner, params json.RawMessage) tools.Result) {
-	for _, schema := range schemas {
-		l.AddTool(tools.Func(schema.Name, schema.Description, schema.Name, handler))
+	for i := range schemas {
+		schema := schemas[i] // Create a new variable for the loop
+		l.AddTool(tools.External(schema.Name, &schema, handler))
 	}
 }
 

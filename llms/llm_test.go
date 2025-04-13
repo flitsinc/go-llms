@@ -555,6 +555,21 @@ func TestAddExternalTools(t *testing.T) {
 	// Act: Add external tools
 	llm.AddExternalTools(externalSchemas, handler)
 
+	// Assert: Verify external tools have non-nil and correct schemas
+	searchTool := llm.toolbox.Get("search")
+	require.NotNil(t, searchTool, "Search tool should exist")
+	searchSchema := searchTool.Schema()
+	require.NotNil(t, searchSchema, "Schema for external tool 'search' should not be nil")
+	assert.Equal(t, "search", searchSchema.Name)
+	assert.Equal(t, "Perform a search", searchSchema.Description)
+
+	dbTool := llm.toolbox.Get("database")
+	require.NotNil(t, dbTool, "Database tool should exist")
+	dbSchema := dbTool.Schema()
+	require.NotNil(t, dbSchema, "Schema for external tool 'database' should not be nil")
+	assert.Equal(t, "database", dbSchema.Name)
+	assert.Equal(t, "Query a database", dbSchema.Description)
+
 	// Assert: Toolbox contents (verify all tools are present)
 	assert.Equal(t, 4, len(llm.toolbox.All()), "Toolbox should have 4 tools")
 	assert.NotNil(t, llm.toolbox.Get("calculator"), "Calculator tool should exist")

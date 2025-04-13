@@ -49,6 +49,26 @@ func Func[Params any](label, description, funcName string, fn func(r Runner, par
 	return t
 }
 
+// External returns a tool where the schema is provided explicitly, and the
+// handler function receives raw JSON parameters. This is suitable for external
+// tools where schema generation via reflection is not possible or desired.
+func External(label string, schema *FunctionSchema, fn func(r Runner, params json.RawMessage) Result) Tool {
+	if schema == nil {
+		panic("External requires a non-nil schema")
+	}
+	t := &tool{
+		label:       label,
+		description: schema.Description, // Use description from schema
+		funcName:    schema.Name,        // Use name from schema
+		schemaType:  jsonRawMessageType, // Mark as raw JSON type
+		schema:      schema,             // Assign schema directly
+		fn:          fn,                 // Handler directly accepts raw JSON
+	}
+	// Mark schemaOnce as completed so Schema() doesn't try to generate via reflection.
+	t.schemaOnce.Do(func() {})
+	return t
+}
+
 type tool struct {
 	label, description, funcName string
 
@@ -77,10 +97,7 @@ func (t *tool) Run(r Runner, params json.RawMessage) Result {
 }
 
 func (t *tool) Schema() *FunctionSchema {
-	if t.schemaType == jsonRawMessageType {
-		// We cannot generate schemas from json.RawMessage.
-		return nil
-	}
+	// Note: For external tools, the `schemaOnce` should be triggered already elsewhere.
 	t.schemaOnce.Do(func() {
 		schema := generateSchema(t.funcName, t.description, t.schemaType)
 		t.schema = &schema
