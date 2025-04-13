@@ -245,7 +245,14 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			default:
 				switch status {
 				case StreamStatusText:
-					updateChan <- TextUpdate{Text: stream.Text()}
+					// Check context before sending TextUpdate
+					select {
+					case <-ctx.Done():
+						streamErr = ctx.Err()
+						break loop
+					case updateChan <- TextUpdate{stream.Text()}:
+						// Sent successfully
+					}
 				case StreamStatusToolCallBegin:
 					toolCall := stream.ToolCall()
 					if toolCall.ID == "" {
@@ -258,9 +265,13 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 						streamErr = fmt.Errorf("tool %q not found", toolCall.Name)
 						break loop
 					}
-					updateChan <- ToolStartUpdate{
-						ToolCallID: toolCall.ID,
-						Tool:       tool,
+					// Check context before sending ToolStartUpdate
+					select {
+					case <-ctx.Done():
+						streamErr = ctx.Err()
+						break loop
+					case updateChan <- ToolStartUpdate{toolCall.ID, tool}:
+						// Sent successfully
 					}
 				case StreamStatusToolCallReady:
 					// TODO: We may want to support parallel tool calls, which
@@ -319,21 +330,20 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	// Create a new context with the ToolCall value
 	ctxWithValue := context.WithValue(ctx, ToolCallContextKey, toolCall)
 	runner := tools.NewRunner(ctxWithValue, toolbox, func(status string) {
-		// TODO: Add tests to verify that ToolStatusUpdate messages are correctly
-		//       received by the caller through the update channel. This might
-		//       require a more sophisticated mock runner or test setup.
-		updateChan <- ToolStatusUpdate{
-			ToolCallID: toolCall.ID,
-			Status:     status,
-			Tool:       t,
+		select {
+		case <-ctx.Done():
+			// Do nothing
+		case updateChan <- ToolStatusUpdate{toolCall.ID, status, t}:
+			// Sent successfully
 		}
 	})
 
 	result := toolbox.Run(runner, toolCall.Name, json.RawMessage(toolCall.Arguments))
-	updateChan <- ToolDoneUpdate{
-		ToolCallID: toolCall.ID,
-		Result:     result,
-		Tool:       t,
+	select {
+	case <-ctx.Done():
+		// Continue without sending the ToolDoneUpdate
+	case updateChan <- ToolDoneUpdate{toolCall.ID, result, t}:
+		// Sent successfully
 	}
 
 	return Message{
