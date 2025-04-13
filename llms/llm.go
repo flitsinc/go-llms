@@ -147,6 +147,9 @@ func (l *LLM) AddExternalTools(schemas []tools.FunctionSchema, handler func(r to
 // generating text, such as fetching data, running calculations, or interacting
 // with external systems.
 func (l *LLM) AddTool(t tools.Tool) {
+	if t == nil {
+		panic("attempted to add a nil tool to the LLM toolbox")
+	}
 	if l.toolbox == nil {
 		l.toolbox = tools.Box(t)
 	} else {
