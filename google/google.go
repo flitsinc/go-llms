@@ -79,7 +79,8 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 
 	var apiMessages []message
 	for _, msg := range messages {
-		apiMessages = append(apiMessages, messageFromLLM(msg))
+		convertedMsgs := messagesFromLLM(msg)
+		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
 	payload := map[string]any{

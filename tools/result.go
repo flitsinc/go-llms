@@ -1,51 +1,38 @@
 package tools
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"golang.org/x/image/draw"
+	"github.com/blixt/go-llms/content"
 )
 
+// Result defines the outcome of a tool execution.
 type Result interface {
 	// Label returns a short single line description of the entire tool run.
 	Label() string
-	// JSON returns the JSON representation of the result.
-	JSON() json.RawMessage
+	// Content returns the structured content of the result.
+	Content() content.Content
 	// Error returns the error that occurred during the tool run, if any.
 	Error() error
-	// Images returns a slice of base64 encoded images.
-	Images() []Image
 }
 
 type result struct {
 	label   string
-	content json.RawMessage
+	content content.Content
 	err     error
-	images  []Image
 }
 
 func (r *result) Label() string {
 	return r.label
 }
 
-func (r *result) JSON() json.RawMessage {
+func (r *result) Content() content.Content {
 	return r.content
 }
 
 func (r *result) Error() error {
 	return r.err
-}
-
-func (r *result) Images() []Image {
-	return r.images
 }
 
 func Error(err error) Result {
@@ -60,149 +47,70 @@ func ErrorWithLabel(label string, err error) Result {
 	if err == nil {
 		panic("tools: cannot create error result with nil error")
 	}
-	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err.Error()))
+	// Create a JSON structure for the error message.
+	errorJSON, _ := json.Marshal(map[string]string{"error": err.Error()})
+	c := content.FromRawJSON(errorJSON)
 	if label == "" {
 		label = fmt.Sprintf("Error: %s", err)
 	}
-	return &result{label, content, err, nil}
+	return &result{label, c, err}
 }
 
-func Success(content any) Result {
-	var label string
-	if stringer, ok := content.(fmt.Stringer); ok {
+// Success creates a result by marshaling the value to JSON content. It attempts
+// to generate a label automatically from the value if it implements
+// fmt.Stringer.
+func Success(value any) Result {
+	label := "Success"
+	if stringer, ok := value.(fmt.Stringer); ok {
 		label = stringer.String()
-		if len(label) > 50 {
-			label = label[:50]
+		if len(label) > 80 { // Keep auto-labels reasonably short
+			label = label[:77] + "..."
 		}
 	}
-	return SuccessWithLabel(label, content)
+	return SuccessWithLabel(label, value)
 }
 
-func SuccessWithLabel(label string, content any) Result {
-	jsonContent, err := json.Marshal(content)
+// SuccessWithLabel creates a result with an explicit label by marshaling the
+// value to JSON content.
+func SuccessWithLabel(label string, value any) Result {
+	c, err := content.FromAny(value)
 	if err != nil {
-		return ErrorWithLabel(label, err)
+		return ErrorWithLabel(fmt.Sprintf("Error (%s)", label), fmt.Errorf("failed to marshal success result to JSON: %w", err))
 	}
-	if label == "" {
-		label = "success"
-	}
-	return &result{label, jsonContent, nil, nil}
+	return SuccessWithContent(label, c)
 }
 
-type ResultBuilder struct {
-	images []Image
+// SuccessFromString creates a result containing the string wrapped in
+// {"output": ...} JSON content. It generates a label automatically from the
+// string content.
+func SuccessFromString(output string) Result {
+	label := output
+	if len(label) > 80 {
+		label = label[:77] + "..."
+	}
+	return SuccessFromStringWithLabel(label, output)
 }
 
-type Image struct {
-	Name, URL string
+// Successf creates a result containing the formatted string wrapped in
+// {"output": ...} JSON content. It generates a label automatically from the
+// string content.
+func Successf(format string, args ...any) Result {
+	output := fmt.Sprintf(format, args...)
+	return SuccessFromString(output)
 }
 
-func (b *ResultBuilder) AddImage(path string, highQuality bool) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	img, format, err := image.Decode(file)
-	if err != nil {
-		return err
-	}
-
-	// Check image dimensions and resize if necessary.
-	var maxDim int
-	if highQuality {
-		maxDim = 2048
-	} else {
-		maxDim = 512
-	}
-
-	bounds := img.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
-	if width > maxDim || height > maxDim {
-		var newWidth, newHeight int
-		if width > height {
-			newWidth = maxDim
-			newHeight = (height * maxDim) / width
-		} else {
-			newHeight = maxDim
-			newWidth = (width * maxDim) / height
-		}
-
-		resizedImg := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
-		draw.CatmullRom.Scale(resizedImg, resizedImg.Bounds(), img, bounds, draw.Over, nil)
-		img = resizedImg
-	}
-
-	// Turn the image data into a base64 string.
-	var encodedImage strings.Builder
-	encoder := base64.NewEncoder(base64.StdEncoding, &encodedImage)
-	defer encoder.Close()
-
-	var mimeType string
-	switch format {
-	case "jpeg":
-		err = jpeg.Encode(encoder, img, nil)
-		mimeType = "image/jpeg"
-	case "png":
-		err = png.Encode(encoder, img)
-		mimeType = "image/png"
-	default:
-		return fmt.Errorf("unsupported image format: %s", format)
-	}
-	if err != nil {
-		return err
-	}
-
-	dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, encodedImage.String())
-	return b.AddImageURL(filepath.Base(path), dataURI)
+// SuccessFromStringWithLabel creates a result with an explicit label,
+// containing the string wrapped in {"output": ...} JSON content.
+func SuccessFromStringWithLabel(label string, output string) Result {
+	return SuccessWithLabel(label, map[string]string{"output": output})
 }
 
-func (b *ResultBuilder) AddImageURL(name, dataURI string) error {
-	image := Image{
-		Name: name,
-		URL:  dataURI,
-	}
-	b.images = append(b.images, image)
-	return nil
-}
-
-func (b *ResultBuilder) Error(err error) Result {
-	return b.ErrorWithLabel("", err)
-}
-
-func (b *ResultBuilder) Errorf(format string, args ...any) Result {
-	return b.ErrorWithLabel("", fmt.Errorf(format, args...))
-}
-
-func (b *ResultBuilder) ErrorWithLabel(label string, err error) Result {
-	if err == nil {
-		panic("tools: cannot create error result with nil error in ResultBuilder")
-	}
-	content := json.RawMessage(fmt.Sprintf("{\"error\": %q}", err.Error()))
-	if label == "" {
-		label = fmt.Sprintf("Error: %s", err)
-	}
-	return &result{label, content, err, b.images}
-}
-
-func (b *ResultBuilder) Success(content any) Result {
-	var label string
-	if stringer, ok := content.(fmt.Stringer); ok {
-		label = stringer.String()
-		if len(label) > 50 {
-			label = label[:50]
-		}
-	}
-	return b.SuccessWithLabel(label, content)
-}
-func (b *ResultBuilder) SuccessWithLabel(label string, content any) Result {
-	jsonContent, err := json.Marshal(content)
-	if err != nil {
-		return b.ErrorWithLabel(label, err)
-	}
+// SuccessWithContent creates a result with an explicit label and
+// pre-constructed content. This is the escape hatch for advanced use cases,
+// like including images.
+func SuccessWithContent(label string, content content.Content) Result {
 	if label == "" {
 		label = "Success"
 	}
-	return &result{label, jsonContent, nil, b.images}
+	return &result{label: label, content: content, err: nil}
 }

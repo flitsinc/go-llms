@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,13 +17,24 @@ import (
 
 // --- Common Test Tool Definition ---
 
+// Helper to extract JSON data from result content for testing
+func extractJSONFromResult(t *testing.T, r tools.Result) json.RawMessage {
+	t.Helper()
+	require.NotNil(t, r.Content(), "Result content should not be nil")
+	require.NotEmpty(t, r.Content(), "Result content should not be empty")
+	jsonItem, ok := r.Content()[0].(*content.JSON)
+	require.True(t, ok, "First content item should be JSON")
+	return jsonItem.Data
+}
+
 type TestToolParams struct {
 	TestParam string `json:"test_param"`
 }
 
 var testTool = tools.Func("Test Tool", "A test tool for testing", "test_tool",
 	func(r tools.Runner, p TestToolParams) tools.Result {
-		return tools.Success(map[string]any{
+		// Use SuccessWithLabel for consistency with other tests
+		return tools.SuccessWithLabel("Test Tool Ran", map[string]any{
 			"result": fmt.Sprintf("Processed: %s", p.TestParam),
 		})
 	})
@@ -238,7 +250,8 @@ func TestChatFlow(t *testing.T) {
 	require.True(t, ok, "Third update should be ToolDoneUpdate")
 	assert.Equal(t, "Test Tool", toolDoneUpdate.Tool.Label())
 	assert.Equal(t, "test_tool-id-0", toolDoneUpdate.ToolCallID, "ToolCallID should match the ID from the message")
-	assert.JSONEq(t, `{"result":"Processed: test_value_test_tool"}`, string(toolDoneUpdate.Result.JSON()), "Search should return correct result")
+	resultJSON := extractJSONFromResult(t, toolDoneUpdate.Result)
+	assert.JSONEq(t, `{"result":"Processed: test_value_test_tool"}`, string(resultJSON))
 
 	secondTextUpdate, ok := updates[3].(TextUpdate)
 	require.True(t, ok, "Fourth update should be TextUpdate")
@@ -602,7 +615,8 @@ func TestAddExternalTools(t *testing.T) {
 	assert.Equal(t, "search", searchDone.Tool.FuncName())
 	assert.Equal(t, searchStart.ToolCallID, searchDone.ToolCallID)
 	require.NoError(t, searchDone.Result.Error())
-	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(searchDone.Result.JSON()))
+	resultJSON := extractJSONFromResult(t, searchDone.Result)
+	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(resultJSON))
 
 	dbStart, ok := updates[3].(ToolStartUpdate)
 	require.True(t, ok, "Update 3 should be ToolStartUpdate (database)")
@@ -614,7 +628,8 @@ func TestAddExternalTools(t *testing.T) {
 	assert.Equal(t, "database", dbDone.Tool.FuncName())
 	assert.Equal(t, dbStart.ToolCallID, dbDone.ToolCallID)
 	require.NoError(t, dbDone.Result.Error())
-	assert.JSONEq(t, `{"rows":10}`, string(dbDone.Result.JSON()))
+	resultJSON = extractJSONFromResult(t, dbDone.Result)
+	assert.JSONEq(t, `{"rows":10}`, string(resultJSON))
 
 	finalText, ok := updates[5].(TextUpdate)
 	require.True(t, ok, "Update 5 should be TextUpdate (final)")
@@ -719,164 +734,63 @@ func TestAddToolWithNilToolbox(t *testing.T) {
 	assert.Equal(t, "simple_tool", llm.toolbox.All()[0].FuncName(), "Tool should be added correctly")
 }
 
-// TestRunToolCallImageHandling tests the image handling in runToolCall with a fixed implementation
+// TestRunToolCallImageHandling tests returning content including images.
 func TestRunToolCallImageHandling(t *testing.T) {
-	// Arrange: Image tool
-	type ImageToolParams struct {
-		ImageURL string `json:"image_url"`
-	}
+	// Arrange: Image tool that uses SuccessWithContent
 	imageTestTool := tools.Func("Image Tool", "A tool that returns an image", "image_tool",
-		func(r tools.Runner, p ImageToolParams) tools.Result {
-			return &imageResultWithImages{
-				label: "Image result",
-				data:  json.RawMessage(`{"result":"Image generated"}`),
-				imgs:  []tools.Image{{Name: "test-image", URL: p.ImageURL}},
-			}
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			// Simulate generating JSON and adding an image
+			jsonData, _ := json.Marshal(map[string]string{"status": "image_included"})
+			resultContent := content.FromRawJSON(jsonData)
+			// In a real tool, you might use content.ImageToDataURI here
+			resultContent.AddImage("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+			// Use SuccessWithContent to return multiple content types with a label
+			return tools.SuccessWithContent("Generated test image", resultContent)
 		})
 
-	// Arrange: Image provider and LLM
-	provider := &mockProviderWithImages{}
-	llm := New(provider, imageTestTool)
+	// Arrange: Mock provider configured to call the image tool
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{"image_tool"},
+	}
+	llm, _ := setupTestLLM(t, mockProv, imageTestTool)
 
 	// Act: Run chat
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = runTestChat(ctx, t, llm, "Generate a test image")
+	updates := runTestChat(ctx, t, llm, "Generate a test image")
 
 	// Assert: No error
 	assert.NoError(t, llm.Err(), "Should not return an error")
 
-	// Assert: User message with image content exists in history
-	var foundImageMessage bool
-	for _, msg := range llm.lastSentMessages {
-		if msg.Role == "user" {
-			for _, part := range msg.Content {
-				if part.Type() == content.TypeImageURL {
-					foundImageMessage = true
-					break
-				}
-			}
-		}
-		if foundImageMessage {
-			break
-		}
-	}
-	assert.True(t, foundImageMessage, "Should have a user message with image content")
+	// Assert: ToolDoneUpdate has the correct content
+	require.Len(t, updates, 4, "Should have 4 updates")
+	doneUpdate, ok := updates[2].(ToolDoneUpdate)
+	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
+	assert.Equal(t, "Generated test image", doneUpdate.Result.Label())
+	require.NoError(t, doneUpdate.Result.Error())
+	require.NotNil(t, doneUpdate.Result.Content())
+	require.Len(t, doneUpdate.Result.Content(), 2, "Result content should have 2 parts (JSON + Image)")
+
+	// Check JSON part
+	jsonPart, ok := doneUpdate.Result.Content()[0].(*content.JSON)
+	require.True(t, ok, "First part should be JSON")
+	assert.JSONEq(t, `{"status":"image_included"}`, string(jsonPart.Data))
+
+	// Check Image part
+	imgPart, ok := doneUpdate.Result.Content()[1].(*content.ImageURL)
+	require.True(t, ok, "Second part should be ImageURL")
+	assert.True(t, strings.HasPrefix(imgPart.URL, "data:image/png;base64"), "Image URL should be data URI")
+
+	// Assert: Message history contains the tool message with both content types
+	require.Len(t, llm.lastSentMessages, 4, "Should have 4 messages in history")
+	toolMsg := llm.lastSentMessages[2]
+	assert.Equal(t, "tool", toolMsg.Role)
+	require.Len(t, toolMsg.Content, 2, "Tool message content should have 2 parts")
+	_, jsonOK := toolMsg.Content[0].(*content.JSON)
+	_, imgOK := toolMsg.Content[1].(*content.ImageURL)
+	assert.True(t, jsonOK, "First part in history message should be JSON")
+	assert.True(t, imgOK, "Second part in history message should be ImageURL")
 }
-
-// mockProviderWithImages is a fixed implementation for the image test
-type mockProviderWithImages struct{}
-
-func (m *mockProviderWithImages) Company() string { return "Mock Image Provider" }
-
-func (m *mockProviderWithImages) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
-	// Check if we've already processed tool responses in a previous turn
-	processedToolResponses := false
-	for _, msg := range messages {
-		if msg.Role == "tool" {
-			processedToolResponses = true
-			break
-		}
-	}
-
-	// If we've processed tool responses, return a stream with just text
-	if processedToolResponses {
-		return &mockStreamWithImages{
-			// No toolCallID needed, Iter will only yield text
-		}
-	}
-
-	// Otherwise, this is the first turn, make the tool call
-	uniqueID := fmt.Sprintf("image-tool-id-%d", time.Now().UnixNano())
-	return &mockStreamWithImages{
-		toolCallID: uniqueID, // Iter will yield tool call statuses
-	}
-}
-
-// mockStreamWithImages is a fixed implementation that correctly handles streaming
-type mockStreamWithImages struct {
-	message      Message
-	toolCallMade bool
-	toolCallID   string // Will be empty if we shouldn't make a call
-}
-
-func (s *mockStreamWithImages) Err() error { return nil }
-
-func (s *mockStreamWithImages) Iter() func(func(StreamStatus) bool) {
-	return func(yield func(StreamStatus) bool) {
-		// First yield text
-		if !yield(StreamStatusText) {
-			return
-		}
-
-		// Only make the tool call if ID is present and not already made
-		if s.toolCallID != "" && !s.toolCallMade {
-			// Then yield a tool call to a tool that will return an image
-			s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
-				ID:        s.toolCallID,
-				Name:      "image_tool",
-				Arguments: json.RawMessage(`{"image_url":"https://example.com/test-image.jpg"}`),
-			})
-
-			if !yield(StreamStatusToolCallBegin) {
-				return
-			}
-
-			if !yield(StreamStatusToolCallReady) {
-				return
-			}
-
-			s.toolCallMade = true
-		}
-		// Stream ends here naturally
-	}
-}
-
-func (s *mockStreamWithImages) Message() Message {
-	text := "I'll generate an image for you."
-	if s.toolCallID == "" { // Adjust text if this is the second turn
-		text = "I have processed the image tool result."
-	}
-
-	if s.message.Content == nil {
-		s.message = Message{
-			Role:      "assistant",
-			Content:   content.FromText(text),
-			ToolCalls: s.message.ToolCalls, // ToolCalls will be empty if toolCallID was empty
-		}
-	}
-	return s.message
-}
-
-func (s *mockStreamWithImages) Text() string {
-	if s.toolCallID == "" {
-		return "I have processed the image tool result."
-	}
-	return "I'll generate an image for you."
-}
-
-func (s *mockStreamWithImages) ToolCall() ToolCall {
-	if len(s.message.ToolCalls) > 0 {
-		return s.message.ToolCalls[len(s.message.ToolCalls)-1]
-	}
-	return ToolCall{}
-}
-
-func (s *mockStreamWithImages) CostUSD() float64 { return 0.0001 }
-
-func (s *mockStreamWithImages) Usage() (inputTokens, outputTokens int) { return 10, 20 }
-
-// imageResultWithImages is a custom tools.Result implementation that returns images (needed by the test)
-type imageResultWithImages struct {
-	label string
-	data  json.RawMessage
-	imgs  []tools.Image
-}
-
-func (r *imageResultWithImages) Label() string         { return r.label }
-func (r *imageResultWithImages) JSON() json.RawMessage { return r.data }
-func (r *imageResultWithImages) Error() error          { return nil }
-func (r *imageResultWithImages) Images() []tools.Image { return r.imgs }
 
 // TestTurnContextCancellation tests the context cancellation path in the turn method with a fixed implementation
 func TestTurnContextCancellation(t *testing.T) {
@@ -1153,7 +1067,8 @@ func TestRunToolCallWithError(t *testing.T) {
 	assert.Contains(t, doneUpdate.Result.Error().Error(), "internal tool error detail", "Result error should contain tool's internal error")
 	assert.Equal(t, "Error: internal tool error detail", doneUpdate.Result.Label(), "Result label should match the error message") // Default label from Error()
 	// Check JSON representation - only contains the detail error
-	assert.JSONEq(t, `{"error":"internal tool error detail"}`, string(doneUpdate.Result.JSON()))
+	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
+	assert.JSONEq(t, `{"error":"internal tool error detail"}`, string(resultJSON))
 
 	// Assert: Message history includes the tool result message with error
 	require.Len(t, llm.lastSentMessages, 4, "Should have 4 messages in history")
@@ -1208,7 +1123,8 @@ func TestToolStatusUpdates(t *testing.T) {
 	assert.Equal(t, "status_tool", doneUpdate.Tool.FuncName())
 	assert.Equal(t, startUpdate.ToolCallID, doneUpdate.ToolCallID, "Done ID should match start ID")
 	assert.NoError(t, doneUpdate.Result.Error())
-	assert.JSONEq(t, `{"status":"done"}`, string(doneUpdate.Result.JSON()))
+	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
+	assert.JSONEq(t, `{"status":"done"}`, string(resultJSON))
 }
 
 // --- Test for ToolCall in Context ---
@@ -1257,5 +1173,6 @@ func TestToolCallInContext(t *testing.T) {
 	assert.Equal(t, "context_checker_tool", doneUpdate.Tool.FuncName())
 	assert.Equal(t, expectedToolCallID, doneUpdate.ToolCallID, "ToolCallID in done update should match expected")
 	require.NoError(t, doneUpdate.Result.Error())
-	assert.JSONEq(t, fmt.Sprintf(`{"tool_call_id":%q}`, expectedToolCallID), string(doneUpdate.Result.JSON()))
+	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
+	assert.JSONEq(t, fmt.Sprintf(`{"tool_call_id":%q}`, expectedToolCallID), string(resultJSON))
 }

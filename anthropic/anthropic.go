@@ -365,29 +365,38 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 
 func messageFromLLM(m llms.Message) message {
 	if m.Role == "tool" {
-		// Anthropic considers tool responses to be from the user.
+		// Convert the llms.Message content (potentially multi-part) into the Anthropic
+		// tool_result content block format.
+		anthropicToolResultContent := contentFromLLM(m.Content)
+
+		// Anthropic expects tool results to be from the user, wrapped in a specific structure.
 		return message{
 			Role: "user",
 			Content: []contentItem{
 				{
 					Type:      "tool_result",
-					ToolUseID: m.ToolCallID,
-					Content:   contentFromLLM(m.Content),
+					ToolUseID: m.ToolCallID, // Use the llms.Message ToolCallID
+					Content:   anthropicToolResultContent,
 				},
 			},
 		}
 	}
-	content := contentFromLLM(m.Content)
-	for _, toolCall := range m.ToolCalls {
-		content = append(content, contentItem{
-			Type:  "tool_use",
-			ID:    toolCall.ID,
-			Name:  toolCall.Name,
-			Input: toolCall.Arguments,
-		})
+
+	// Handle regular messages (system, user, assistant)
+	apiContent := contentFromLLM(m.Content)
+	// Append tool_use blocks if the message is from the assistant and has tool calls.
+	if m.Role == "assistant" {
+		for _, toolCall := range m.ToolCalls {
+			apiContent = append(apiContent, contentItem{
+				Type:  "tool_use",
+				ID:    toolCall.ID,
+				Name:  toolCall.Name,
+				Input: toolCall.Arguments,
+			})
+		}
 	}
 	return message{
 		Role:    m.Role,
-		Content: content,
+		Content: apiContent,
 	}
 }

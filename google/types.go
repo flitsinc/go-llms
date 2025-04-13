@@ -58,31 +58,6 @@ type part struct {
 
 type parts []part
 
-func createFunctionResponse(name string, c content.Content) *functionResponse {
-	if len(c) == 1 {
-		if jc, ok := c[0].(*content.JSON); ok {
-			return &functionResponse{Name: name, Response: jc.Data}
-		}
-	}
-	var response []any
-	for _, item := range c {
-		switch v := item.(type) {
-		case *content.JSON:
-			response = append(response, v.Data)
-		case *content.Text:
-			response = append(response, v.Text)
-		default:
-			panic(fmt.Sprintf("unhandled content item type %T", item))
-		}
-	}
-	data, err := json.Marshal(response)
-	if err != nil {
-		// TODO: Return a normal error.
-		panic(fmt.Sprintf("failed to marshal function response: %v", err))
-	}
-	return &functionResponse{Name: name, Response: data}
-}
-
 func convertContent(c content.Content) (p parts) {
 	for _, item := range c {
 		var pp part
@@ -142,28 +117,104 @@ type message struct {
 	Parts parts  `json:"parts"`
 }
 
-func messageFromLLM(m llms.Message) message {
-	var role string
-	switch m.Role {
-	case "assistant":
-		role = "model"
-	case "tool":
-		role = "user"
-	default:
-		role = m.Role
-	}
-	if m.ToolCallID != "" {
-		return message{
-			Role: role,
+// messagesFromLLM converts an llms.Message to the Google API message format.
+// It may return multiple messages if the input is a tool result with auxiliary content.
+func messagesFromLLM(m llms.Message) []message {
+	if m.Role == "tool" {
+		var messagesToReturn []message
+		var primaryResultJSON json.RawMessage
+		var secondaryContent content.Content
+
+		// Extract primary result (must be JSON) and potential secondary content.
+		if len(m.Content) > 0 {
+			if jsonItem, ok := m.Content[0].(*content.JSON); ok {
+				primaryResultJSON = jsonItem.Data
+				if len(m.Content) > 1 {
+					secondaryContent = m.Content[1:]
+				}
+			} else {
+				// If the first part isn't JSON, create an error response and treat all original content as secondary.
+				errorData, _ := json.Marshal(map[string]string{"error": "Primary tool result must be JSON for Google Gemini"})
+				primaryResultJSON = errorData
+				secondaryContent = m.Content // All original content becomes secondary
+			}
+		} else {
+			// Handle empty result content - send empty JSON object.
+			primaryResultJSON = json.RawMessage("{}")
+		}
+
+		// Create the primary tool/function response message.
+		// Google expects the functionResponse.Response to contain {"name": toolCallID, "content": actual_result}
+		responseWrapperJSON, err := json.Marshal(map[string]any{
+			"name":    m.ToolCallID,      // Use the original ToolCallID here
+			"content": primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
+		})
+		if err != nil {
+			// Handle marshaling error for the wrapper, maybe return an error message
+			panic(fmt.Sprintf("failed to marshal google function response wrapper: %v", err))
+		}
+
+		primaryMessage := message{
+			Role: "function", // Google uses "function" role for function responses.
 			Parts: parts{
-				{FunctionResponse: createFunctionResponse(m.ToolCallID, m.Content)},
+				{
+					FunctionResponse: &functionResponse{
+						Name:     m.ToolCallID, // Associate with the call ID
+						Response: responseWrapperJSON,
+					},
+				},
 			},
 		}
+		messagesToReturn = append(messagesToReturn, primaryMessage)
+
+		// Handle additional content items (if any) by creating a secondary user message.
+		if len(secondaryContent) > 0 {
+			secondaryParts := convertContent(secondaryContent)
+			if len(secondaryParts) > 0 { // Only add if there are convertible parts
+				secondaryMessage := message{
+					Role:  "user", // Faked user message for additional content
+					Parts: secondaryParts,
+				}
+				messagesToReturn = append(messagesToReturn, secondaryMessage)
+			}
+		}
+		return messagesToReturn
 	}
-	return message{
-		Role:  role,
-		Parts: convertContent(m.Content),
+
+	// Handle regular messages (user, model/assistant)
+	apiRole := m.Role
+	if apiRole == "assistant" {
+		apiRole = "model" // Google uses "model" for assistant role
 	}
+
+	apiParts := convertContent(m.Content)
+
+	// Add function calls if the message is from the assistant/model
+	if m.Role == "assistant" {
+		for _, toolCall := range m.ToolCalls {
+			// Ensure toolCall.Arguments is not nil before trying to use it
+			args := json.RawMessage("{}") // Default to empty JSON object if nil
+			if toolCall.Arguments != nil {
+				args = toolCall.Arguments
+			}
+			apiParts = append(apiParts, part{
+				FunctionCall: &functionCall{
+					Name: toolCall.Name,
+					Args: args,
+				},
+			})
+		}
+	}
+
+	// Only return a message if it has parts
+	if len(apiParts) == 0 {
+		return []message{}
+	}
+
+	return []message{{
+		Role:  apiRole,
+		Parts: apiParts,
+	}}
 }
 
 type usageMetadata struct {

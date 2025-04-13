@@ -99,7 +99,7 @@ var RunCommand = tools.Func[CommandParams](
     "run_command",
     func(r tools.Runner, p CommandParams) tools.Result {
         return tools.SuccessWithLabel(p.Command, map[string]any{
-            "output": "Command output would go here",
+            "output": fmt.Sprintf("Simulated output for: %s", p.Command),
         })
     },
 )
@@ -117,9 +117,10 @@ func main() {
         case llms.TextUpdate:
             fmt.Print(update.Text)
         case llms.ToolStartUpdate:
-            fmt.Printf("(Using tool: %s)\n", update.Tool.Label())
+            fmt.Printf("(Using tool: %s)\n", update.Tool.Label()) // Shows "Run Command"
         case llms.ToolDoneUpdate:
-            fmt.Printf("(Tool result: %s)\n", update.Result.Label())
+            // Shows the label specific to this execution, e.g., "ls -l"
+            fmt.Printf("(Tool result: %s)\n", update.Result.Label()) 
         }
     }
     
@@ -194,11 +195,12 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
     // 3. Process the response.
     defer resp.Body.Close()
     if resp.StatusCode != http.StatusOK {
-        // Handle API error
-        return tools.Error(...)
+        // Use Errorf or ErrorWithLabel for tool errors
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        return tools.Errorf("External tool API failed (%s): %s", resp.Status, string(bodyBytes))
     }
     bodyBytes, err := io.ReadAll(resp.Body)
-    // ... handle error ...
+    // ... handle read error ...
 
     // 4. Return the result based on the response body.
     return tools.Success(json.RawMessage(bodyBytes))

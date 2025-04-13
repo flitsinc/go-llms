@@ -44,19 +44,18 @@ func (m *Model) Company() string {
 	return "OpenAI"
 }
 
-func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, tools *tools.Toolbox) llms.ProviderStream {
+func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
 	var apiMessages []message
 	if systemPrompt != nil {
-		apiMessages = make([]message, 0, len(messages)+1)
 		apiMessages = append(apiMessages, message{
 			Role:    "system",
 			Content: convertContent(systemPrompt),
 		})
-	} else {
-		apiMessages = make([]message, 0, len(messages))
 	}
+
 	for _, msg := range messages {
-		apiMessages = append(apiMessages, messageFromLLM(msg))
+		convertedMsgs := messagesFromLLM(msg)
+		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
 	payload := map[string]any{
@@ -70,8 +69,8 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		payload["max_completion_tokens"] = m.maxCompletionTokens
 	}
 
-	if tools != nil {
-		payload["tools"] = Tools(tools)
+	if toolbox != nil {
+		payload["tools"] = Tools(toolbox)
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -219,6 +218,8 @@ func (s *Stream) Usage() (inputTokens, outputTokens int) {
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	scanner := bufio.NewScanner(s.stream)
+	var activeToolCallIndex = -1 // Track the index of the tool call being processed
+
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		for scanner.Scan() {
@@ -227,6 +228,13 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				continue
 			}
 			if line == "[DONE]" {
+				// Stream ended. If a tool call was active, mark it as ready.
+				if activeToolCallIndex != -1 {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
+					}
+					activeToolCallIndex = -1 // Reset active tool call
+				}
 				continue
 			}
 			var chunk chatCompletionChunk
@@ -244,55 +252,76 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			if delta.Role != "" {
 				s.message.Role = delta.Role
 			}
-			s.lastText = delta.Content
-			if s.lastText != "" {
-				s.message.Content.Append(s.lastText)
-				if !yield(llms.StreamStatusText) {
-					return
-				}
-			}
-			if len(delta.ToolCalls) > 1 {
-				panic("received more than one tool call in a single chunk")
-			}
-			if len(delta.ToolCalls) == 0 {
-				continue
-			}
-			toolDelta := delta.ToolCalls[0]
-			if toolDelta.Index < len(s.message.ToolCalls) {
-				if toolDelta.Index != len(s.message.ToolCalls)-1 {
-					panic("tool call index mismatch")
-				}
-				s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
-				if !yield(llms.StreamStatusToolCallData) {
-					return
-				}
-			} else {
-				if toolDelta.Index > 0 {
-					if !yield(llms.StreamStatusToolCallReady) {
+			// Content is nullable string in delta
+			if delta.Content != nil {
+				s.lastText = *delta.Content
+				if s.lastText != "" {
+					s.message.Content.Append(s.lastText)
+					if !yield(llms.StreamStatusText) {
 						return
 					}
 				}
-				s.message.ToolCalls = append(s.message.ToolCalls, toolDelta.ToLLM())
-				if !yield(llms.StreamStatusToolCallBegin) {
-					return
+			}
+
+			// Handle Tool Calls Delta
+			if len(delta.ToolCalls) > 0 {
+				for _, toolDelta := range delta.ToolCalls {
+					if toolDelta.Index >= len(s.message.ToolCalls) {
+						// This is a new tool call starting
+						if toolDelta.Index != len(s.message.ToolCalls) {
+							panic(fmt.Sprintf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index))
+						}
+						// If a previous tool call was active, mark it as ready now.
+						if activeToolCallIndex != -1 {
+							if !yield(llms.StreamStatusToolCallReady) {
+								return // Abort if yield fails
+							}
+						}
+						// Add the new tool call (converting from toolCallDelta)
+						llmToolCall := toolDelta.ToLLM()
+						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
+						activeToolCallIndex = toolDelta.Index // Mark new tool call as active
+						if !yield(llms.StreamStatusToolCallBegin) {
+							return // Abort if yield fails
+						}
+					} else {
+						// This is appending arguments to an existing tool call
+						if toolDelta.Function.Arguments != "" {
+							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
+							if !yield(llms.StreamStatusToolCallData) {
+								return // Abort if yield fails
+							}
+						}
+					}
 				}
 			}
-		}
-		if len(s.message.ToolCalls) > 0 {
-			if !yield(llms.StreamStatusToolCallReady) {
-				return
+			// Check if the overall message is finished (might indicate last tool call is ready)
+			if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
+				if activeToolCallIndex != -1 {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return // Abort if yield fails
+					}
+					activeToolCallIndex = -1 // Reset active tool call
+				}
 			}
 		}
 	}
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	tools := []Tool{}
-	for _, tool := range toolbox.All() {
-		tools = append(tools, Tool{
-			Type:     "function",
-			Function: *tool.Schema(),
+	apiTools := []Tool{}
+	for _, t := range toolbox.All() {
+		// Get the schema which is *tools.FunctionSchema
+		schema := t.Schema()
+		if schema == nil {
+			// Handle cases where a tool might not have a schema (though unlikely with current structure)
+			continue
+		}
+		apiTools = append(apiTools, Tool{
+			Type: "function",
+			// Dereference the pointer to get tools.FunctionSchema
+			Function: *schema,
 		})
 	}
-	return tools
+	return apiTools
 }

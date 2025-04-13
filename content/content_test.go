@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestContentMarshalJSON(t *testing.T) {
@@ -172,4 +175,47 @@ func TestContentRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContentAppend(t *testing.T) {
+	t.Run("Append to empty content", func(t *testing.T) {
+		var c Content
+		c.Append("first text")
+		require.Len(t, c, 1)
+		textItem, ok := c[0].(*Text)
+		require.True(t, ok)
+		assert.Equal(t, "first text", textItem.Text)
+	})
+
+	t.Run("Append to existing text item", func(t *testing.T) {
+		c := FromText("initial ")
+		c.Append("appended")
+		require.Len(t, c, 1)
+		textItem, ok := c[0].(*Text)
+		require.True(t, ok)
+		assert.Equal(t, "initial appended", textItem.Text)
+	})
+
+	t.Run("Append after non-text item", func(t *testing.T) {
+		c := Content{
+			&ImageURL{URL: "image.png"},
+		}
+		c.Append("text after image")
+		require.Len(t, c, 2)
+		_, okImg := c[0].(*ImageURL)
+		require.True(t, okImg)
+		textItem, okText := c[1].(*Text)
+		require.True(t, okText)
+		assert.Equal(t, "text after image", textItem.Text)
+	})
+
+	t.Run("Append multiple times to existing text", func(t *testing.T) {
+		c := FromText("start")
+		c.Append(" middle")
+		c.Append(" end")
+		require.Len(t, c, 1)
+		textItem, ok := c[0].(*Text)
+		require.True(t, ok)
+		assert.Equal(t, "start middle end", textItem.Text)
+	})
 }

@@ -266,8 +266,8 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 					// TODO: We may want to support parallel tool calls, which
 					// means the results would need to be collected later (and
 					// maybe out of sequence).
-					messages := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
-					toolMessages = append(toolMessages, messages...)
+					toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
+					toolMessages = append(toolMessages, toolMessage)
 				}
 			}
 		}
@@ -303,7 +303,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	return len(toolMessages) > 0, nil
 }
 
-func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) []Message {
+func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall ToolCall, updateChan chan<- Update) Message {
 	if toolCall.ID == "" {
 		panic(fmt.Sprintf("tool call (%s) is missing an ID", toolCall.Name))
 	}
@@ -336,32 +336,9 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 		Tool:       t,
 	}
 
-	messages := []Message{
-		{
-			Role:       "tool",
-			Content:    content.FromRawJSON(result.JSON()),
-			ToolCallID: toolCall.ID,
-		},
+	return Message{
+		Role:       "tool",
+		Content:    result.Content(),
+		ToolCallID: toolCall.ID,
 	}
-
-	if images := result.Images(); len(images) > 0 {
-		// TODO: Revisit this image handling logic. Faking a user message feels
-		//       like a workaround. Explore if the Message/Content system can be
-		//       extended to support images directly within tool results, or find
-		//       a cleaner mechanism to associate images with their originating
-		//       tool call without polluting the user message history synthetically.
-		// "tool" messages can't actually contain image content. So we need to
-		// fake a user message instead.
-		message := Message{
-			Role: "user",
-			// TODO: Support more than one image name.
-			Content: content.Textf("Here is %s. This is an automated message, not actually from the user.", images[0].Name),
-		}
-		for _, image := range images {
-			message.Content.AddImage(image.URL)
-		}
-		messages = append(messages, message)
-	}
-
-	return messages
 }

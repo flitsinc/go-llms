@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/blixt/go-llms/content"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,6 +18,16 @@ type Params struct {
 	Age     int    `json:"age"`
 	Email   string `json:"email,omitempty"` // Optional field
 	IsAdmin bool   `json:"isAdmin"`
+}
+
+// Helper to extract JSON data from result content for testing
+func extractJSONFromResult(t *testing.T, r Result) json.RawMessage {
+	t.Helper()
+	require.NotNil(t, r.Content(), "Result content should not be nil")
+	require.NotEmpty(t, r.Content(), "Result content should not be empty")
+	jsonItem, ok := r.Content()[0].(*content.JSON)
+	require.True(t, ok, "First content item should be JSON")
+	return jsonItem.Data
 }
 
 // TestGenerateSchema checks that the JSON schema is generated correctly from the Params struct.
@@ -69,7 +81,8 @@ func TestToolRun_CorrectData(t *testing.T) {
 	result := tool.Run(&runner{}, params)
 
 	require.NoError(t, result.Error(), "Expected no error")
-	assert.JSONEq(t, `{"name":"Bob","age":30,"email":"bob@example.com","isAdmin":false}`, string(result.JSON()))
+	resultJSON := extractJSONFromResult(t, result)
+	assert.JSONEq(t, `{"name":"Bob","age":30,"email":"bob@example.com","isAdmin":false}`, string(resultJSON))
 }
 
 // TestToolRun_OptionalFieldAbsent verifies that the tool handles the absence of optional fields correctly.
@@ -88,18 +101,15 @@ func TestToolRun_OptionalFieldAbsent(t *testing.T) {
 	result := tool.Run(&runner{}, params)
 
 	require.NoError(t, result.Error(), "Expected no error")
-	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"","isAdmin":true}`, string(result.JSON()))
+	resultJSON := extractJSONFromResult(t, result)
+	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"","isAdmin":true}`, string(resultJSON))
 }
 
 // TestToolRun_MissingRequiredField verifies that the tool correctly handles missing required fields.
 func TestToolRun_MissingRequiredField(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success(map[string]any{
-			"name":    p.Name,
-			"age":     p.Age,
-			"email":   p.Email,
-			"isAdmin": p.IsAdmin,
-		})
+		// This part of the function shouldn't be reached if validation works
+		return Success(map[string]any{})
 	}
 	tool := Func("Test Tool", "Test function for Params", "test_tool", testFunc)
 
@@ -108,17 +118,16 @@ func TestToolRun_MissingRequiredField(t *testing.T) {
 
 	assert.Error(t, result.Error(), "Expected an error for missing required fields")
 	assert.Contains(t, result.Error().Error(), "missing required field", "Error should mention missing required field")
+	// Check the content of the error result
+	resultJSON := extractJSONFromResult(t, result)
+	assert.Contains(t, string(resultJSON), "missing required field")
 }
 
 // TestToolRun_InvalidDataType checks that the tool correctly identifies incorrect data types in input.
 func TestToolRun_InvalidDataType(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
-		return Success(map[string]any{
-			"name":    p.Name,
-			"age":     p.Age,
-			"email":   p.Email,
-			"isAdmin": p.IsAdmin,
-		})
+		// This part shouldn't be reached
+		return Success(map[string]any{})
 	}
 	tool := Func("Test Tool", "Test function for Params", "test_tool", testFunc)
 
@@ -128,6 +137,9 @@ func TestToolRun_InvalidDataType(t *testing.T) {
 
 	assert.Error(t, result.Error(), "Expected a type mismatch error")
 	assert.Contains(t, result.Error().Error(), "type mismatch", "Error should mention type mismatch")
+	// Check the content of the error result
+	resultJSON := extractJSONFromResult(t, result)
+	assert.Contains(t, string(resultJSON), "type mismatch")
 }
 
 // TestToolRun_UnexpectedFields verifies that the tool ignores fields that are not defined in the schema.
@@ -147,7 +159,8 @@ func TestToolRun_UnexpectedFields(t *testing.T) {
 	result := tool.Run(&runner{}, params)
 
 	require.NoError(t, result.Error(), "Expected no error for unexpected field")
-	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"","isAdmin":true}`, string(result.JSON()))
+	resultJSON := extractJSONFromResult(t, result)
+	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"","isAdmin":true}`, string(resultJSON))
 }
 
 type AdvancedParams struct {
@@ -175,7 +188,8 @@ func TestValidateJSONWithArrayAndObject(t *testing.T) {
 		result := tool.Run(&runner{}, validParams)
 
 		require.NoError(t, result.Error(), "Expected no error")
-		assert.JSONEq(t, `{"id":101,"features":["fast","reliable","secure"],"profile":{"username":"user01","active":true}}`, string(result.JSON()))
+		resultJSON := extractJSONFromResult(t, result)
+		assert.JSONEq(t, `{"id":101,"features":["fast","reliable","secure"],"profile":{"username":"user01","active":true}}`, string(resultJSON))
 	})
 
 	t.Run("Invalid Input", func(t *testing.T) {
@@ -184,6 +198,9 @@ func TestValidateJSONWithArrayAndObject(t *testing.T) {
 
 		assert.Error(t, result.Error(), "Expected a type mismatch or validation error")
 		assert.True(t, strings.Contains(result.Error().Error(), "type mismatch") || strings.Contains(result.Error().Error(), "validation error"))
+		// Check the content of the error result
+		resultJSON := extractJSONFromResult(t, result)
+		assert.Contains(t, string(resultJSON), "type mismatch")
 	})
 }
 
@@ -206,6 +223,9 @@ func TestToolFunctionErrorHandling(t *testing.T) {
 
 		assert.Error(t, result.Error(), "Expected error 'ID cannot be zero'")
 		assert.Contains(t, result.Error().Error(), "ID cannot be zero")
+		// Check the content of the error result
+		resultJSON := extractJSONFromResult(t, result)
+		assert.JSONEq(t, `{"error":"ID cannot be zero"}`, string(resultJSON))
 	})
 
 	t.Run("Valid Case", func(t *testing.T) {
@@ -213,7 +233,8 @@ func TestToolFunctionErrorHandling(t *testing.T) {
 		result := tool.Run(&runner{}, validParams)
 
 		require.NoError(t, result.Error(), "Expected no error")
-		assert.JSONEq(t, `{"id":101,"features":["fast","reliable"],"profile":{"username":"user01","active":true}}`, string(result.JSON()))
+		resultJSON := extractJSONFromResult(t, result)
+		assert.JSONEq(t, `{"id":101,"features":["fast","reliable"],"profile":{"username":"user01","active":true}}`, string(resultJSON))
 	})
 }
 
@@ -224,6 +245,7 @@ func TestToolFunctionReport(t *testing.T) {
 			reportCalled = true
 			assert.Equal(t, "running", status, "Expected status 'running'")
 		},
+		ctx: context.Background(), // Provide a default context
 	}
 
 	testFunc := func(r Runner, p Params) Result {
@@ -242,5 +264,6 @@ func TestToolFunctionReport(t *testing.T) {
 
 	require.NoError(t, result.Error(), "Expected no error")
 	assert.True(t, reportCalled, "Expected report function to be called")
-	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"alice@example.com","isAdmin":true}`, string(result.JSON()))
+	resultJSON := extractJSONFromResult(t, result)
+	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"alice@example.com","isAdmin":true}`, string(resultJSON))
 }
