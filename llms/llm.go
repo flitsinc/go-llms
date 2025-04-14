@@ -159,6 +159,10 @@ func (l *LLM) AddTool(t tools.Tool) {
 	}
 }
 
+func (l *LLM) String() string {
+	return fmt.Sprintf("%s %s", l.provider.Company(), l.provider.Model())
+}
+
 // TotalCost returns the accumulated cost in USD of all LLM calls made through
 // this instance. This helps track usage and expenses when working with
 // commercial LLM providers.
