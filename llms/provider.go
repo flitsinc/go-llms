@@ -7,6 +7,13 @@ import (
 	"github.com/blixt/go-llms/tools"
 )
 
+// TODO: The CostUSD() should go away because it's too complex to keep pricing accurate.
+// TODO: The Usage() API should become detailed enough to track things like:
+//       - Cached vs non-cached input tokens
+//       - Reasoning vs non-reasoning output tokens
+//       - Large inputs (>200K tokens) vs not
+//       - Text/image/audio tokens
+
 type ProviderStream interface {
 	Err() error
 	Iter() func(yield func(StreamStatus) bool)
