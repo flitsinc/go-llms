@@ -1,6 +1,8 @@
 package llms
 
 import (
+	"context"
+
 	"github.com/blixt/go-llms/content"
 	"github.com/blixt/go-llms/tools"
 )
@@ -17,5 +19,8 @@ type ProviderStream interface {
 
 type Provider interface {
 	Company() string
-	Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
+	// Generate takes a system prompt, message history, and optional toolbox,
+	// returning a stream for the LLM's response. The provided context should
+	// be respected for cancellation.
+	Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
 }

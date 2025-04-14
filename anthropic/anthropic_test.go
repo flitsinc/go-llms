@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +34,19 @@ func (s *stringNopCloser) Close() error { return nil }
 
 func newTestStream(content string) io.ReadCloser {
 	return &stringNopCloser{strings.NewReader(content)}
+}
+
+// newTestAnthropicStream is a helper for creating Anthropic streams for testing,
+// ensuring required fields like context are initialized.
+func newTestAnthropicStream(ctx context.Context, model, content string) *Stream {
+	if ctx == nil {
+		ctx = context.Background() // Default to background context if nil
+	}
+	return &Stream{
+		model:  model,
+		stream: newTestStream(content),
+		ctx:    ctx, // Initialize context
+	}
 }
 
 func TestAnthropicStreamHandling(t *testing.T) {
@@ -72,7 +86,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 			Type: "message_stop",
 		}))
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 		var toolCallAtBegin llms.ToolCall
 		var toolCallAtReady llms.ToolCall
@@ -150,7 +164,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_delta", Delta: delta{StopReason: "tool_use"}}))
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 		var argsAtData string
 		var argsAtReady string
@@ -216,7 +230,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_delta", Delta: delta{StopReason: "tool_use"}}))
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 		var argsAfterDelta1 string
 		var argsAfterDelta2 string
@@ -297,7 +311,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_delta", Delta: delta{StopReason: "tool_use"}}))
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 		var capturedTextParts []string
 		var finalToolCall llms.ToolCall
@@ -368,7 +382,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		// Anthropic might send message_stop even after error, depends on error type
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 
 		iter := stream.Iter()
@@ -392,7 +406,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		streamContent.WriteString(sseEvent(streamEvent{Type: "message_start", Message: &messageEvent{Role: "assistant"}}))
 		streamContent.WriteString("data: invalid json\n\n") // Invalid data right away
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 
 		iter := stream.Iter()
@@ -416,7 +430,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		streamContent.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
 		streamContent.WriteString("data: invalid json\n\n") // Add invalid data after valid events
 
-		stream := &Stream{model: "claude-3-haiku", stream: newTestStream(streamContent.String())}
+		stream := newTestAnthropicStream(context.Background(), "claude-3-haiku", streamContent.String())
 		var yieldedStatuses []llms.StreamStatus
 		iter := stream.Iter()
 		iter(func(status llms.StreamStatus) bool {

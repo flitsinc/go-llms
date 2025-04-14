@@ -99,8 +99,8 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 		return updateChan // Return the closed channel
 	}
 
-	// Send off the user's message to the LLM, and keep asking the LLM for more
-	// responses for as long as it's making tool calls.
+	// Launch a goroutine to manage the chat turns and stream processing.
+	// This goroutine owns the updateChan and ensures it's closed on exit.
 	go func() {
 		defer close(updateChan)
 		for {
@@ -110,16 +110,17 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 				if l.err == nil {
 					l.err = context.Canceled
 				}
-				// Just close the channel and let the caller check Err()
+				// Exit goroutine, defer close(updateChan) will run.
 				return
 			default:
 				shouldContinue, err := l.turn(ctx, updateChan)
 				if err != nil {
 					l.err = err
-					// Just close the channel and let the caller check Err()
+					// Exit goroutine on error, defer close(updateChan) will run.
 					return
 				}
 				if !shouldContinue {
+					// Normal completion (e.g., no tool calls), exit goroutine.
 					return
 				}
 			}
@@ -203,7 +204,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// This will hold results from tool calls, to be sent back to the LLM.
 	var toolMessages []Message
 
-	stream := l.provider.Generate(systemPrompt, l.lastSentMessages, l.toolbox)
+	stream := l.provider.Generate(ctx, systemPrompt, l.lastSentMessages, l.toolbox)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
 	}
@@ -232,66 +233,48 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		}()
 	}
 
-	done := make(chan bool)
-	var streamErr error
+	for status := range stream.Iter() {
+		// Check context at the beginning of each iteration.
+		// This ensures we react promptly if cancellation happens *between* stream events.
+		select {
+		case <-ctx.Done():
+			// Propagate cancellation error immediately
+			return false, ctx.Err()
+		default:
+			// Context OK, process status
+			switch status {
+			case StreamStatusText:
+				updateChan <- TextUpdate{stream.Text()}
 
-	go func() {
-	loop:
-		for status := range stream.Iter() {
-			select {
-			case <-ctx.Done():
-				streamErr = ctx.Err()
-				break loop
-			default:
-				switch status {
-				case StreamStatusText:
-					// Check context before sending TextUpdate
-					select {
-					case <-ctx.Done():
-						streamErr = ctx.Err()
-						break loop
-					case updateChan <- TextUpdate{stream.Text()}:
-						// Sent successfully
-					}
-				case StreamStatusToolCallBegin:
-					toolCall := stream.ToolCall()
-					if toolCall.ID == "" {
-						streamErr = fmt.Errorf("missing tool call ID for tool %q", toolCall.Name)
-						break loop
-					}
-
-					tool := l.toolbox.Get(toolCall.Name)
-					if tool == nil {
-						streamErr = fmt.Errorf("tool %q not found", toolCall.Name)
-						break loop
-					}
-					// Check context before sending ToolStartUpdate
-					select {
-					case <-ctx.Done():
-						streamErr = ctx.Err()
-						break loop
-					case updateChan <- ToolStartUpdate{toolCall.ID, tool}:
-						// Sent successfully
-					}
-				case StreamStatusToolCallReady:
-					// TODO: We may want to support parallel tool calls, which
-					// means the results would need to be collected later (and
-					// maybe out of sequence).
-					toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
-					toolMessages = append(toolMessages, toolMessage)
+			case StreamStatusToolCallBegin:
+				toolCall := stream.ToolCall()
+				if toolCall.ID == "" {
+					return false, fmt.Errorf("missing tool call ID for tool %q", toolCall.Name)
 				}
+				tool := l.toolbox.Get(toolCall.Name)
+				if tool == nil {
+					return false, fmt.Errorf("tool %q not found", toolCall.Name)
+				}
+				// Perform blocking send
+				updateChan <- ToolStartUpdate{toolCall.ID, tool}
+
+			case StreamStatusToolCallReady:
+				// TODO: We may want to support parallel tool calls, which
+				// means the results would need to be collected later (and
+				// maybe out of sequence).
+				toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
+				toolMessages = append(toolMessages, toolMessage)
 			}
 		}
-		done <- true
-	}()
-
-	select {
-	case <-ctx.Done():
+	}
+	// Check stream error after iterating
+	if streamErr := stream.Err(); streamErr != nil {
+		return false, fmt.Errorf("error iterating stream: %w", streamErr)
+	}
+	// Also check if the context was cancelled *during* stream iteration,
+	// even if the iterator itself didn't return an error.
+	if ctx.Err() != nil {
 		return false, ctx.Err()
-	case <-done:
-		if streamErr != nil {
-			return false, fmt.Errorf("error streaming: %w", streamErr)
-		}
 	}
 
 	// Add the fully assembled message plus tool call results to the message history.
@@ -331,19 +314,17 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	ctxWithValue := context.WithValue(ctx, ToolCallContextKey, toolCall)
 	runner := tools.NewRunner(ctxWithValue, toolbox, func(status string) {
 		select {
-		case <-ctx.Done():
-			// Do nothing
-		case updateChan <- ToolStatusUpdate{toolCall.ID, status, t}:
-			// Sent successfully
+		case <-ctx.Done(): // Don't send if already cancelled
+		default:
+			updateChan <- ToolStatusUpdate{toolCall.ID, status, t}
 		}
 	})
 
 	result := toolbox.Run(runner, toolCall.Name, json.RawMessage(toolCall.Arguments))
 	select {
-	case <-ctx.Done():
-		// Continue without sending the ToolDoneUpdate
-	case updateChan <- ToolDoneUpdate{toolCall.ID, result, t}:
-		// Sent successfully
+	case <-ctx.Done(): // Don't send if already cancelled
+	default:
+		updateChan <- ToolDoneUpdate{toolCall.ID, result, t}
 	}
 
 	return Message{

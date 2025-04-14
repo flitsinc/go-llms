@@ -56,7 +56,7 @@ func (m *mockProvider) Company() string {
 	return "Test Company"
 }
 
-func (m *mockProvider) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+func (m *mockProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	m.generateCalled = true
 	m.systemPrompt = systemPrompt
 	m.messages = messages
@@ -381,7 +381,6 @@ func TestEmptyToolCallIDError(t *testing.T) {
 	require.Error(t, llm.Err(), "LLM.Err() should return an error")
 	assert.Contains(t, llm.Err().Error(), "missing tool call ID", "Error should mention missing tool call ID")
 	assert.Contains(t, llm.Err().Error(), "test_tool", "Error should include the tool name")
-	assert.Contains(t, llm.Err().Error(), "error streaming", "Error should indicate it came from the streaming part")
 }
 
 // TestSuccessfulChatNoError tests that a successful chat returns nil from Err().
@@ -408,7 +407,7 @@ func (m *errorMockProvider) Company() string {
 	return "Error Test Company"
 }
 
-func (m *errorMockProvider) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+func (m *errorMockProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	return &errorMockStream{
 		err: fmt.Errorf("provider stream error: %s", m.errorMessage),
 	}
@@ -435,7 +434,7 @@ func (m *mockEmptyIDProvider) Company() string {
 	return "Test Company Empty ID"
 }
 
-func (m *mockEmptyIDProvider) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+func (m *mockEmptyIDProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	return &mockEmptyIDStream{}
 }
 
@@ -823,13 +822,14 @@ type mockCancellingProvider struct{}
 
 func (m *mockCancellingProvider) Company() string { return "Mock Cancelling Provider" }
 
-func (m *mockCancellingProvider) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
-	return &mockCancellingStream{}
+func (m *mockCancellingProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+	return &mockCancellingStream{ctx: ctx} // Pass context to the stream
 }
 
 // mockCancellingStream is a stream that blocks until context is cancelled (fixed implementation)
 type mockCancellingStream struct {
 	message Message
+	ctx     context.Context // Add context field
 }
 
 func (s *mockCancellingStream) Err() error { return nil }
@@ -841,8 +841,17 @@ func (s *mockCancellingStream) Iter() func(func(StreamStatus) bool) {
 			return
 		}
 
-		// Then block forever to force context cancellation
-		<-time.After(10 * time.Minute)
+		// Then block until context is cancelled, respecting the stream's context
+		select {
+		case <-s.ctx.Done():
+			// Context cancelled, stop iterating.
+			// The caller (turn) will detect the context error.
+			return
+		case <-time.After(10 * time.Minute): // Long timeout to ensure context is the trigger
+			// This case should not be hit in the test
+			panic("mockCancellingStream timed out unexpectedly")
+		}
+		// <-time.After(10 * time.Minute) // Remove old blocking call
 	}
 }
 
@@ -916,7 +925,7 @@ type mockProviderToolNotFound struct {
 	mockProvider // Embed basic mockProvider
 }
 
-func (m *mockProviderToolNotFound) Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
+func (m *mockProviderToolNotFound) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	m.generateCalled = true
 	m.systemPrompt = systemPrompt
 	m.messages = messages
@@ -942,7 +951,6 @@ func TestTurnToolNotFound(t *testing.T) {
 
 	require.Error(t, llm.Err(), "LLM should have an error")
 	assert.Contains(t, llm.Err().Error(), "tool \"tool_does_not_exist\" not found", "Error message should indicate tool not found")
-	assert.Contains(t, llm.Err().Error(), "error streaming", "Error should indicate it came from streaming")
 }
 
 // TestChatWrapper tests the simple llms.Chat wrapper function.

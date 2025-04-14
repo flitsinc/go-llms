@@ -236,7 +236,10 @@ You can easily implement new providers by implementing the `Provider` interface:
 ```go
 type Provider interface {
     Company() string
-    Generate(systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
+    // Generate takes a context, system prompt, message history, and optional toolbox,
+    // returning a stream for the LLM's response. The provider should respect
+    // the context for cancellation during its operations.
+    Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
 }
 ```
 

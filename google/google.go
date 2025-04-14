@@ -3,6 +3,7 @@ package google
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,7 +73,7 @@ func (m *Model) Company() string {
 	return "Google"
 }
 
-func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
+func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
 	if m.endpoint == "" {
 		return &Stream{err: fmt.Errorf("must call either WithVertexAI(…) or WithGenerativeLanguageAPI(…) first")}
 	}
@@ -144,7 +145,7 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	req, err := http.NewRequest("POST", m.endpoint, bytes.NewReader(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
 	}
@@ -173,12 +174,13 @@ func (m *Model) Generate(systemPrompt content.Content, messages []llms.Message, 
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
-	return &Stream{model: m.model, stream: resp.Body}
+	return &Stream{model: m.model, stream: resp.Body, ctx: ctx}
 }
 
 type Stream struct {
 	model    string
 	stream   io.Reader
+	ctx      context.Context
 	err      error
 	message  llms.Message
 	lastText string
@@ -220,54 +222,64 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	scanner := bufio.NewScanner(s.stream)
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
-		for scanner.Scan() {
-			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
-			if !ok {
-				continue
-			}
-			var chunk streamingResponse
-			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
-				break
-			}
-			if chunk.UsageMetadata != nil {
-				s.usage = chunk.UsageMetadata
-			}
-			if len(chunk.Candidates) < 1 {
-				continue
-			}
-			delta := chunk.Candidates[0].Content
-			if delta.Role != "" {
-				s.message.Role = delta.Role
-			}
-			for _, p := range delta.Parts {
-				if p.Text != nil {
-					s.lastText = *p.Text
-					if s.lastText != "" {
-						s.message.Content.Append(s.lastText)
-						if !yield(llms.StreamStatusText) {
-							return
+		for {
+			select {
+			case <-s.ctx.Done():
+				s.err = s.ctx.Err()
+				return
+			default:
+				if !scanner.Scan() {
+					if err := scanner.Err(); err != nil {
+						s.err = fmt.Errorf("error scanning stream: %w", err)
+					}
+					return
+				}
+
+				line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+				if !ok {
+					continue
+				}
+				var chunk streamingResponse
+				if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+					return
+				}
+				if chunk.UsageMetadata != nil {
+					s.usage = chunk.UsageMetadata
+				}
+				if len(chunk.Candidates) < 1 {
+					continue
+				}
+				delta := chunk.Candidates[0].Content
+				if delta.Role != "" {
+					s.message.Role = delta.Role
+				}
+				for _, p := range delta.Parts {
+					if p.Text != nil {
+						s.lastText = *p.Text
+						if s.lastText != "" {
+							s.message.Content.Append(s.lastText)
+							if !yield(llms.StreamStatusText) {
+								return
+							}
 						}
 					}
-				}
-				if p.FunctionCall != nil {
-					// Note: Gemini's streaming API doesn't have partial tool calls.
-					// Google doesn't provide tool call IDs, so we generate our own
-					// using a combination of function name and a timestamp to ensure uniqueness
-					uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
-					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
-						ID:        uniqueID,
-						Name:      p.FunctionCall.Name,
-						Arguments: p.FunctionCall.Args,
-					})
-					if !yield(llms.StreamStatusToolCallBegin) {
-						return
-					}
-					if !yield(llms.StreamStatusToolCallData) {
-						return
-					}
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
+					if p.FunctionCall != nil {
+						uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
+						s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
+							ID:        uniqueID,
+							Name:      p.FunctionCall.Name,
+							Arguments: p.FunctionCall.Args,
+						})
+						if !yield(llms.StreamStatusToolCallBegin) {
+							return
+						}
+						if !yield(llms.StreamStatusToolCallData) {
+							return
+						}
+						if !yield(llms.StreamStatusToolCallReady) {
+							return
+						}
 					}
 				}
 			}
