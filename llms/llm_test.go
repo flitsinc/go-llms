@@ -56,6 +56,10 @@ func (m *mockProvider) Company() string {
 	return "Test Company"
 }
 
+func (m *mockProvider) Model() string {
+	return "test-model"
+}
+
 func (m *mockProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	m.generateCalled = true
 	m.systemPrompt = systemPrompt
@@ -407,6 +411,10 @@ func (m *errorMockProvider) Company() string {
 	return "Error Test Company"
 }
 
+func (m *errorMockProvider) Model() string {
+	return "test-model"
+}
+
 func (m *errorMockProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	return &errorMockStream{
 		err: fmt.Errorf("provider stream error: %s", m.errorMessage),
@@ -432,6 +440,10 @@ type mockEmptyIDProvider struct{}
 
 func (m *mockEmptyIDProvider) Company() string {
 	return "Test Company Empty ID"
+}
+
+func (m *mockEmptyIDProvider) Model() string {
+	return "test-model"
 }
 
 func (m *mockEmptyIDProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
@@ -821,6 +833,10 @@ func TestTurnContextCancellation(t *testing.T) {
 type mockCancellingProvider struct{}
 
 func (m *mockCancellingProvider) Company() string { return "Mock Cancelling Provider" }
+
+func (m *mockCancellingProvider) Model() string {
+	return "test-model"
+}
 
 func (m *mockCancellingProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream {
 	return &mockCancellingStream{ctx: ctx} // Pass context to the stream

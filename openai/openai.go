@@ -45,6 +45,10 @@ func (m *Model) Company() string {
 	return "OpenAI"
 }
 
+func (m *Model) Model() string {
+	return m.model
+}
+
 func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
 	var apiMessages []message
 	if systemPrompt != nil {

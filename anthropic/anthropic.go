@@ -61,6 +61,10 @@ func (m *Model) Company() string {
 	return "Anthropic"
 }
 
+func (m *Model) Model() string {
+	return m.model
+}
+
 func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, tools *tools.Toolbox) llms.ProviderStream {
 	var apiMessages []message
 	for _, msg := range messages {

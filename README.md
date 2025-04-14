@@ -236,6 +236,7 @@ You can easily implement new providers by implementing the `Provider` interface:
 ```go
 type Provider interface {
     Company() string
+    Model() string
     // Generate takes a context, system prompt, message history, and optional toolbox,
     // returning a stream for the LLM's response. The provider should respect
     // the context for cancellation during its operations.

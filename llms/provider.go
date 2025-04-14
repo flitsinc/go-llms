@@ -19,6 +19,7 @@ type ProviderStream interface {
 
 type Provider interface {
 	Company() string
+	Model() string
 	// Generate takes a system prompt, message history, and optional toolbox,
 	// returning a stream for the LLM's response. The provided context should
 	// be respected for cancellation.
