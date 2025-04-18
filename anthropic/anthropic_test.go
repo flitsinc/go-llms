@@ -43,9 +43,9 @@ func newTestAnthropicStream(ctx context.Context, model, content string) *Stream 
 		ctx = context.Background() // Default to background context if nil
 	}
 	return &Stream{
+		ctx:    ctx, // Initialize context
 		model:  model,
 		stream: newTestStream(content),
-		ctx:    ctx, // Initialize context
 	}
 }
 

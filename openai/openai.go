@@ -119,13 +119,13 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{model: m.model, stream: resp.Body, ctx: ctx}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
 }
 
 type Stream struct {
+	ctx      context.Context
 	model    string
 	stream   io.Reader
-	ctx      context.Context
 	err      error
 	message  llms.Message
 	lastText string
@@ -171,96 +171,97 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				s.err = s.ctx.Err()
 				return // Exit if context is cancelled
 			default:
-				// Try to scan the next line.
-				if !scanner.Scan() {
-					// If scanning fails (e.g., EOF or error), check for scanner error.
-					if err := scanner.Err(); err != nil {
-						s.err = fmt.Errorf("error scanning stream: %w", err)
-					}
-					return // Exit loop on scan failure or EOF
+				// Context OK, keep scanning.
+			}
+			// Try to scan the next line.
+			if !scanner.Scan() {
+				// If scanning fails (e.g., EOF or error), check for scanner error.
+				if err := scanner.Err(); err != nil {
+					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
+				return // Exit loop on scan failure or EOF
+			}
 
-				// Process the scanned line.
-				line, ok := strings.CutPrefix(scanner.Text(), "data: ")
-				if !ok {
-					continue
-				}
-				if line == "[DONE]" {
-					// Stream ended. If a tool call was active, mark it as ready.
-					if activeToolCallIndex != -1 {
-						if !yield(llms.StreamStatusToolCallReady) {
-							return
-						}
-						activeToolCallIndex = -1 // Reset active tool call
+			// Process the scanned line.
+			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			if !ok {
+				continue
+			}
+			if line == "[DONE]" {
+				// Stream ended. If a tool call was active, mark it as ready.
+				if activeToolCallIndex != -1 {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
 					}
-					continue // Continue the outer loop to check context or EOF
+					activeToolCallIndex = -1 // Reset active tool call
 				}
-				var chunk chatCompletionChunk
-				if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
-					return // Use return instead of break
-				}
-				if chunk.Usage != nil {
-					s.usage = chunk.Usage
-				}
-				if len(chunk.Choices) < 1 {
-					continue
-				}
-				delta := chunk.Choices[0].Delta
-				if delta.Role != "" {
-					s.message.Role = delta.Role
-				}
-				// Content is nullable string in delta
-				if delta.Content != nil {
-					s.lastText = *delta.Content
-					if s.lastText != "" {
-						s.message.Content.Append(s.lastText)
-						if !yield(llms.StreamStatusText) {
-							return
-						}
+				continue // Continue the outer loop to check context or EOF
+			}
+			var chunk chatCompletionChunk
+			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				return
+			}
+			if chunk.Usage != nil {
+				s.usage = chunk.Usage
+			}
+			if len(chunk.Choices) < 1 {
+				continue
+			}
+			delta := chunk.Choices[0].Delta
+			if delta.Role != "" {
+				s.message.Role = delta.Role
+			}
+			// Content is nullable string in delta
+			if delta.Content != nil {
+				s.lastText = *delta.Content
+				if s.lastText != "" {
+					s.message.Content.Append(s.lastText)
+					if !yield(llms.StreamStatusText) {
+						return
 					}
 				}
+			}
 
-				// Handle Tool Calls Delta
-				if len(delta.ToolCalls) > 0 {
-					for _, toolDelta := range delta.ToolCalls {
-						if toolDelta.Index >= len(s.message.ToolCalls) {
-							// This is a new tool call starting
-							if toolDelta.Index != len(s.message.ToolCalls) {
-								panic(fmt.Sprintf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index))
-							}
-							// If a previous tool call was active, mark it as ready now.
-							if activeToolCallIndex != -1 {
-								if !yield(llms.StreamStatusToolCallReady) {
-									return // Abort if yield fails
-								}
-							}
-							// Add the new tool call (converting from toolCallDelta)
-							llmToolCall := toolDelta.ToLLM()
-							s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
-							activeToolCallIndex = toolDelta.Index // Mark new tool call as active
-							if !yield(llms.StreamStatusToolCallBegin) {
+			// Handle Tool Calls Delta
+			if len(delta.ToolCalls) > 0 {
+				for _, toolDelta := range delta.ToolCalls {
+					if toolDelta.Index >= len(s.message.ToolCalls) {
+						// This is a new tool call starting
+						if toolDelta.Index != len(s.message.ToolCalls) {
+							panic(fmt.Sprintf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index))
+						}
+						// If a previous tool call was active, mark it as ready now.
+						if activeToolCallIndex != -1 {
+							if !yield(llms.StreamStatusToolCallReady) {
 								return // Abort if yield fails
 							}
-						} else {
-							// This is appending arguments to an existing tool call
-							if toolDelta.Function.Arguments != "" {
-								s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
-								if !yield(llms.StreamStatusToolCallData) {
-									return // Abort if yield fails
-								}
+						}
+						// Add the new tool call (converting from toolCallDelta)
+						llmToolCall := toolDelta.ToLLM()
+						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
+						activeToolCallIndex = toolDelta.Index // Mark new tool call as active
+						if !yield(llms.StreamStatusToolCallBegin) {
+							return // Abort if yield fails
+						}
+					} else {
+						// This is appending arguments to an existing tool call
+						if toolDelta.Function.Arguments != "" {
+							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
+							if !yield(llms.StreamStatusToolCallData) {
+								return // Abort if yield fails
 							}
 						}
 					}
 				}
-				// Check if the overall message is finished (might indicate last tool call is ready)
-				if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
-					if activeToolCallIndex != -1 {
-						if !yield(llms.StreamStatusToolCallReady) {
-							return // Abort if yield fails
-						}
-						activeToolCallIndex = -1 // Reset active tool call
+			}
+			// Check if the overall message is finished (might indicate last tool call is ready)
+			if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
+				if activeToolCallIndex != -1 {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return // Abort if yield fails
 					}
+					activeToolCallIndex = -1 // Reset active tool call
 				}
 			}
 		}

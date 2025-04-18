@@ -139,13 +139,13 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{model: m.model, stream: resp.Body, ctx: ctx}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
 }
 
 type Stream struct {
+	ctx      context.Context
 	model    string
 	stream   io.Reader
-	ctx      context.Context
 	err      error
 	message  llms.Message
 	lastText string
@@ -200,120 +200,121 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				s.err = s.ctx.Err()
 				return
 			default:
-				if !scanner.Scan() {
-					if err := scanner.Err(); err != nil {
-						s.err = fmt.Errorf("error scanning stream: %w", err)
-					}
-					return
+				// Context OK, keep scanning.
+			}
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil {
+					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
+				return
+			}
 
-				line, ok := strings.CutPrefix(scanner.Text(), "data: ")
-				if !ok {
-					continue
-				}
-				var event streamEvent
-				if err := json.Unmarshal([]byte(line), &event); err != nil {
-					s.err = fmt.Errorf("error unmarshalling event: %w", err)
-					return
-				}
+			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			if !ok {
+				continue
+			}
+			var event streamEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				s.err = fmt.Errorf("error unmarshalling event: %w", err)
+				return
+			}
 
-				switch event.Type {
-				case "message_start":
-					// Initialize the message with the role from the message_start event
-					s.message.Role = event.Message.Role
-					if event.Message.Usage != nil {
-						s.inputTokens += event.Message.Usage.InputTokens
-						s.outputTokens += event.Message.Usage.OutputTokens
-					}
-				case "content_block_start":
-					// For now, we only need special handling for tool_use and thinking blocks
-					switch event.ContentBlock.Type {
-					case "tool_use":
-						lastToolCallIndex = event.Index
-						resetNextArgumentsDelta = true
-						s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
-							ID:        event.ContentBlock.ID,
-							Name:      event.ContentBlock.Name,
-							Arguments: event.ContentBlock.Input,
-						})
-						if !yield(llms.StreamStatusToolCallBegin) {
-							return
-						}
-					case "redacted_thinking":
-						// TODO: We need to track thinking blocks.
-					case "thinking":
-						// TODO: We need to track thinking blocks.
-					}
-				case "content_block_delta":
-					switch event.Delta.Type {
-					case "text_delta":
-						// Regular text delta - append to content
-						s.lastText = event.Delta.Text
-						s.message.Content.Append(s.lastText)
-						if !yield(llms.StreamStatusText) {
-							return
-						}
-					case "input_json_delta":
-						// Tool use JSON delta - append to tool call arguments
-						if event.Delta.PartialJSON == "" {
-							continue
-						}
-						index := len(s.message.ToolCalls) - 1
-						if resetNextArgumentsDelta {
-							s.message.ToolCalls[index].Arguments = json.RawMessage(event.Delta.PartialJSON)
-							resetNextArgumentsDelta = false
-						} else {
-							s.message.ToolCalls[index].Arguments = append(
-								s.message.ToolCalls[index].Arguments,
-								[]byte(event.Delta.PartialJSON)...,
-							)
-						}
-						if !yield(llms.StreamStatusToolCallData) {
-							return
-						}
-					case "thinking_delta":
-						// TODO: We need to track thinking blocks.
-						continue
-					case "signature_delta":
-						// TODO: We need to track thinking blocks.
-						continue
-					}
-				case "content_block_stop":
-					// Signal the end of a content block
-					// For tool calls, signal that the tool call is ready
-					if event.Index == lastToolCallIndex {
-						if !yield(llms.StreamStatusToolCallReady) {
-							return
-						}
-					}
-				case "message_delta":
-					// Update usage statistics
-					if event.Delta.Usage != nil {
-						s.inputTokens += event.Delta.Usage.InputTokens
-						s.outputTokens += event.Delta.Usage.OutputTokens
-					}
-					// Check stop reason, but allow tool_use and end_turn
-					if event.Delta.StopReason != "" &&
-						event.Delta.StopReason != "tool_use" &&
-						event.Delta.StopReason != "end_turn" {
-						s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
+			switch event.Type {
+			case "message_start":
+				// Initialize the message with the role from the message_start event
+				s.message.Role = event.Message.Role
+				if event.Message.Usage != nil {
+					s.inputTokens += event.Message.Usage.InputTokens
+					s.outputTokens += event.Message.Usage.OutputTokens
+				}
+			case "content_block_start":
+				// For now, we only need special handling for tool_use and thinking blocks
+				switch event.ContentBlock.Type {
+				case "tool_use":
+					lastToolCallIndex = event.Index
+					resetNextArgumentsDelta = true
+					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
+						ID:        event.ContentBlock.ID,
+						Name:      event.ContentBlock.Name,
+						Arguments: event.ContentBlock.Input,
+					})
+					if !yield(llms.StreamStatusToolCallBegin) {
 						return
 					}
-				case "message_stop":
-					// End of the message stream
-					return
-				case "ping":
-					// Ignore ping events
-					continue
-				case "error":
-					// Handle error events
-					if event.Error != nil {
-						s.err = fmt.Errorf("API error: %s - %s", event.Error.Type, event.Error.Message)
+				case "redacted_thinking":
+					// TODO: We need to track thinking blocks.
+				case "thinking":
+					// TODO: We need to track thinking blocks.
+				}
+			case "content_block_delta":
+				switch event.Delta.Type {
+				case "text_delta":
+					// Regular text delta - append to content
+					s.lastText = event.Delta.Text
+					s.message.Content.Append(s.lastText)
+					if !yield(llms.StreamStatusText) {
 						return
 					}
-				default:
-					// TODO: Log unknown event type
+				case "input_json_delta":
+					// Tool use JSON delta - append to tool call arguments
+					if event.Delta.PartialJSON == "" {
+						continue
+					}
+					index := len(s.message.ToolCalls) - 1
+					if resetNextArgumentsDelta {
+						s.message.ToolCalls[index].Arguments = json.RawMessage(event.Delta.PartialJSON)
+						resetNextArgumentsDelta = false
+					} else {
+						s.message.ToolCalls[index].Arguments = append(
+							s.message.ToolCalls[index].Arguments,
+							[]byte(event.Delta.PartialJSON)...,
+						)
+					}
+					if !yield(llms.StreamStatusToolCallData) {
+						return
+					}
+				case "thinking_delta":
+					// TODO: We need to track thinking blocks.
+					continue
+				case "signature_delta":
+					// TODO: We need to track thinking blocks.
+					continue
 				}
+			case "content_block_stop":
+				// Signal the end of a content block
+				// For tool calls, signal that the tool call is ready
+				if event.Index == lastToolCallIndex {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
+					}
+				}
+			case "message_delta":
+				// Update usage statistics
+				if event.Delta.Usage != nil {
+					s.inputTokens += event.Delta.Usage.InputTokens
+					s.outputTokens += event.Delta.Usage.OutputTokens
+				}
+				// Check stop reason, but allow tool_use and end_turn
+				if event.Delta.StopReason != "" &&
+					event.Delta.StopReason != "tool_use" &&
+					event.Delta.StopReason != "end_turn" {
+					s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
+					return
+				}
+			case "message_stop":
+				// End of the message stream
+				return
+			case "ping":
+				// Ignore ping events
+				continue
+			case "error":
+				// Handle error events
+				if event.Error != nil {
+					s.err = fmt.Errorf("API error: %s - %s", event.Error.Type, event.Error.Message)
+					return
+				}
+			default:
+				// TODO: Log unknown event type
 			}
 		}
 	}

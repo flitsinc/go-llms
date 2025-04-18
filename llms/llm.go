@@ -238,29 +238,29 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			return false, ctx.Err()
 		default:
 			// Context OK, process status
-			switch status {
-			case StreamStatusText:
-				updateChan <- TextUpdate{stream.Text()}
+		}
+		switch status {
+		case StreamStatusText:
+			updateChan <- TextUpdate{stream.Text()}
 
-			case StreamStatusToolCallBegin:
-				toolCall := stream.ToolCall()
-				if toolCall.ID == "" {
-					return false, fmt.Errorf("missing tool call ID for tool %q", toolCall.Name)
-				}
-				tool := l.toolbox.Get(toolCall.Name)
-				if tool == nil {
-					return false, fmt.Errorf("tool %q not found", toolCall.Name)
-				}
-				// Perform blocking send
-				updateChan <- ToolStartUpdate{toolCall.ID, tool}
-
-			case StreamStatusToolCallReady:
-				// TODO: We may want to support parallel tool calls, which
-				// means the results would need to be collected later (and
-				// maybe out of sequence).
-				toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
-				toolMessages = append(toolMessages, toolMessage)
+		case StreamStatusToolCallBegin:
+			toolCall := stream.ToolCall()
+			if toolCall.ID == "" {
+				return false, fmt.Errorf("missing tool call ID for tool %q", toolCall.Name)
 			}
+			tool := l.toolbox.Get(toolCall.Name)
+			if tool == nil {
+				return false, fmt.Errorf("tool %q not found", toolCall.Name)
+			}
+			// Perform blocking send
+			updateChan <- ToolStartUpdate{toolCall.ID, tool}
+
+		case StreamStatusToolCallReady:
+			// TODO: We may want to support parallel tool calls, which
+			// means the results would need to be collected later (and
+			// maybe out of sequence).
+			toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
+			toolMessages = append(toolMessages, toolMessage)
 		}
 	}
 	// Check stream error after iterating

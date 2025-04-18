@@ -178,13 +178,13 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
-	return &Stream{model: m.model, stream: resp.Body, ctx: ctx}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
 }
 
 type Stream struct {
+	ctx      context.Context
 	model    string
 	stream   io.Reader
-	ctx      context.Context
 	err      error
 	message  llms.Message
 	lastText string
@@ -227,58 +227,62 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				s.err = s.ctx.Err()
 				return
 			default:
-				if !scanner.Scan() {
-					if err := scanner.Err(); err != nil {
-						s.err = fmt.Errorf("error scanning stream: %w", err)
-					}
-					return
+				// Context OK, keep scanning.
+			}
+			if !scanner.Scan() {
+				if err := scanner.Err(); err != nil {
+					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
+				return
+			}
 
-				line, ok := strings.CutPrefix(scanner.Text(), "data: ")
-				if !ok {
-					continue
-				}
-				var chunk streamingResponse
-				if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
-					return
-				}
-				if chunk.UsageMetadata != nil {
-					s.usage = chunk.UsageMetadata
-				}
-				if len(chunk.Candidates) < 1 {
-					continue
-				}
-				delta := chunk.Candidates[0].Content
-				if delta.Role != "" {
-					s.message.Role = delta.Role
-				}
-				for _, p := range delta.Parts {
-					if p.Text != nil {
-						s.lastText = *p.Text
-						if s.lastText != "" {
-							s.message.Content.Append(s.lastText)
-							if !yield(llms.StreamStatusText) {
-								return
-							}
+			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			if !ok {
+				continue
+			}
+			var chunk streamingResponse
+			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				return
+			}
+			if chunk.UsageMetadata != nil {
+				s.usage = chunk.UsageMetadata
+			}
+			if len(chunk.Candidates) < 1 {
+				continue
+			}
+			delta := chunk.Candidates[0].Content
+			if delta.Role != "" {
+				s.message.Role = delta.Role
+			}
+			for _, p := range delta.Parts {
+				if p.Text != nil {
+					s.lastText = *p.Text
+					if s.lastText != "" {
+						s.message.Content.Append(s.lastText)
+						if !yield(llms.StreamStatusText) {
+							return
 						}
 					}
-					if p.FunctionCall != nil {
-						uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
-						s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
-							ID:        uniqueID,
-							Name:      p.FunctionCall.Name,
-							Arguments: p.FunctionCall.Args,
-						})
-						if !yield(llms.StreamStatusToolCallBegin) {
-							return
-						}
-						if !yield(llms.StreamStatusToolCallData) {
-							return
-						}
-						if !yield(llms.StreamStatusToolCallReady) {
-							return
-						}
+				}
+				if p.FunctionCall != nil {
+					// Note: Gemini's streaming API doesn't have partial tool calls.
+					// Google doesn't provide tool call IDs, so we generate our own
+					// using a combination of function name and a timestamp to ensure uniqueness
+					uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
+					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
+						ID:        uniqueID,
+						Name:      p.FunctionCall.Name,
+						Arguments: p.FunctionCall.Args,
+					})
+					if !yield(llms.StreamStatusToolCallBegin) {
+						return
+					}
+					if !yield(llms.StreamStatusToolCallData) {
+						return
+					}
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
 					}
 				}
 			}
