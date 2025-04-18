@@ -13,4 +13,6 @@ const (
 	StreamStatusToolCallData
 	// StreamStatusToolCallReady means the stream finished streaming the arguments for a tool call.
 	StreamStatusToolCallReady
+
+	// TODO: Add thinking related stream statuses?
 )

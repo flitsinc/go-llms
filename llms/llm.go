@@ -252,8 +252,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			if tool == nil {
 				return false, fmt.Errorf("tool %q not found", toolCall.Name)
 			}
-			// Perform blocking send
 			updateChan <- ToolStartUpdate{toolCall.ID, tool}
+
+		case StreamStatusToolCallData:
+			// TODO: Update caller with tool JSON delta.
 
 		case StreamStatusToolCallReady:
 			// TODO: We may want to support parallel tool calls, which
