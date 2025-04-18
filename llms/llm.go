@@ -159,7 +159,7 @@ func (l *LLM) AddTool(t tools.Tool) {
 }
 
 func (l *LLM) String() string {
-	return fmt.Sprintf("%s %s", l.provider.Company(), l.provider.Model())
+	return fmt.Sprintf("%s (%s)", l.provider.Model(), l.provider.Company())
 }
 
 // WithDebug enables debug mode. When debug mode is enabled, the LLM will write
