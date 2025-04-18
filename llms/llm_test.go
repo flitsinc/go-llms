@@ -809,9 +809,9 @@ func TestTurnContextCancellation(t *testing.T) {
 
 	// Start chat with the context
 	startTime := time.Now()
-	var updates []Update
 	for update := range llm.ChatWithContext(ctx, "Test message") {
-		updates = append(updates, update)
+		// This test doesn't care about the updates.
+		_ = update
 	}
 	duration := time.Since(startTime)
 
