@@ -46,9 +46,9 @@ import (
 )
 
 func main() {
-    // Create a new LLM instance with OpenAI's o3-mini model
+    // Create a new LLM instance with OpenAI's o4-mini model
     llm := llms.New(
-        openai.New(os.Getenv("OPENAI_API_KEY"), "o3-mini"),
+        openai.New(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
     )
 
     // Optional: Set a system prompt
@@ -222,13 +222,13 @@ Each provider can be initialized with their respective configuration:
 llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"))
 
 // Google Gemini
-llm := llms.New(google.New("gemini-pro").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))
+llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))
 
 // Google Vertex AI
-llm := llms.New(google.New("gemini-pro").WithVertexAI(accessToken, projectID, region))
+llm := llms.New(google.New("gemini-2.5-flash").WithVertexAI(accessToken, projectID, region))
 
 // OpenAI
-llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4o"))
+llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1"))
 ```
 
 You can easily implement new providers by implementing the `Provider` interface:
@@ -249,7 +249,7 @@ type Provider interface {
 Enable debug mode to write detailed interaction logs to `debug.yaml`:
 
 ```go
-llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4o")).
+llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1")).
     WithDebug()
 ```
 
@@ -261,12 +261,12 @@ The debug file includes:
 - System prompts
 - Available tools
 
-## Cost Tracking
+## Usage Tracking
 
-Track the cost of your LLM interactions:
+Track the usage of your LLM interactions:
 
 ```go
-cost := llm.TotalCost() // Returns the total cost in USD
+inputTokens, outputTokens := llm.Usage()
 ```
 
 ## License

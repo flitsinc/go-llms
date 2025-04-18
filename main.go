@@ -21,7 +21,7 @@ func init() {
 
 func main() {
 	llm := llms.New(
-		// openai.New(os.Getenv("OPENAI_API_KEY"), "o3-mini"),
+		// openai.New(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
 		anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"),
 		RunShellCmd,
 	)

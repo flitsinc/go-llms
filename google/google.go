@@ -210,11 +210,6 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
-func (s *Stream) CostUSD() float64 {
-	// TODO
-	return 0.0
-}
-
 func (s *Stream) Usage() (inputTokens, outputTokens int) {
 	if s.usage == nil {
 		return 0, 0

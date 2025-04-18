@@ -28,9 +28,8 @@ type LLM struct {
 	turns, maxTurns  int
 	lastSentMessages []Message
 
-	totalCost float64
-	debug     bool
-	err       error // Last error encountered during operation
+	debug bool
+	err   error // Last error encountered during operation
 
 	// SystemPrompt should return the system prompt for the LLM. It's a function
 	// to allow the system prompt to dynamically change throughout a single
@@ -163,13 +162,6 @@ func (l *LLM) String() string {
 	return fmt.Sprintf("%s %s", l.provider.Company(), l.provider.Model())
 }
 
-// TotalCost returns the accumulated cost in USD of all LLM calls made through
-// this instance. This helps track usage and expenses when working with
-// commercial LLM providers.
-func (l *LLM) TotalCost() float64 {
-	return l.totalCost
-}
-
 // WithDebug enables debug mode. When debug mode is enabled, the LLM will write
 // detailed information about each interaction to a debug.yaml file, including
 // the message history, tool calls, and other relevant data. This is useful for
@@ -294,8 +286,6 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		return 0
 	})
 	l.lastSentMessages = append(l.lastSentMessages, toolMessages...)
-
-	l.totalCost += stream.CostUSD()
 
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil

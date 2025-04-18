@@ -154,8 +154,6 @@ func (s *mockStream) ToolCall() ToolCall {
 	return ToolCall{}
 }
 
-func (s *mockStream) CostUSD() float64 { return 0.0001 }
-
 func (s *mockStream) Usage() (inputTokens, outputTokens int) { return 10, 20 }
 
 // --- Helper Functions ---
@@ -269,9 +267,6 @@ func TestChatFlow(t *testing.T) {
 	assert.Equal(t, "tool", llm.lastSentMessages[2].Role, "Third message should be from tool")
 	assert.Equal(t, "assistant", llm.lastSentMessages[3].Role, "Fourth message should be from assistant (final response)")
 	assert.True(t, len(llm.lastSentMessages[3].ToolCalls) == 0, "Final assistant message should not contain tool calls")
-
-	// Assert: Cost tracking
-	assert.Equal(t, 0.0002, llm.TotalCost(), "Cost should be tracked")
 }
 
 // TestErrorHandling tests that errors from the ProviderStream are propagated correctly.
@@ -432,7 +427,6 @@ func (s *errorMockStream) Iter() func(func(StreamStatus) bool) {
 func (s *errorMockStream) Message() Message                       { return Message{} }
 func (s *errorMockStream) Text() string                           { return "" }
 func (s *errorMockStream) ToolCall() ToolCall                     { return ToolCall{} }
-func (s *errorMockStream) CostUSD() float64                       { return 0 }
 func (s *errorMockStream) Usage() (inputTokens, outputTokens int) { return 0, 0 }
 
 // mockEmptyIDProvider is a provider that returns tool calls with empty IDs
@@ -499,8 +493,6 @@ func (s *mockEmptyIDStream) ToolCall() ToolCall {
 	}
 	return ToolCall{}
 }
-
-func (s *mockEmptyIDStream) CostUSD() float64 { return 0.0001 }
 
 func (s *mockEmptyIDStream) Usage() (inputTokens, outputTokens int) { return 10, 20 }
 
@@ -883,7 +875,6 @@ func (s *mockCancellingStream) Message() Message {
 
 func (s *mockCancellingStream) Text() string                           { return "This is a test message." }
 func (s *mockCancellingStream) ToolCall() ToolCall                     { return ToolCall{} }
-func (s *mockCancellingStream) CostUSD() float64                       { return 0 }
 func (s *mockCancellingStream) Usage() (inputTokens, outputTokens int) { return 0, 0 }
 
 // --- Mocks for Tool Not Found Test ---
@@ -933,7 +924,6 @@ func (s *mockStreamToolNotFound) ToolCall() ToolCall {
 	return ToolCall{}
 }
 
-func (s *mockStreamToolNotFound) CostUSD() float64                       { return 0 }
 func (s *mockStreamToolNotFound) Usage() (inputTokens, outputTokens int) { return 0, 0 }
 
 // mockProviderToolNotFound returns the mockStreamToolNotFound.
