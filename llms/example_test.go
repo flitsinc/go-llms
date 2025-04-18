@@ -53,9 +53,12 @@ func ExampleLLM_Chat() {
 		log.Fatalf("Chat failed: %v", err)
 	}
 
-	// Output:
-	// User: What's the capital of France?
-	// Assistant: The capital of France is Paris.
+	/*
+		Example Interaction:
+
+		User: What's the capital of France?
+		Assistant: The capital of France is Paris.
+	*/
 }
 
 // This example demonstrates chatting with context using Google Gemini.
@@ -95,9 +98,12 @@ func ExampleLLM_ChatWithContext() {
 		log.Printf("Chat finished with error: %v", err)
 	}
 
-	// Output:
-	// User: Tell me a short story.
-	// Assistant: Once upon a time, in a land filled with rolling green hills, lived a curious rabbit named Pip. Pip loved exploring... (output may vary)
+	/*
+		Example Interaction:
+
+		User: Tell me a short story.
+		Assistant: Once upon a time, in a land filled with rolling green hills, lived a curious rabbit named Pip. Pip loved exploring... (output may vary)
+	*/
 }
 
 // This example demonstrates using tools (function calling) with OpenAI.
@@ -159,14 +165,15 @@ func ExampleLLM_Chat_withTools() {
 		log.Fatalf("Chat failed: %v", err)
 	}
 
-	// Note: The exact output depends heavily on the model's response and tool execution.
-	// The structure demonstrates handling different update types.
-	// Output:
-	// User: List files in the current directory.
-	// Assistant:
-	// (System: Using tool: Run Command)
-	// (System: Tool result: Executed 'ls -l')
-	// Okay, I have simulated running the command. The output is: Simulated output for: ls -l
+	/*
+		Example Interaction (output depends heavily on model and tool execution):
+
+		User: List files in the current directory.
+		Assistant:
+		(System: Using tool: Run Command)
+		(System: Tool result: Executed 'ls -l')
+		Okay, I have simulated running the command. The output is: Simulated output for: ls -l
+	*/
 }
 
 // This example demonstrates enabling debug mode with Google Gemini.
@@ -200,9 +207,12 @@ func ExampleLLM_WithDebug() {
 		log.Printf("Chat failed: %v", err)
 	}
 
-	// Output:
-	// Debug mode enabled. Interactions will be logged to debug.yaml.
-	// Hello there! How can I help you today?
+	/*
+		Example Interaction:
+
+		Debug mode enabled. Interactions will be logged to debug.yaml.
+		Hello there! How can I help you today?
+	*/
 }
 
 // This example demonstrates setting a maximum number of LLM turns with Anthropic.
@@ -241,9 +251,12 @@ func ExampleLLM_WithMaxTurns() {
 		fmt.Println("Chat completed within max turns.")
 	}
 
-	// Output:
-	// The sky appears blue due to a phenomenon called Rayleigh scattering... (output may vary)
-	// Chat completed within max turns.
+	/*
+		Example Interaction (output may vary):
+
+		The sky appears blue due to a phenomenon called Rayleigh scattering...
+		Chat completed within max turns.
+	*/
 }
 
 // This example demonstrates adding and using external tools with OpenAI.
@@ -330,10 +343,13 @@ func ExampleLLM_AddExternalTools() {
 		log.Fatalf("Chat failed: %v", err)
 	}
 
-	// Output:
-	// User: What's the weather in London?
-	// Assistant:
-	// (System: Using tool: get_weather)
-	// (System: Tool result: Weather for London)
-	// The weather in London is currently Sunny with a temperature of 70F.
+	/*
+		Example Interaction (output depends heavily on model and tool execution):
+
+		User: What's the weather in London?
+		Assistant:
+		(System: Using tool: get_weather)
+		(System: Tool result: Weather for London)
+		The weather in London is currently Sunny with a temperature of 70F.
+	*/
 }
