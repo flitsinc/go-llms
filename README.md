@@ -232,7 +232,10 @@ llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1"))
 
 // OpenAI-compatible endpoint (e.g., xAI)
 // You can use the OpenAI provider with compatible APIs by configuring the endpoint.
-llm := llms.New(openai.New(os.Getenv("XAI_API_KEY"), "grok-3-latest").WithEndpoint("https://api.x.ai/v1/chat/completions", "xAI"))
+llm := llms.New(
+    openai.New(os.Getenv("XAI_API_KEY"), "grok-3-latest").
+        WithEndpoint("https://api.x.ai/v1/chat/completions", "xAI"),
+)
 ```
 
 You can easily implement new providers by implementing the `Provider` interface:
