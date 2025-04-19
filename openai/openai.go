@@ -19,6 +19,7 @@ type Model struct {
 	accessToken string
 	model       string
 	endpoint    string
+	company     string
 
 	maxCompletionTokens int
 }
@@ -28,11 +29,15 @@ func New(accessToken, model string) *Model {
 		accessToken: accessToken,
 		model:       model,
 		endpoint:    "https://api.openai.com/v1/chat/completions",
+		company:     "OpenAI",
 	}
 }
 
-func (m *Model) WithEndpoint(endpoint string) *Model {
+// WithEndpoint sets the endpoint (and company name) so OpenAI-compatible API
+// endpoints can be used.
+func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
+	m.company = company
 	return m
 }
 
@@ -42,7 +47,7 @@ func (m *Model) WithMaxCompletionTokens(maxCompletionTokens int) *Model {
 }
 
 func (m *Model) Company() string {
-	return "OpenAI"
+	return m.company
 }
 
 func (m *Model) Model() string {

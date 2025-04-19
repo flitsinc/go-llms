@@ -19,6 +19,7 @@ type Model struct {
 	apiKey            string
 	model             string
 	endpoint          string
+	company           string
 	debug             bool
 	maxTokens         int
 	maxThinkingTokens int
@@ -29,6 +30,7 @@ func New(apiKey, model string) *Model {
 		apiKey:    apiKey,
 		model:     model,
 		endpoint:  "https://api.anthropic.com/v1/messages",
+		company:   "Anthropic",
 		maxTokens: 1024,
 	}
 }
@@ -38,8 +40,11 @@ func (m *Model) WithDebug() *Model {
 	return m
 }
 
-func (m *Model) WithEndpoint(endpoint string) *Model {
+// WithEndpoint sets the endpoint (and company name) so Anthropic-compatible
+// endpoints can be used.
+func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
+	m.company = company
 	return m
 }
 
@@ -58,7 +63,7 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 }
 
 func (m *Model) Company() string {
-	return "Anthropic"
+	return m.company
 }
 
 func (m *Model) Model() string {

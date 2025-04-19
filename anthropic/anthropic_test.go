@@ -445,28 +445,6 @@ func TestAnthropicStreamHandling(t *testing.T) {
 	})
 }
 
-func TestAnthropicGenerateHttpError(t *testing.T) {
-	// This test doesn't use the stream iteration but checks errors during initial request
-	// We don't have an easy way to mock http.DefaultClient here without interfaces or libraries.
-	// This test case would typically involve http testing utilities.
-	// For now, we'll skip the detailed implementation but note the area.
-	t.Skip("Skipping HTTP error test - requires HTTP mocking")
-
-	// Example structure (requires http mock):
-	// mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	// 	w.WriteHeader(http.StatusInternalServerError)
-	// 	w.Write([]byte(`{"type": "error", "error": {"type": "server_error", "message": "Internal server error"}}`))
-	// }))
-	// defer mockServer.Close()
-
-	// model := New("fake-key", "claude-3-haiku").WithEndpoint(mockServer.URL)
-	// stream := model.Generate(nil, []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil)
-	// require.Error(t, stream.Err())
-	// assert.Contains(t, stream.Err().Error(), "500 Internal Server Error")
-	// assert.Contains(t, stream.Err().Error(), "server_error")
-	// assert.Contains(t, stream.Err().Error(), "Internal server error")
-}
-
 func TestContentFromLLMEdgeCases(t *testing.T) {
 	t.Run("Empty Text Content", func(t *testing.T) {
 		llmContent := content.FromText("")
