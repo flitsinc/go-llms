@@ -20,6 +20,7 @@ type Model struct {
 	model       string
 	endpoint    string
 	company     string
+	debug       bool
 
 	maxCompletionTokens int
 }
@@ -31,6 +32,11 @@ func New(accessToken, model string) *Model {
 		endpoint:    "https://api.openai.com/v1/chat/completions",
 		company:     "OpenAI",
 	}
+}
+
+func (m *Model) WithDebug() *Model {
+	m.debug = true
+	return m
 }
 
 // WithEndpoint sets the endpoint (and company name) so OpenAI-compatible API
@@ -124,13 +130,14 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debug: m.debug}
 }
 
 type Stream struct {
 	ctx      context.Context
 	model    string
 	stream   io.Reader
+	debug    bool
 	err      error
 	message  llms.Message
 	lastText string
@@ -185,6 +192,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
 				return // Exit loop on scan failure or EOF
+			}
+
+			if s.debug {
+				fmt.Println(scanner.Text())
 			}
 
 			// Process the scanned line.
