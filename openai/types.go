@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/llms"
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 type Tool struct {

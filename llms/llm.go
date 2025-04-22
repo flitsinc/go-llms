@@ -10,8 +10,8 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 var (

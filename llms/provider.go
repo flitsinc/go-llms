@@ -3,8 +3,8 @@ package llms
 import (
 	"context"
 
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 // TODO: The Usage() API should become detailed enough to track things like:

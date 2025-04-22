@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blixt/go-llms/content"
+	"github.com/flitsinc/go-llms/content"
 )
 
 func TestMessageMarshalJSON(t *testing.T) {

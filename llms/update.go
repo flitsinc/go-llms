@@ -1,7 +1,7 @@
 package llms
 
 import (
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 type UpdateType string

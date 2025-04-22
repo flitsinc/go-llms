@@ -25,7 +25,7 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 ## Installation
 
 ```bash
-go get github.com/blixt/go-llms
+go get github.com/flitsinc/go-llms
 ```
 
 ## Quick Start
@@ -39,10 +39,10 @@ import (
     "fmt"
     "os"
 
-    "github.com/blixt/go-llms/content"
-    "github.com/blixt/go-llms/llms"
-    "github.com/blixt/go-llms/openai"
-    "github.com/blixt/go-llms/tools"
+    "github.com/flitsinc/go-llms/content"
+    "github.com/flitsinc/go-llms/llms"
+    "github.com/flitsinc/go-llms/openai"
+    "github.com/flitsinc/go-llms/tools"
 )
 
 func main() {
@@ -82,9 +82,9 @@ import (
     "fmt"
     "os"
 
-    "github.com/blixt/go-llms/anthropic"
-    "github.com/blixt/go-llms/llms"
-    "github.com/blixt/go-llms/tools"
+    "github.com/flitsinc/go-llms/anthropic"
+    "github.com/flitsinc/go-llms/llms"
+    "github.com/flitsinc/go-llms/tools"
 )
 
 // Define tool parameters

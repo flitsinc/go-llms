@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/blixt/go-llms/content"
+	"github.com/flitsinc/go-llms/content"
 )
 
 // Result defines the outcome of a tool execution.

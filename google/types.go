@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/llms"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/llms"
 )
 
 type errorResponse struct {

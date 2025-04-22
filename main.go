@@ -8,10 +8,10 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/blixt/go-llms/anthropic"
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/llms"
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/anthropic"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 func init() {

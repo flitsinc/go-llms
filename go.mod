@@ -1,4 +1,4 @@
-module github.com/blixt/go-llms
+module github.com/flitsinc/go-llms
 
 go 1.24.2
 

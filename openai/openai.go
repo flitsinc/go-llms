@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/blixt/go-llms/content"
-	"github.com/blixt/go-llms/llms"
-	"github.com/blixt/go-llms/tools"
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 type Model struct {
