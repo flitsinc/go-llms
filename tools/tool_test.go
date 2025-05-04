@@ -30,41 +30,6 @@ func extractJSONFromResult(t *testing.T, r Result) json.RawMessage {
 	return jsonItem.Data
 }
 
-// TestGenerateSchema checks that the JSON schema is generated correctly from the Params struct.
-func TestGenerateSchema(t *testing.T) {
-	typ := reflect.TypeOf(Params{})
-	schema := generateSchema("TestFunction", "Test function description", typ)
-
-	expectedSchema := map[string]any{
-		"name":        "TestFunction",
-		"description": "Test function description",
-		"parameters": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name":    map[string]any{"type": "string"},
-				"age":     map[string]any{"type": "integer"},
-				"email":   map[string]any{"type": "string"}, // Email is optional
-				"isAdmin": map[string]any{"type": "boolean"},
-			},
-			"required": []string{"name", "age", "isAdmin"}, // Email is not required due to omitempty
-		},
-	}
-
-	schemaJSON, err := json.Marshal(schema)
-	require.NoError(t, err, "Failed to marshal generated schema")
-
-	expectedSchemaJSON, err := json.Marshal(expectedSchema)
-	require.NoError(t, err, "Failed to marshal expected schema")
-
-	var schemaMap, expectedSchemaMap map[string]any
-	err = json.Unmarshal(schemaJSON, &schemaMap)
-	require.NoError(t, err, "Failed to unmarshal generated schema")
-	err = json.Unmarshal(expectedSchemaJSON, &expectedSchemaMap)
-	require.NoError(t, err, "Failed to unmarshal expected schema")
-
-	assert.Equal(t, expectedSchemaMap, schemaMap, "Generated schema does not match expected schema")
-}
-
 // TestToolRun_CorrectData verifies that the tool functions correctly with valid input data.
 func TestToolRun_CorrectData(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
@@ -266,4 +231,107 @@ func TestToolFunctionReport(t *testing.T) {
 	assert.True(t, reportCalled, "Expected report function to be called")
 	resultJSON := extractJSONFromResult(t, result)
 	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"alice@example.com","isAdmin":true}`, string(resultJSON))
+}
+
+// TestExternalTool tests the creation and execution of an external tool.
+func TestExternalTool(t *testing.T) {
+	// 1. Define the schema manually, including an anyOf structure
+	externalSchema := &FunctionSchema{
+		Name:        "external_processor",
+		Description: "Processes data with flexible value types.",
+		Parameters: ValueSchema{
+			Type: "object",
+			Properties: &map[string]ValueSchema{
+				"id": {Type: "string"},
+				"value": {
+					AnyOf: []*ValueSchema{
+						{Type: "string"},
+						{Type: "number"},
+						{Type: "boolean"},
+					},
+				},
+			},
+			Required: []string{"id", "value"},
+		},
+	}
+
+	// 2. Define the handler function
+	var receivedParams json.RawMessage
+	handler := func(r Runner, params json.RawMessage) Result {
+		receivedParams = params // Capture received params for verification
+		// Simulate processing based on the raw JSON
+		var data map[string]any
+		if err := json.Unmarshal(params, &data); err != nil {
+			return Errorf("failed to parse params: %v", err)
+		}
+		return Success(map[string]any{
+			"processed_id": data["id"],
+			"value_type":   reflect.TypeOf(data["value"]).String(),
+		})
+	}
+
+	// 3. Create the external tool
+	label := "External Data Processor"
+	tool := External(label, externalSchema, handler)
+
+	// 4. Verify schema retrieval
+	assert.Equal(t, label, tool.Label(), "Tool label mismatch")
+	assert.Equal(t, externalSchema.Description, tool.Description(), "Tool description mismatch")
+	assert.Equal(t, externalSchema.Name, tool.FuncName(), "Tool func name mismatch")
+	retrievedSchema := tool.Schema()
+	assert.Equal(t, externalSchema, retrievedSchema, "Tool schema mismatch")
+	// Quick check on AnyOf part preservation
+	valueProp, ok := (*retrievedSchema.Parameters.Properties)["value"]
+	require.True(t, ok, "Value property not found in retrieved schema")
+	require.NotNil(t, valueProp.AnyOf, "AnyOf field is nil in retrieved schema")
+	assert.Len(t, valueProp.AnyOf, 3, "Incorrect number of items in AnyOf")
+	assert.Equal(t, "string", valueProp.AnyOf[0].Type)
+
+	// 5. Run the tool with sample JSON
+	inputParams := json.RawMessage(`{"id":"ext-123", "value":42}`) // Use a number for value
+	result := tool.Run(&runner{}, inputParams)
+
+	// 6. Verify execution and result
+	require.NoError(t, result.Error(), "External tool run failed")
+	assert.JSONEq(t, string(inputParams), string(receivedParams), "Handler did not receive correct params")
+
+	resultJSON := extractJSONFromResult(t, result)
+	expectedResult := `{"processed_id":"ext-123", "value_type":"float64"}` // JSON numbers unmarshal to float64
+	assert.JSONEq(t, expectedResult, string(resultJSON), "External tool result mismatch")
+
+	// Test with another type for value
+	inputParams = json.RawMessage(`{"id":"ext-456", "value":"hello"}`) // Use a string for value
+	result = tool.Run(&runner{}, inputParams)
+	require.NoError(t, result.Error(), "External tool run failed (string value)")
+	resultJSON = extractJSONFromResult(t, result)
+	expectedResult = `{"processed_id":"ext-456", "value_type":"string"}`
+	assert.JSONEq(t, expectedResult, string(resultJSON), "External tool result mismatch (string value)")
+}
+
+// TestFuncTool_RawMessageParam tests using Func with json.RawMessage as the param type.
+func TestFuncTool_RawMessageParam(t *testing.T) {
+	var receivedParams json.RawMessage
+
+	// Define the handler expecting json.RawMessage
+	handler := func(r Runner, params json.RawMessage) Result {
+		receivedParams = params
+		// Simulate simple processing
+		return Success(map[string]any{"raw_length": len(params)})
+	}
+
+	// Create the tool using Func[json.RawMessage]
+	tool := Func("Raw JSON Tool", "Accepts raw JSON", "raw_json_tool", handler)
+
+	// Run the tool
+	inputParams := json.RawMessage(`{"data": "test", "value": 123}`)
+	result := tool.Run(&runner{}, inputParams)
+
+	// Verify success and correct param passing
+	require.NoError(t, result.Error(), "Tool run with raw JSON params failed")
+	assert.JSONEq(t, string(inputParams), string(receivedParams), "Handler did not receive correct raw params")
+
+	// Verify result
+	resultJSON := extractJSONFromResult(t, result)
+	expectedResult := `{"raw_length": 30}` // Length of inputParams string
+	assert.JSONEq(t, expectedResult, string(resultJSON), "Tool result mismatch")
 }

@@ -15,7 +15,7 @@ type FunctionSchema struct {
 }
 
 type ValueSchema struct {
-	Type        string       `json:"type"`
+	Type        string       `json:"type,omitempty"`
 	Description string       `json:"description,omitempty"`
 	Items       *ValueSchema `json:"items,omitempty"`
 	// Note: We use a pointer to the map here to differentiate "no map" from "empty map".
@@ -23,6 +23,7 @@ type ValueSchema struct {
 	Properties           *map[string]ValueSchema `json:"properties,omitempty"`
 	AdditionalProperties *ValueSchema            `json:"additionalProperties,omitempty"`
 	Required             []string                `json:"required,omitempty"`
+	AnyOf                []*ValueSchema          `json:"anyOf,omitempty"`
 }
 
 // generateSchema initializes and returns the main structure of a function's JSON Schema
@@ -69,7 +70,7 @@ func generateObjectSchema(typ reflect.Type) ValueSchema {
 
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
-		if field.PkgPath != "" { // Skip unexported fields
+		if !field.IsExported() { // Skip unexported fields
 			continue
 		}
 		jsonTag := field.Tag.Get("json")
