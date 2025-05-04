@@ -28,5 +28,11 @@ type Provider interface {
 	// Generate takes a system prompt, message history, and optional toolbox,
 	// returning a stream for the LLM's response. The provided context should
 	// be respected for cancellation.
-	Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
+	Generate(
+		ctx context.Context,
+		systemPrompt content.Content,
+		messages []Message,
+		toolbox *tools.Toolbox,
+		jsonOutputSchema *tools.ValueSchema,
+	) ProviderStream
 }

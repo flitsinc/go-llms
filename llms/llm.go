@@ -15,7 +15,8 @@ import (
 )
 
 var (
-	ErrMaxTurnsReached = errors.New("max turns reached")
+	ErrMaxTurnsReached            = errors.New("max turns reached")
+	ErrToolsAndJSONOutputConflict = errors.New("cannot specify both tools and a JSON output schema")
 )
 
 // LLM represents the interface to an LLM provider, maintaining state between
@@ -35,6 +36,11 @@ type LLM struct {
 	// to allow the system prompt to dynamically change throughout a single
 	// conversation.
 	SystemPrompt func() content.Content
+
+	// JSONOutputSchema specifies a schema the LLM must conform its output to.
+	// If set, the LLM output will be JSON conforming to this schema.
+	// Cannot be used simultaneously with tools.
+	JSONOutputSchema *tools.ValueSchema
 }
 
 // New creates a new LLM instance with the specified provider and optional
@@ -192,6 +198,12 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	}
 	l.turns++
 
+	// Check for conflicting configuration: Tools and JSONOutputSchema
+	hasTools := l.toolbox != nil && len(l.toolbox.All()) > 0
+	if l.JSONOutputSchema != nil && hasTools {
+		return false, ErrToolsAndJSONOutputConflict
+	}
+
 	var systemPrompt content.Content
 	if l.SystemPrompt != nil {
 		systemPrompt = l.SystemPrompt()
@@ -200,7 +212,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// This will hold results from tool calls, to be sent back to the LLM.
 	var toolMessages []Message
 
-	stream := l.provider.Generate(ctx, systemPrompt, l.lastSentMessages, l.toolbox)
+	stream := l.provider.Generate(ctx, systemPrompt, l.lastSentMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
 	}
@@ -222,6 +234,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				"3_sentMessages":    l.lastSentMessages,
 				"4_systemPrompt":    systemPrompt,
 				"5_availableTools":  toolsSchema,
+				"6_jsonValueSchema": l.JSONOutputSchema,
 			}
 			if debugYAML, err := yaml.Marshal(debugData); err == nil {
 				os.WriteFile("debug.yaml", debugYAML, 0644)

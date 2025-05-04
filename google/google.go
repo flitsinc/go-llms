@@ -77,7 +77,13 @@ func (m *Model) Model() string {
 	return m.model
 }
 
-func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
+func (m *Model) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) llms.ProviderStream {
 	if m.endpoint == "" {
 		return &Stream{err: fmt.Errorf("must call either WithVertexAI(…) or WithGenerativeLanguageAPI(…) first")}
 	}
@@ -123,6 +129,13 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 	if m.topK > 0 {
 		generationConfig["topK"] = m.topK
 	}
+
+	// Handle JSON output schema
+	if jsonOutputSchema != nil {
+		generationConfig["responseMimeType"] = "application/json"
+		generationConfig["responseSchema"] = jsonOutputSchema
+	}
+
 	if len(generationConfig) > 0 {
 		payload["generationConfig"] = generationConfig
 	}

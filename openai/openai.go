@@ -60,7 +60,13 @@ func (m *Model) Model() string {
 	return m.model
 }
 
-func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, toolbox *tools.Toolbox) llms.ProviderStream {
+func (m *Model) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) llms.ProviderStream {
 	var apiMessages []message
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, message{
@@ -87,6 +93,19 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 
 	if toolbox != nil {
 		payload["tools"] = Tools(toolbox)
+	}
+
+	// Add response_format if JSON schema is provided
+	if jsonOutputSchema != nil {
+		// Use the type "json_schema" and provide the schema definition
+		payload["response_format"] = responseFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaDefinition{
+				Name:   "structured_output", // Provide a default name
+				Schema: jsonOutputSchema,
+				Strict: true, // Default to strict enforcement, can be made configurable
+			},
+		}
 	}
 
 	jsonData, err := json.Marshal(payload)

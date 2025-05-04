@@ -9,6 +9,19 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
+// responseFormat specifies the format the model must output.
+type responseFormat struct {
+	Type       string                `json:"type"`                  // e.g., "text", "json_object", "json_schema"
+	JSONSchema *jsonSchemaDefinition `json:"json_schema,omitempty"` // Used when type is "json_schema"
+}
+
+// jsonSchemaDefinition defines the schema details for JSON schema response format.
+type jsonSchemaDefinition struct {
+	Name   string             `json:"name"`             // A name for the schema
+	Schema *tools.ValueSchema `json:"schema"`           // The actual JSON schema
+	Strict bool               `json:"strict,omitempty"` // Whether to strictly enforce the schema
+}
+
 type Tool struct {
 	Type     string               `json:"type"`
 	Function tools.FunctionSchema `json:"function"`

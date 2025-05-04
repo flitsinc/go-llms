@@ -15,6 +15,10 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
+const (
+	jsonModeToolName = "json_output" // Name for the simulated tool in JSON mode
+)
+
 type Model struct {
 	apiKey            string
 	model             string
@@ -70,11 +74,20 @@ func (m *Model) Model() string {
 	return m.model
 }
 
-func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, messages []llms.Message, tools *tools.Toolbox) llms.ProviderStream {
+func (m *Model) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema, // Updated signature
+) llms.ProviderStream {
 	var apiMessages []message
 	for _, msg := range messages {
 		apiMessages = append(apiMessages, messageFromLLM(msg))
 	}
+
+	// Use a boolean flag to track if JSON mode is active for stream processing
+	isJSONMode := jsonOutputSchema != nil
 
 	payload := map[string]any{
 		"model":    m.model,
@@ -89,8 +102,21 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		payload["system"] = contentFromLLM(systemPrompt)
 	}
 
-	if tools != nil {
-		payload["tools"] = Tools(tools)
+	if isJSONMode {
+		// Simulate JSON mode using a forced tool
+		jsonModeTool := Tool{
+			Name:        jsonModeToolName,
+			Description: "This tool receives your response in a specific JSON format.",
+			InputSchema: *jsonOutputSchema, // Use the provided schema
+		}
+		payload["tools"] = []Tool{jsonModeTool}
+		payload["tool_choice"] = map[string]string{
+			"type": "tool",
+			"name": jsonModeToolName,
+		}
+	} else if toolbox != nil {
+		// Regular tool use
+		payload["tools"] = Tools(toolbox)
 		payload["tool_choice"] = map[string]string{"type": "auto"}
 	}
 
@@ -144,16 +170,17 @@ func (m *Model) Generate(ctx context.Context, systemPrompt content.Content, mess
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode}
 }
 
 type Stream struct {
-	ctx      context.Context
-	model    string
-	stream   io.Reader
-	err      error
-	message  llms.Message
-	lastText string
+	ctx        context.Context
+	model      string
+	stream     io.Reader
+	err        error
+	message    llms.Message
+	lastText   string
+	isJSONMode bool // Flag to indicate if JSON mode was used for generation
 
 	inputTokens, outputTokens int
 }
@@ -186,6 +213,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		lastToolCallIndex := -1
+		var handlingJsonModeTool bool // Flag if we are inside the JSON mode tool block
 		var resetNextArgumentsDelta bool
 		// The Anthropic SSE stream follows this pattern:
 		// 1. message_start - contains initial message metadata
@@ -233,9 +261,14 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.outputTokens += event.Message.Usage.OutputTokens
 				}
 			case "content_block_start":
-				// For now, we only need special handling for tool_use and thinking blocks
+				// For now, we only need special handling for tool_use and thinking blocks.
 				switch event.ContentBlock.Type {
 				case "tool_use":
+					if s.isJSONMode && event.ContentBlock.Name == jsonModeToolName {
+						// Start handling the JSON mode tool.
+						handlingJsonModeTool = true
+						continue // Don't process as regular tool call.
+					}
 					lastToolCallIndex = event.Index
 					resetNextArgumentsDelta = true
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
@@ -246,9 +279,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return
 					}
-				case "redacted_thinking":
-					// TODO: We need to track thinking blocks.
-				case "thinking":
+				case "redacted_thinking", "thinking":
 					// TODO: We need to track thinking blocks.
 				}
 			case "content_block_delta":
@@ -261,9 +292,17 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "input_json_delta":
-					// Tool use JSON delta - append to tool call arguments
 					if event.Delta.PartialJSON == "" {
 						continue
+					}
+					if handlingJsonModeTool {
+						// Accumulate JSON delta as if it was text (because we're in JSON mode).
+						s.lastText = event.Delta.PartialJSON
+						s.message.Content.Append(s.lastText)
+						if !yield(llms.StreamStatusText) {
+							return
+						}
+						continue // Don't process as regular tool call.
 					}
 					index := len(s.message.ToolCalls) - 1
 					if resetNextArgumentsDelta {
@@ -286,6 +325,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					continue
 				}
 			case "content_block_stop":
+				if handlingJsonModeTool {
+					// Stop handling the JSON mode tool.
+					handlingJsonModeTool = false
+					continue // Don't process as regular tool.
+				}
 				// Signal the end of a content block
 				// For tool calls, signal that the tool call is ready
 				if event.Index == lastToolCallIndex {
