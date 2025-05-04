@@ -118,9 +118,12 @@ func TestGenerateSchema_AdvancedTypes(t *testing.T) {
 
 	assert.Equal(t, "object", props["struct_map"].Type, "struct_map type mismatch")
 	require.NotNil(t, props["struct_map"].AdditionalProperties, "struct_map additionalProperties should not be nil")
-	assert.Equal(t, "object", props["struct_map"].AdditionalProperties.Type, "struct_map value type mismatch")
-	require.NotNil(t, props["struct_map"].AdditionalProperties.Properties, "struct_map value properties mismatch")
-	nestedProps := *props["struct_map"].AdditionalProperties.Properties
+	// Type assert AdditionalProperties to access its fields
+	apSchema, ok := props["struct_map"].AdditionalProperties.(ValueSchema)
+	require.True(t, ok, "AdditionalProperties should be of type ValueSchema")
+	assert.Equal(t, "object", apSchema.Type, "struct_map value type mismatch")
+	require.NotNil(t, apSchema.Properties, "struct_map value properties should not be nil")
+	nestedProps := *apSchema.Properties
 	assert.Equal(t, "string", nestedProps["nested_field"].Type, "nested_field type mismatch")
 	assert.Equal(t, "A nested field.", nestedProps["nested_field"].Description, "nested_field description mismatch")
 
@@ -175,25 +178,25 @@ func TestValidateJSON(t *testing.T) {
 			name:          "Missing required field age",
 			jsonData:      `{"name":"Charlie", "isAdmin":true}`,
 			expectError:   true,
-			errorContains: "missing required field: age",
+			errorContains: "missing required field: \"age\"",
 		},
 		{
 			name:          "Missing required field isAdmin",
 			jsonData:      `{"name":"David", "age":40}`,
 			expectError:   true,
-			errorContains: "missing required field: isAdmin",
+			errorContains: "missing required field: \"isAdmin\"",
 		},
 		{
 			name:          "Invalid type for age (string)",
 			jsonData:      `{"name":"Eve", "age":"thirty", "isAdmin":false}`,
 			expectError:   true,
-			errorContains: "age: type mismatch: expected integer",
+			errorContains: "field \"age\": type mismatch: expected integer",
 		},
 		{
 			name:          "Invalid type for isAdmin (number)",
 			jsonData:      `{"name":"Frank", "age":50, "isAdmin":1}`,
 			expectError:   true,
-			errorContains: "isAdmin: type mismatch: expected boolean",
+			errorContains: "field \"isAdmin\": type mismatch: expected boolean",
 		},
 		{
 			name:          "Invalid JSON format",
@@ -223,7 +226,111 @@ func TestValidateJSON(t *testing.T) {
 		})
 	}
 
-	// Add specific tests for invalid schema structure fed into validateParameters
+	// Add specific tests for AdditionalProperties variations
+	t.Run("AdditionalProperties False - Extra Field", func(t *testing.T) {
+		schema := funcSchema // Use the base schema
+		schema.Parameters.AdditionalProperties = false
+		jsonData := json.RawMessage(`{"name":"Alice", "age":30, "isAdmin":true, "extra":"field"}`)
+		err := validateJSON(&schema, jsonData)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "additional property \"extra\" not allowed")
+		schema.Parameters.AdditionalProperties = nil // Reset for other tests
+	})
+
+	t.Run("AdditionalProperties True - Extra Field", func(t *testing.T) {
+		schema := funcSchema // Use the base schema
+		schema.Parameters.AdditionalProperties = true
+		jsonData := json.RawMessage(`{"name":"Alice", "age":30, "isAdmin":true, "extra":"field"}`)
+		err := validateJSON(&schema, jsonData)
+		assert.NoError(t, err)
+		schema.Parameters.AdditionalProperties = nil // Reset for other tests
+	})
+
+	t.Run("AdditionalProperties Schema - Valid Extra Field", func(t *testing.T) {
+		schema := funcSchema // Use the base schema
+		extraSchema := ValueSchema{Type: "string"}
+		schema.Parameters.AdditionalProperties = extraSchema
+		jsonData := json.RawMessage(`{"name":"Alice", "age":30, "isAdmin":true, "extra":"field"}`)
+		err := validateJSON(&schema, jsonData)
+		assert.NoError(t, err)
+		schema.Parameters.AdditionalProperties = nil // Reset for other tests
+	})
+
+	t.Run("AdditionalProperties Schema - Invalid Extra Field Type", func(t *testing.T) {
+		schema := funcSchema // Use the base schema
+		extraSchema := ValueSchema{Type: "string"}
+		schema.Parameters.AdditionalProperties = extraSchema
+		jsonData := json.RawMessage(`{"name":"Alice", "age":30, "isAdmin":true, "extra":123}`)
+		err := validateJSON(&schema, jsonData)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "additional property \"extra\": type mismatch: expected string")
+		schema.Parameters.AdditionalProperties = nil // Reset for other tests
+	})
+
+	t.Run("AnyOf Validation - String Matches", func(t *testing.T) {
+		schema := FunctionSchema{
+			Name: "AnyOfTest",
+			Parameters: ValueSchema{
+				Type: "object",
+				Properties: &map[string]ValueSchema{
+					"value": {
+						AnyOf: []ValueSchema{
+							{Type: "string"},
+							{Type: "integer"},
+						},
+					},
+				},
+				Required: []string{"value"},
+			},
+		}
+		jsonData := json.RawMessage(`{"value": "hello"}`)
+		err := validateJSON(&schema, jsonData)
+		assert.NoError(t, err)
+	})
+
+	t.Run("AnyOf Validation - Integer Matches", func(t *testing.T) {
+		schema := FunctionSchema{
+			Name: "AnyOfTest",
+			Parameters: ValueSchema{
+				Type: "object",
+				Properties: &map[string]ValueSchema{
+					"value": {
+						AnyOf: []ValueSchema{
+							{Type: "string"},
+							{Type: "integer"},
+						},
+					},
+				},
+				Required: []string{"value"},
+			},
+		}
+		jsonData := json.RawMessage(`{"value": 123}`)
+		err := validateJSON(&schema, jsonData)
+		assert.NoError(t, err)
+	})
+
+	t.Run("AnyOf Validation - Boolean Fails (No Match)", func(t *testing.T) {
+		schema := FunctionSchema{
+			Name: "AnyOfTest",
+			Parameters: ValueSchema{
+				Type: "object",
+				Properties: &map[string]ValueSchema{
+					"value": {
+						AnyOf: []ValueSchema{
+							{Type: "string"},
+							{Type: "integer"},
+						},
+					},
+				},
+				Required: []string{"value"},
+			},
+		}
+		jsonData := json.RawMessage(`{"value": true}`)
+		err := validateJSON(&schema, jsonData)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "field \"value\": data does not match any of the schemas in anyOf")
+	})
+
 	t.Run("Invalid Schema - Not Object Type", func(t *testing.T) {
 		invalidSchema := FunctionSchema{
 			Name: "InvalidFunc",

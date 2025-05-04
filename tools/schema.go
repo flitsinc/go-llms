@@ -8,22 +8,40 @@ import (
 	"strings"
 )
 
+// FunctionSchema defines the structure for a function tool that an LLM can call.
+// It aligns with the format expected by many LLM providers for function calling.
+// Based on a subset of the JSON Schema specification.
 type FunctionSchema struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Parameters  ValueSchema `json:"parameters"`
+	// Name is the name of the function to be called.
+	Name string `json:"name"`
+	// Description is a description of what the function does.
+	Description string `json:"description"`
+	// Parameters is the schema for the arguments object that the function expects.
+	Parameters ValueSchema `json:"parameters"`
 }
 
+// ValueSchema represents a schema for a value within the function's parameters.
+// It corresponds to a subset of the JSON Schema specification, defining the type
+// and constraints of a parameter field or the parameter object itself.
 type ValueSchema struct {
-	Type        string       `json:"type,omitempty"`
-	Description string       `json:"description,omitempty"`
-	Items       *ValueSchema `json:"items,omitempty"`
+	// Type specifies the data type of the value (e.g., "string", "integer", "object", "array", "boolean", "number").
+	Type string `json:"type,omitempty"`
+	// Description provides a brief explanation of the value or field.
+	Description string `json:"description,omitempty"`
+	// Items defines the schema for elements within an array. Only used when Type is "array".
+	Items *ValueSchema `json:"items,omitempty"`
+	// Properties defines the schema for properties within an object. Only used when Type is "object".
 	// Note: We use a pointer to the map here to differentiate "no map" from "empty map".
 	// See: https://github.com/golang/go/issues/22480
-	Properties           *map[string]ValueSchema `json:"properties,omitempty"`
-	AdditionalProperties *ValueSchema            `json:"additionalProperties,omitempty"`
-	Required             []string                `json:"required,omitempty"`
-	AnyOf                []*ValueSchema          `json:"anyOf,omitempty"`
+	Properties *map[string]ValueSchema `json:"properties,omitempty"`
+	// AdditionalProperties specifies the schema for additional properties in an object, or allows/disallows them.
+	// It can be a boolean (true to allow any, false to disallow) or a ValueSchema defining the type of allowed additional properties.
+	// Only used when Type is "object".
+	AdditionalProperties any `json:"additionalProperties,omitempty"`
+	// Required lists the names of properties that must be present when Type is "object".
+	Required []string `json:"required,omitempty"`
+	// AnyOf specifies that the value must conform to at least one of the provided schemas.
+	AnyOf []ValueSchema `json:"anyOf,omitempty"`
 }
 
 // generateSchema initializes and returns the main structure of a function's JSON Schema
@@ -53,7 +71,7 @@ func fieldTypeToJSONSchema(t reflect.Type) ValueSchema {
 		return ValueSchema{Type: "array", Items: &itemSchema}
 	case reflect.Map:
 		additionalPropertiesSchema := fieldTypeToJSONSchema(t.Elem())
-		return ValueSchema{Type: "object", AdditionalProperties: &additionalPropertiesSchema}
+		return ValueSchema{Type: "object", AdditionalProperties: additionalPropertiesSchema}
 	case reflect.Struct:
 		return generateObjectSchema(t)
 	case reflect.Ptr:
@@ -117,17 +135,38 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 
 	for key, val := range dataMap {
 		fieldSchema, found := (*schema.Properties)[key]
-		if !found {
-			continue // Ignoring extra fields
+		if found {
+			// Validate known property
+			if err := validateField(fieldSchema, val); err != nil {
+				return fmt.Errorf("field \"%s\": %w", key, err)
+			}
+			continue
 		}
-		if err := validateField(fieldSchema, val); err != nil {
-			return fmt.Errorf("%s: %w", key, err)
+
+		// Handle additional property based on schema.AdditionalProperties
+		switch ap := schema.AdditionalProperties.(type) {
+		case nil:
+			// Default behavior: If AdditionalProperties is not specified or nil, allow extra fields.
+			continue
+		case bool:
+			if !ap {
+				return fmt.Errorf("additional property %q not allowed", key)
+			}
+			// If ap is true, allow the property.
+			continue
+		case ValueSchema:
+			// Validate against the provided schema for additional properties
+			if err := validateField(ap, val); err != nil {
+				return fmt.Errorf("additional property %q: %w", key, err)
+			}
+		default:
+			return fmt.Errorf("invalid schema: AdditionalProperties has unexpected type %T", schema.AdditionalProperties)
 		}
 	}
 
 	for _, field := range schema.Required {
 		if _, exists := dataMap[field]; !exists {
-			return fmt.Errorf("missing required field: %s", field)
+			return fmt.Errorf("missing required field: %q", field)
 		}
 	}
 
@@ -136,7 +175,31 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 
 // validateField checks a single field against its schema
 func validateField(fieldSchema ValueSchema, data any) error {
+	// Check AnyOf first
+	if len(fieldSchema.AnyOf) > 0 {
+		valid := false
+		for _, subSchema := range fieldSchema.AnyOf {
+			if err := validateField(subSchema, data); err == nil {
+				valid = true
+				break
+			}
+		}
+		if valid {
+			return nil // Valid against at least one schema in AnyOf
+		}
+		// If none matched, return a generic error or potentially the last error encountered
+		// TODO: Improve error message for AnyOf failure?
+		return fmt.Errorf("data does not match any of the schemas in anyOf")
+	}
+
 	dataType := fieldSchema.Type
+	if dataType == "" {
+		// If type is empty and AnyOf is not used, consider it an error or permissive?
+		// For now, let's assume it should match based on inferred type if possible, or error if ambiguous.
+		// This part might need refinement based on exact JSON Schema spec interpretation for empty type.
+		// Let's treat it as an error for stricter validation initially.
+		return fmt.Errorf("schema type is missing and anyOf is not specified")
+	}
 
 	switch dataType {
 	case "integer":

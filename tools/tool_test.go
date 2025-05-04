@@ -244,7 +244,7 @@ func TestExternalTool(t *testing.T) {
 			Properties: &map[string]ValueSchema{
 				"id": {Type: "string"},
 				"value": {
-					AnyOf: []*ValueSchema{
+					AnyOf: []ValueSchema{
 						{Type: "string"},
 						{Type: "number"},
 						{Type: "boolean"},
