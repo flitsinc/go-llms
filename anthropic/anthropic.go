@@ -27,6 +27,7 @@ type Model struct {
 	debug             bool
 	maxTokens         int
 	maxThinkingTokens int
+	betaFeatures      []string
 }
 
 func New(apiKey, model string) *Model {
@@ -41,6 +42,13 @@ func New(apiKey, model string) *Model {
 
 func (m *Model) WithDebug() *Model {
 	m.debug = true
+	return m
+}
+
+// WithBeta adds an Anthropic beta feature flag to the request.
+// Multiple beta features can be added by calling this method multiple times.
+func (m *Model) WithBeta(betaFeature string) *Model {
+	m.betaFeatures = append(m.betaFeatures, betaFeature)
 	return m
 }
 
@@ -143,6 +151,11 @@ func (m *Model) Generate(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", m.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+
+	// Add beta feature headers if any are configured
+	for _, beta := range m.betaFeatures {
+		req.Header.Add("anthropic-beta", beta)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
