@@ -459,7 +459,9 @@ func messageFromLLM(m llms.Message) message {
 			})
 		}
 	}
-	if len(m.Content) == 0 {
+	// Only add a default empty text content if apiContent is genuinely empty
+	// (i.e., no original content AND no tool calls were added).
+	if len(apiContent) == 0 {
 		apiContent = []contentItem{{Type: "text", Text: ""}}
 	}
 	return message{
