@@ -123,13 +123,28 @@ func (s *mockStream) Iter() func(func(StreamStatus) bool) {
 		// Then yield tool calls if any
 		for i, toolName := range s.toolCalls {
 			uniqueID := fmt.Sprintf("%s-id-%d", toolName, i)
+			fullArgsStr := fmt.Sprintf(`{"test_param":"test_value_%s"}`, toolName)
 			s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
 				ID:        uniqueID,
 				Name:      toolName,
-				Arguments: json.RawMessage(fmt.Sprintf(`{"test_param":"test_value_%s"}`, toolName)),
+				Arguments: json.RawMessage{}, // Will be set later.
 			})
 
 			if !yield(StreamStatusToolCallBegin) {
+				return
+			}
+
+			// First delta: half of the arguments.
+			// The LLM will call stream.ToolCall() which should return the tool call with these partial arguments.
+			s.message.ToolCalls[i].Arguments = json.RawMessage(fullArgsStr[:len(fullArgsStr)/2])
+			if !yield(StreamStatusToolCallDelta) {
+				return
+			}
+
+			// Second delta: full arguments.
+			// The LLM will call stream.ToolCall() again, which should return the tool call with full arguments.
+			s.message.ToolCalls[i].Arguments = json.RawMessage(fullArgsStr)
+			if !yield(StreamStatusToolCallDelta) {
 				return
 			}
 

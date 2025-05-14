@@ -283,7 +283,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						// This is appending arguments to an existing tool call
 						if toolDelta.Function.Arguments != "" {
 							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
-							if !yield(llms.StreamStatusToolCallData) {
+							if !yield(llms.StreamStatusToolCallDelta) {
 								return // Abort if yield fails
 							}
 						}

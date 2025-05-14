@@ -291,7 +291,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return
 					}
-					if !yield(llms.StreamStatusToolCallData) {
+					if !yield(llms.StreamStatusToolCallDelta) {
 						return
 					}
 					if !yield(llms.StreamStatusToolCallReady) {

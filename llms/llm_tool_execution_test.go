@@ -52,30 +52,38 @@ func TestToolCallIDsFlow(t *testing.T) {
 	assert.NoError(t, llm.Err(), "No error should occur in this test")
 
 	// Assert: Correct number and type of updates
-	require.Equal(t, 8, len(updates), "Should receive exactly 8 updates")
-	_, ok := updates[0].(TextUpdate)
+	// Initial Text + 3 * (ToolStart + 2*ToolDelta + ToolDone) + Final Text = 1 + 3*4 + 1 = 14
+	require.Equal(t, 14, len(updates), "Should receive exactly 14 updates") // Adjusted from 8
+	textUpdate0, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "First update should be TextUpdate")
-	_, ok = updates[7].(TextUpdate)
-	require.True(t, ok, "Final update should be TextUpdate")
+	assert.Equal(t, "This is a test message.", textUpdate0.Text) // Corrected from previous attempt
+
+	textUpdateFinal, ok := updates[13].(TextUpdate) // Was updates[7]
+	require.True(t, ok, "Final update (index 13) should be TextUpdate")
+	assert.Equal(t, "I've processed the results from the tool.", textUpdateFinal.Text)
 
 	// Assert: Tool call ID propagation and uniqueness
 	var lastToolCallID string
-	for i := 1; i < 7; i += 2 { // Iterate through start/done pairs
-		start, startOK := updates[i].(ToolStartUpdate)
-		done, doneOK := updates[i+1].(ToolDoneUpdate)
-		require.True(t, startOK, "Update %d should be ToolStartUpdate", i)
-		require.True(t, doneOK, "Update %d should be ToolDoneUpdate", i+1)
+	for k := 0; k < 3; k++ { // Iterate for each of the 3 tools
+		startIndex := 1 + k*4
+		doneIndex := startIndex + 3
 
-		expectedToolName := fmt.Sprintf("tool%d", (i/2)+1)
-		expectedID := fmt.Sprintf("%s-id-%d", expectedToolName, i/2)
+		start, startOK := updates[startIndex].(ToolStartUpdate)
+		done, doneOK := updates[doneIndex].(ToolDoneUpdate)
+		require.True(t, startOK, "Update %d (tool %d) should be ToolStartUpdate", startIndex, k+1)
+		require.True(t, doneOK, "Update %d (tool %d) should be ToolDoneUpdate", doneIndex, k+1)
 
-		assert.Equal(t, expectedToolName, start.Tool.FuncName(), "Tool name mismatch in start update %d", i)
-		assert.Equal(t, expectedID, start.ToolCallID, "ToolCallID mismatch in start update %d", i)
-		assert.Equal(t, expectedToolName, done.Tool.FuncName(), "Tool name mismatch in done update %d", i+1)
-		assert.Equal(t, start.ToolCallID, done.ToolCallID, "ToolCallID should match in start/done pair %d", (i/2)+1)
+		expectedToolName := fmt.Sprintf("tool%d", k+1)
+		// mockStream.Iter generates tool IDs like toolName-id-indexInToolCallsList
+		expectedID := fmt.Sprintf("%s-id-%d", expectedToolName, k)
 
-		if i > 1 {
-			assert.NotEqual(t, lastToolCallID, start.ToolCallID, "ToolCallIDs should be unique (pair %d vs previous)", (i/2)+1)
+		assert.Equal(t, expectedToolName, start.Tool.FuncName(), "Tool name mismatch in start update (tool %d)", k+1)
+		assert.Equal(t, expectedID, start.ToolCallID, "ToolCallID mismatch in start update (tool %d)", k+1)
+		assert.Equal(t, expectedToolName, done.Tool.FuncName(), "Tool name mismatch in done update (tool %d)", k+1)
+		assert.Equal(t, start.ToolCallID, done.ToolCallID, "ToolCallID should match in start/done pair (tool %d)", k+1)
+
+		if k > 0 {
+			assert.NotEqual(t, lastToolCallID, start.ToolCallID, "ToolCallIDs should be unique (tool %d vs previous)", k+1)
 		}
 		lastToolCallID = start.ToolCallID
 	}
@@ -110,9 +118,14 @@ func TestRunToolCallImageHandling(t *testing.T) {
 	assert.NoError(t, llm.Err(), "Should not return an error")
 
 	// Assert: ToolDoneUpdate has the correct content
-	require.Len(t, updates, 4, "Should have 4 updates")
-	doneUpdate, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
+	require.Len(t, updates, 6, "Should have 6 updates") // Adjusted from 4
+
+	// updates[0] is initial TextUpdate
+	// updates[1] is ToolStartUpdate
+	// updates[2] and updates[3] are ToolDeltaUpdates
+
+	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	require.True(t, ok, "Update at index 4 should be ToolDoneUpdate")
 	assert.Equal(t, "Generated test image", doneUpdate.Result.Label())
 	require.NoError(t, doneUpdate.Result.Error())
 	require.NotNil(t, doneUpdate.Result.Content())
@@ -158,18 +171,21 @@ func TestToolStatusUpdates(t *testing.T) {
 	// Assert: No LLM-level error
 	assert.NoError(t, llm.Err())
 
-	// Assert: Correct basic updates received (Text, ToolStart, ToolDone, Final Text)
-	require.Equal(t, 4, len(updates), "Should receive 4 standard updates")
+	// Assert: Correct basic updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
+	require.Equal(t, 6, len(updates), "Should receive 6 standard updates") // Adjusted from 4
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 	startUpdate, ok := updates[1].(ToolStartUpdate)
 	require.True(t, ok, "Update 1 should be ToolStartUpdate")
-	doneUpdate, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
-	_, ok = updates[3].(TextUpdate)
-	require.True(t, ok, "Update 3 should be TextUpdate")
 
-	// Assert: ToolDoneUpdate is correct
+	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
+
+	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+	_, ok = updates[5].(TextUpdate) // Was updates[3]
+	require.True(t, ok, "Update 5 should be TextUpdate")
+
+	// Assert: ToolDoneUpdate is correct (uses startUpdate and doneUpdate vars)
 	assert.Equal(t, "status_tool", doneUpdate.Tool.FuncName())
 	assert.Equal(t, startUpdate.ToolCallID, doneUpdate.ToolCallID, "Done ID should match start ID")
 	assert.NoError(t, doneUpdate.Result.Error())
@@ -195,17 +211,20 @@ func TestToolCallInContext(t *testing.T) {
 	// Assert: No LLM-level error
 	assert.NoError(t, llm.Err())
 
-	// Assert: Correct updates received (Text, ToolStart, ToolDone, Final Text)
-	require.Equal(t, 4, len(updates), "Should receive 4 standard updates")
+	// Assert: Correct updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
+	require.Equal(t, 6, len(updates), "Should receive 6 standard updates") // Adjusted from 4
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 	startUpdate, ok := updates[1].(ToolStartUpdate)
 	require.True(t, ok, "Update 1 should be ToolStartUpdate")
 	assert.Equal(t, expectedToolCallID, startUpdate.ToolCallID, "ToolCallID in start update should match expected")
-	doneUpdate, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
-	_, ok = updates[3].(TextUpdate)
-	require.True(t, ok, "Update 3 should be TextUpdate")
+
+	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
+
+	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+	_, ok = updates[5].(TextUpdate) // Was updates[3]
+	require.True(t, ok, "Update 5 should be TextUpdate")
 
 	// Assert: ToolDoneUpdate contains the correct ToolCallID extracted from the context
 	assert.Equal(t, "context_checker_tool", doneUpdate.Tool.FuncName())
@@ -213,4 +232,79 @@ func TestToolCallInContext(t *testing.T) {
 	require.NoError(t, doneUpdate.Result.Error())
 	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
 	assert.JSONEq(t, fmt.Sprintf(`{"tool_call_id":%q}`, expectedToolCallID), string(resultJSON))
+}
+
+// TestLLMReceivesToolArgumentDeltas verifies that the LLM correctly processes and forwards
+// tool argument deltas received from the provider stream.
+func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
+	const toolName = "delta_check_tool"
+	// Arrange: Mock provider configured to call a specific tool
+	mockProv := &mockProvider{
+		toolCallsToMake: []string{toolName},
+	}
+
+	// Define the tool that will be called
+	deltaCheckTool := tools.Func(toolName, "Tool for checking deltas", toolName,
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success(map[string]any{"processed_param": p.TestParam})
+		})
+
+	llm, _ := setupTestLLM(t, mockProv, deltaCheckTool)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Check tool argument deltas")
+
+	// Assert: No LLM-level error
+	assert.NoError(t, llm.Err())
+
+	// Assert: Correct number of updates (InitialText, ToolStart, Delta1, Delta2, ToolDone, FinalText)
+	require.Len(t, updates, 6, "Should receive exactly 6 updates for a single tool call with deltas")
+
+	// Define expected arguments based on mockStream behavior
+	expectedFullArgsStr := fmt.Sprintf(`{"test_param":"test_value_%s"}`, toolName)
+	firstHalfArgs := expectedFullArgsStr[:len(expectedFullArgsStr)/2]
+	secondHalfArgs := expectedFullArgsStr[len(expectedFullArgsStr)/2:]
+
+	var receivedToolCallID string
+
+	// 1. Initial TextUpdate
+	textUpdate1, ok := updates[0].(TextUpdate)
+	require.True(t, ok, "Update 0 should be TextUpdate")
+	assert.Equal(t, "This is a test message.", textUpdate1.Text, "Initial text mismatch")
+
+	// 2. ToolStartUpdate
+	startUpdate, ok := updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Update 1 should be ToolStartUpdate")
+	assert.Equal(t, toolName, startUpdate.Tool.FuncName())
+	receivedToolCallID = startUpdate.ToolCallID
+	assert.Equal(t, fmt.Sprintf("%s-id-0", toolName), receivedToolCallID, "ToolCallID mismatch in start update")
+
+	// 3. First ToolDeltaUpdate
+	deltaUpdate1, ok := updates[2].(ToolDeltaUpdate)
+	require.True(t, ok, "Update 2 should be ToolDeltaUpdate")
+	assert.Equal(t, receivedToolCallID, deltaUpdate1.ToolCallID, "ToolCallID mismatch in first delta")
+	assert.Equal(t, firstHalfArgs, string(deltaUpdate1.Delta), "First delta content mismatch")
+
+	// 4. Second ToolDeltaUpdate
+	deltaUpdate2, ok := updates[3].(ToolDeltaUpdate)
+	require.True(t, ok, "Update 3 should be ToolDeltaUpdate")
+	assert.Equal(t, receivedToolCallID, deltaUpdate2.ToolCallID, "ToolCallID mismatch in second delta")
+	assert.Equal(t, secondHalfArgs, string(deltaUpdate2.Delta), "Second delta content mismatch")
+
+	// 5. ToolDoneUpdate
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+	assert.Equal(t, receivedToolCallID, doneUpdate.ToolCallID, "ToolCallID mismatch in done update")
+	assert.Equal(t, toolName, doneUpdate.Tool.FuncName())
+	require.NoError(t, doneUpdate.Result.Error())
+	// Check the result of the tool execution (optional, but good for completeness)
+	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
+	assert.JSONEq(t, fmt.Sprintf(`{"processed_param":"test_value_%s"}`, toolName), string(resultJSON))
+
+	// 6. Final TextUpdate
+	textUpdate2, ok := updates[5].(TextUpdate)
+	require.True(t, ok, "Update 5 should be TextUpdate")
+	assert.Equal(t, "I've processed the results from the tool.", textUpdate2.Text, "Final text mismatch")
 }

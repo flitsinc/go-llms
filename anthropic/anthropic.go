@@ -327,7 +327,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 							[]byte(event.Delta.PartialJSON)...,
 						)
 					}
-					if !yield(llms.StreamStatusToolCallData) {
+					if !yield(llms.StreamStatusToolCallDelta) {
 						return
 					}
 				case "thinking_delta":

@@ -87,18 +87,22 @@ func TestRunToolCallWithError(t *testing.T) {
 	// Assert: No LLM-level error (tool error shouldn't stop the flow)
 	assert.NoError(t, llm.Err(), "LLM should not error just because a tool failed")
 
-	// Assert: Correct updates received (Text, ToolStart, ToolDone, Final Text)
-	require.Equal(t, 4, len(updates), "Should receive 4 updates")
+	// Assert: Correct updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
+	require.Equal(t, 6, len(updates), "Should receive 6 updates")
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 	_, ok = updates[1].(ToolStartUpdate)
 	require.True(t, ok, "Update 1 should be ToolStartUpdate")
-	_, ok = updates[3].(TextUpdate)
-	require.True(t, ok, "Update 3 should be TextUpdate")
+
+	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
+
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+
+	_, ok = updates[5].(TextUpdate)
+	require.True(t, ok, "Update 5 should be TextUpdate")
 
 	// Assert: ToolDoneUpdate contains the error
-	doneUpdate, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Update 2 should be ToolDoneUpdate")
 	assert.Equal(t, "error_tool", doneUpdate.Tool.FuncName())
 	require.NotNil(t, doneUpdate.Result, "Result should not be nil")
 	assert.Error(t, doneUpdate.Result.Error(), "Result error should not be nil")

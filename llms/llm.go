@@ -242,6 +242,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		}()
 	}
 
+	// Tracks how many bytes of the tool call arguments we sent so far in
+	// deltas. We probably want to move this into the responsibility of each
+	// provider so we can reduce allocations.
+	var toolCallDeltaSentBytes int
+
 	for status := range stream.Iter() {
 		// Check context at the beginning of each iteration.
 		// This ensures we react promptly if cancellation happens *between* stream events.
@@ -265,10 +270,16 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			if tool == nil {
 				return false, fmt.Errorf("tool %q not found", toolCall.Name)
 			}
+			toolCallDeltaSentBytes = 0
 			updateChan <- ToolStartUpdate{toolCall.ID, tool}
 
-		case StreamStatusToolCallData:
-			// TODO: Update caller with tool JSON delta.
+		case StreamStatusToolCallDelta:
+			toolCall := stream.ToolCall()
+			if argLen := len(toolCall.Arguments); argLen > toolCallDeltaSentBytes {
+				// Only send the new part of the arguments.
+				updateChan <- ToolDeltaUpdate{toolCall.ID, toolCall.Arguments[toolCallDeltaSentBytes:]}
+				toolCallDeltaSentBytes = argLen
+			}
 
 		case StreamStatusToolCallReady:
 			// TODO: We may want to support parallel tool calls, which

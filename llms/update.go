@@ -1,6 +1,8 @@
 package llms
 
 import (
+	"encoding/json"
+
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -8,6 +10,7 @@ type UpdateType string
 
 const (
 	UpdateTypeToolStart  UpdateType = "tool_start"
+	UpdateTypeToolDelta  UpdateType = "tool_delta"
 	UpdateTypeToolStatus UpdateType = "tool_status"
 	UpdateTypeToolDone   UpdateType = "tool_done"
 	UpdateTypeText       UpdateType = "text"
@@ -24,6 +27,15 @@ type ToolStartUpdate struct {
 
 func (u ToolStartUpdate) Type() UpdateType {
 	return UpdateTypeToolStart
+}
+
+type ToolDeltaUpdate struct {
+	ToolCallID string
+	Delta      json.RawMessage
+}
+
+func (u ToolDeltaUpdate) Type() UpdateType {
+	return UpdateTypeToolDelta
 }
 
 type ToolStatusUpdate struct {

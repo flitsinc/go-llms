@@ -23,14 +23,18 @@ func TestMaxTurnsReached(t *testing.T) {
 	defer cancel()
 	updates := runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: Updates received (should stop after tool done)
-	require.Equal(t, 3, len(updates), "Should receive exactly 3 updates")
+	// Assert: Updates received (Text, ToolStart, 2xToolDelta, ToolDone)
+	// MaxTurns(1) means the first turn completes, including tool execution, then stops.
+	require.Equal(t, 5, len(updates), "Should receive exactly 5 updates")
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "First update should be TextUpdate")
 	_, ok = updates[1].(ToolStartUpdate)
 	require.True(t, ok, "Second update should be ToolStartUpdate")
-	_, ok = updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Third update should be ToolDoneUpdate")
+
+	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
+
+	_, ok = updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update at index 4 should be ToolDoneUpdate")
 
 	// Assert: Max turns error and turn count
 	require.Error(t, llm.Err(), "LLM.Err() should return an error")
@@ -52,10 +56,15 @@ func TestMaxTurnsAllowsCompletion(t *testing.T) {
 	defer cancel()
 	updates := runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: Updates received (should include final text)
-	require.Equal(t, 4, len(updates), "Should receive exactly 4 updates")
-	finalTextUpdate, ok := updates[3].(TextUpdate)
-	require.True(t, ok, "Final update should be TextUpdate")
+	// Assert: Updates received (Turn1: Text, TS, 2xTDelta, TD; Turn2: Text)
+	// Total 5 + 1 = 6 updates
+	require.Equal(t, 6, len(updates), "Should receive exactly 6 updates")
+
+	// Individual checks for T1 Text, TS, TD could be added if needed, but the key is the final text
+	// For minimality, we only adjust the final text index and overall count.
+
+	finalTextUpdate, ok := updates[5].(TextUpdate)
+	require.True(t, ok, "Final update (index 5) should be TextUpdate")
 	assert.Equal(t, "I've processed the results from the tool.", finalTextUpdate.Text)
 
 	// Assert: No error and correct turn count

@@ -9,8 +9,8 @@ const (
 	StreamStatusText
 	// StreamStatusToolCallBegin means the stream started a tool call. The name of the function is available, but not the arguments.
 	StreamStatusToolCallBegin
-	// StreamStatusToolCallData means the stream is streaming the arguments for a tool call.
-	StreamStatusToolCallData
+	// StreamStatusToolCallDelta means the stream is streaming the arguments for a tool call.
+	StreamStatusToolCallDelta
 	// StreamStatusToolCallReady means the stream finished streaming the arguments for a tool call.
 	StreamStatusToolCallReady
 

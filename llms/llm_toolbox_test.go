@@ -118,41 +118,44 @@ func TestAddExternalTools(t *testing.T) {
 	// Assert: No LLM error during the flow
 	assert.NoError(t, llm.Err(), "Chat flow should complete without LLM error")
 
-	// Assert: Updates received for the full flow (Text -> Search -> Database -> Text)
-	// Expected updates: Text, Start(Search), Done(Search), Start(DB), Done(DB), Text(Final)
-	require.Equal(t, 6, len(updates), "Should receive 6 updates for the full flow")
+	// Assert: Updates received for the full flow (Text -> Search Tool Sequence -> Database Tool Sequence -> Text)
+	// Expected: Text, Start(S), 2xDelta(S), Done(S), Start(DB), 2xDelta(DB), Done(DB), Text(Final)
+	// 1 + (1+2+1) + (1+2+1) + 1 = 1 + 4 + 4 + 1 = 10
+	require.Equal(t, 10, len(updates), "Should receive 10 updates for the full flow")
 
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 
+	// Search tool: TS at 1, TD at 4
 	searchStart, ok := updates[1].(ToolStartUpdate)
 	require.True(t, ok, "Update 1 should be ToolStartUpdate (search)")
 	assert.Equal(t, "search", searchStart.Tool.FuncName())
 	assert.Equal(t, "search-id-0", searchStart.ToolCallID)
 
-	searchDone, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Update 2 should be ToolDoneUpdate (search)")
+	searchDone, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate (search)")
 	assert.Equal(t, "search", searchDone.Tool.FuncName())
 	assert.Equal(t, searchStart.ToolCallID, searchDone.ToolCallID)
 	require.NoError(t, searchDone.Result.Error())
 	resultJSON := extractJSONFromResult(t, searchDone.Result)
 	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(resultJSON))
 
-	dbStart, ok := updates[3].(ToolStartUpdate)
-	require.True(t, ok, "Update 3 should be ToolStartUpdate (database)")
+	// Database tool: TS at 5, TD at 8
+	dbStart, ok := updates[5].(ToolStartUpdate) // Was updates[3]
+	require.True(t, ok, "Update 5 should be ToolStartUpdate (database)")
 	assert.Equal(t, "database", dbStart.Tool.FuncName())
 	assert.Equal(t, "database-id-1", dbStart.ToolCallID)
 
-	dbDone, ok := updates[4].(ToolDoneUpdate)
-	require.True(t, ok, "Update 4 should be ToolDoneUpdate (database)")
+	dbDone, ok := updates[8].(ToolDoneUpdate) // Was updates[4]
+	require.True(t, ok, "Update 8 should be ToolDoneUpdate (database)")
 	assert.Equal(t, "database", dbDone.Tool.FuncName())
 	assert.Equal(t, dbStart.ToolCallID, dbDone.ToolCallID)
 	require.NoError(t, dbDone.Result.Error())
 	resultJSON = extractJSONFromResult(t, dbDone.Result)
 	assert.JSONEq(t, `{"rows":10}`, string(resultJSON))
 
-	finalText, ok := updates[5].(TextUpdate)
-	require.True(t, ok, "Update 5 should be TextUpdate (final)")
+	finalText, ok := updates[9].(TextUpdate) // Was updates[5]
+	require.True(t, ok, "Update 9 should be TextUpdate (final)")
 	assert.Equal(t, "I've processed the results from the tool.", finalText.Text)
 
 	// Assert: External tool handler received correct parameters (verified via externalToolCalls map)

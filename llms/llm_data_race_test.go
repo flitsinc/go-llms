@@ -173,22 +173,22 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 	// Check that the LLM itself didn't encounter an error (like cancellation)
 	assert.NoError(t, llm.Err(), "LLM should not report an error in this scenario")
 
-	// Check received updates: We expect Text, ToolStart, ToolDone, and the final Text
+	// Check received updates: We expect Text, ToolStart, 2x ToolDelta, ToolDone, and the final Text
 	// because the sends are now blocking.
-	require.Len(t, updates, 4, "Expected exactly 4 updates (Text, ToolStart, ToolDone, Final Text)")
+	require.Len(t, updates, 6, "Expected exactly 6 updates (Text, ToolStart, 2x ToolDelta, ToolDone, Final Text)")
 
 	foundText := false
 	foundToolStart := false
-	foundToolDone := false // This should now be true
+	foundToolDone := false
 	foundFinalText := false
 	finalTextContent := ""
 
 	for i, update := range updates {
 		switch u := update.(type) {
 		case TextUpdate:
-			if i == 0 {
+			if i == 0 { // Initial text
 				foundText = true
-			} else {
+			} else { // Final text
 				foundFinalText = true
 				finalTextContent = u.Text // Capture the final text
 			}
@@ -196,7 +196,7 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 			foundToolStart = true
 			assert.Equal(t, "fast_tool", u.Tool.FuncName())
 		case ToolDoneUpdate:
-			foundToolDone = true // Mark if found (shouldn't be)
+			foundToolDone = true
 		}
 	}
 
@@ -209,10 +209,3 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 
 	t.Logf("TestSlowReceiverLosesToolDoneUpdate completed successfully, demonstrating ToolDoneUpdate is no longer lost.")
 }
-
-/* // Remove duplicate definition - it's already in llms_test.go
-// --- Need TestToolParams definition accessible for TestRapidCancellation ---
-type TestToolParams struct {
-	TestParam string `json:"test_param"`
-}
-*/

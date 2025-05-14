@@ -49,7 +49,7 @@ func TestChatFlow(t *testing.T) {
 	assert.Contains(t, systemPromptText, expectedTimeString)
 
 	// Assert: Updates received
-	require.Equal(t, 4, len(updates), "Should receive 4 updates")
+	require.Equal(t, 6, len(updates), "Should receive 6 updates")
 	textUpdate, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "First update should be TextUpdate")
 	assert.Equal(t, "This is a test message.", textUpdate.Text)
@@ -60,15 +60,15 @@ func TestChatFlow(t *testing.T) {
 	assert.Equal(t, "test_tool", toolStartUpdate.Tool.FuncName())
 	assert.Equal(t, "test_tool-id-0", toolStartUpdate.ToolCallID, "ToolCallID should match the ID from the message")
 
-	toolDoneUpdate, ok := updates[2].(ToolDoneUpdate)
-	require.True(t, ok, "Third update should be ToolDoneUpdate")
+	toolDoneUpdate, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update at index 4 should be ToolDoneUpdate")
 	assert.Equal(t, "Test Tool", toolDoneUpdate.Tool.Label())
 	assert.Equal(t, "test_tool-id-0", toolDoneUpdate.ToolCallID, "ToolCallID should match the ID from the message")
 	resultJSON := extractJSONFromResult(t, toolDoneUpdate.Result)
 	assert.JSONEq(t, `{"result":"Processed: test_value_test_tool"}`, string(resultJSON))
 
-	secondTextUpdate, ok := updates[3].(TextUpdate)
-	require.True(t, ok, "Fourth update should be TextUpdate")
+	secondTextUpdate, ok := updates[5].(TextUpdate)
+	require.True(t, ok, "Update at index 5 should be TextUpdate")
 	assert.Equal(t, "I've processed the results from the tool.", secondTextUpdate.Text)
 
 	// Assert: Message history

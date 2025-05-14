@@ -173,7 +173,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		iter(func(status llms.StreamStatus) bool {
 			yieldedStatuses = append(yieldedStatuses, status)
 			// Capture arguments state specifically after the data delta and at ready
-			if status == llms.StreamStatusToolCallData {
+			if status == llms.StreamStatusToolCallDelta {
 				argsAtData = string(stream.ToolCall().Arguments)
 			}
 			if status == llms.StreamStatusToolCallReady {
@@ -186,7 +186,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 
 		expectedStatuses := []llms.StreamStatus{
 			llms.StreamStatusToolCallBegin,
-			llms.StreamStatusToolCallData, // Expect data status
+			llms.StreamStatusToolCallDelta, // Expect data status
 			llms.StreamStatusToolCallReady,
 		}
 		assert.Equal(t, expectedStatuses, yieldedStatuses, "Expected stream statuses sequence")
@@ -241,7 +241,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		iter := stream.Iter()
 		iter(func(status llms.StreamStatus) bool {
 			yieldedStatuses = append(yieldedStatuses, status)
-			if status == llms.StreamStatusToolCallData {
+			if status == llms.StreamStatusToolCallDelta {
 				callCount++
 				currentArgs := string(stream.ToolCall().Arguments)
 				switch callCount {
@@ -263,9 +263,9 @@ func TestAnthropicStreamHandling(t *testing.T) {
 
 		expectedStatuses := []llms.StreamStatus{
 			llms.StreamStatusToolCallBegin,
-			llms.StreamStatusToolCallData,
-			llms.StreamStatusToolCallData,
-			llms.StreamStatusToolCallData,
+			llms.StreamStatusToolCallDelta,
+			llms.StreamStatusToolCallDelta,
+			llms.StreamStatusToolCallDelta,
 			llms.StreamStatusToolCallReady,
 		}
 		assert.Equal(t, expectedStatuses, yieldedStatuses, "Expected stream statuses sequence")
