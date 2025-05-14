@@ -282,10 +282,17 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 
 		case StreamStatusToolCallReady:
-			// TODO: We may want to support parallel tool calls, which
-			// means the results would need to be collected later (and
-			// maybe out of sequence).
-			toolMessage := l.runToolCall(ctx, l.toolbox, stream.ToolCall(), updateChan)
+			// TODO: We want to support parallel tool calls, which means results
+			// would need to be collected later (and maybe out of order).
+			toolCall := stream.ToolCall()
+			// Usually there shouldn't be any more changes to arguments but we
+			// have to make sure all arguments are sent before we run the tool.
+			if argLen := len(toolCall.Arguments); argLen > toolCallDeltaSentBytes {
+				// Only send the new part of the arguments.
+				updateChan <- ToolDeltaUpdate{toolCall.ID, toolCall.Arguments[toolCallDeltaSentBytes:]}
+				toolCallDeltaSentBytes = argLen
+			}
+			toolMessage := l.runToolCall(ctx, l.toolbox, toolCall, updateChan)
 			toolMessages = append(toolMessages, toolMessage)
 		}
 	}
