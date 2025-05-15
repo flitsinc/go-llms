@@ -190,7 +190,7 @@ type Stream struct {
 	err         error
 	message     llms.Message
 	lastText    string
-	lastThought content.Thought
+	lastThought string
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 
 	inputTokens, outputTokens int
@@ -208,7 +208,7 @@ func (s *Stream) Text() string {
 	return s.lastText
 }
 
-func (s *Stream) Thought() content.Thought {
+func (s *Stream) Thought() string {
 	return s.lastThought
 }
 
@@ -295,25 +295,26 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "thinking":
-					s.lastThought = content.Thought{}
-					if event.ContentBlock.Thinking != "" {
-						s.lastThought.Text = event.ContentBlock.Thinking
-					}
+					s.lastThought = ""
+					s.message.Content.AppendThought(event.ContentBlock.Thinking)
 					if event.ContentBlock.Signature != "" {
-						s.lastThought.Signature = event.ContentBlock.Signature
+						s.message.Content.SetThoughtSignature(event.ContentBlock.Signature)
 					}
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}
 				case "redacted_thinking":
-					s.lastThought = content.Thought{}
+					s.lastThought = "(Redacted)"
 					if event.ContentBlock.Data != "" {
 						decodedData, err := base64.StdEncoding.DecodeString(event.ContentBlock.Data)
 						if err != nil {
 							s.err = fmt.Errorf("error decoding redacted_thinking data: %w", err)
 							return
 						}
-						s.lastThought.Encrypted = decodedData
+						s.message.Content = append(s.message.Content, &content.Thought{
+							Text:      "(Redacted)",
+							Encrypted: decodedData,
+						})
 					}
 					if !yield(llms.StreamStatusThinking) {
 						return
@@ -355,13 +356,14 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "thinking_delta":
-					s.lastThought.Text += event.Delta.Thinking
+					s.lastThought = event.Delta.Thinking
+					s.message.Content.AppendThought(event.Delta.Thinking)
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}
 					continue
 				case "signature_delta":
-					s.lastThought.Signature = event.Delta.Signature
+					s.message.Content.SetThoughtSignature(event.Delta.Signature)
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}

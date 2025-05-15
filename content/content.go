@@ -108,6 +108,31 @@ func (c *Content) Append(text string) {
 	*c = append(*c, &Text{Text: text})
 }
 
+// AppendThought adds the given text to the last content item if it's a thought,
+// otherwise it adds a new thought item to the end of the list.
+func (c *Content) AppendThought(text string) {
+	if l := len(*c); l > 0 {
+		if tc, ok := (*c)[l-1].(*Thought); ok {
+			tc.Text += text
+			return
+		}
+	}
+	*c = append(*c, &Thought{Text: text})
+}
+
+// SetThoughtSignature sets the signature for the last thought item. Panics if
+// there is no thought item.
+func (c *Content) SetThoughtSignature(signature string) {
+	if len(*c) == 0 {
+		panic("tried to sign thought before any content")
+	}
+	lastThought, ok := (*c)[len(*c)-1].(*Thought)
+	if !ok {
+		panic("tried to sign thought before any thinking content")
+	}
+	lastThought.Signature = signature
+}
+
 // MarshalJSON implements the json.Marshaler interface for Content.
 func (c Content) MarshalJSON() ([]byte, error) {
 	items := make([]map[string]any, len(c))

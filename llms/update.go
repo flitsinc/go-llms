@@ -3,7 +3,6 @@ package llms
 import (
 	"encoding/json"
 
-	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -69,7 +68,7 @@ func (u TextUpdate) Type() UpdateType {
 }
 
 type ThinkingUpdate struct {
-	content.Thought
+	Thought string
 }
 
 func (u ThinkingUpdate) Type() UpdateType {

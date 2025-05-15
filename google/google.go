@@ -241,9 +241,9 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
-func (s *Stream) Thought() content.Thought {
+func (s *Stream) Thought() string {
 	// Google Gemini API does not currently stream thoughts.
-	return content.Thought{}
+	return ""
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {

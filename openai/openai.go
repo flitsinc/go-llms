@@ -200,9 +200,10 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
-func (s *Stream) Thought() content.Thought {
-	// OpenAI API does not currently stream thoughts in the way we model them.
-	return content.Thought{}
+func (s *Stream) Thought() string {
+	// OpenAI API does not currently stream thoughts through Chat Completions API.
+	// TODO: Switch to Responses API to support this.
+	return ""
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {

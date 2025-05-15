@@ -168,9 +168,7 @@ func (s *mockStream) Message() Message {
 
 func (s *mockStream) Text() string { return s.textToGenerate }
 
-func (s *mockStream) Thought() content.Thought {
-	return content.Thought{}
-}
+func (s *mockStream) Thought() string { return "" }
 
 func (s *mockStream) ToolCall() ToolCall {
 	if len(s.message.ToolCalls) > 0 {
@@ -217,7 +215,7 @@ func (s *errorMockStream) Iter() func(func(StreamStatus) bool) {
 }
 func (s *errorMockStream) Message() Message                       { return Message{} }
 func (s *errorMockStream) Text() string                           { return "" }
-func (s *errorMockStream) Thought() content.Thought               { return content.Thought{} }
+func (s *errorMockStream) Thought() string                        { return "" }
 func (s *errorMockStream) ToolCall() ToolCall                     { return ToolCall{} }
 func (s *errorMockStream) Usage() (inputTokens, outputTokens int) { return 0, 0 }
 
@@ -286,7 +284,7 @@ func (s *mockEmptyIDStream) Message() Message {
 
 func (s *mockEmptyIDStream) Text() string { return "This is a test message." }
 
-func (s *mockEmptyIDStream) Thought() content.Thought { return content.Thought{} }
+func (s *mockEmptyIDStream) Thought() string { return "" }
 
 func (s *mockEmptyIDStream) ToolCall() ToolCall {
 	if len(s.message.ToolCalls) > 0 {
@@ -356,7 +354,7 @@ func (s *mockCancellingStream) Message() Message {
 }
 
 func (s *mockCancellingStream) Text() string                           { return "This is a test message." }
-func (s *mockCancellingStream) Thought() content.Thought               { return content.Thought{} }
+func (s *mockCancellingStream) Thought() string                        { return "" }
 func (s *mockCancellingStream) ToolCall() ToolCall                     { return ToolCall{} }
 func (s *mockCancellingStream) Usage() (inputTokens, outputTokens int) { return 0, 0 }
 
@@ -446,7 +444,7 @@ func (s *mockStreamToolNotFound) Message() Message {
 
 func (s *mockStreamToolNotFound) Text() string { return "Trying a tool..." }
 
-func (s *mockStreamToolNotFound) Thought() content.Thought { return content.Thought{} }
+func (s *mockStreamToolNotFound) Thought() string { return "" }
 
 func (s *mockStreamToolNotFound) ToolCall() ToolCall {
 	if len(s.message.ToolCalls) > 0 {
