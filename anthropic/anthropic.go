@@ -84,7 +84,7 @@ func (m *Model) Generate(
 	systemPrompt content.Content,
 	messages []llms.Message,
 	toolbox *tools.Toolbox,
-	jsonOutputSchema *tools.ValueSchema, // Updated signature
+	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
 	var apiMessages []message
 	for _, msg := range messages {
@@ -190,7 +190,7 @@ type Stream struct {
 	err         error
 	message     llms.Message
 	lastText    string
-	lastThought string
+	lastThought *content.Thought
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 
 	inputTokens, outputTokens int
@@ -208,8 +208,8 @@ func (s *Stream) Text() string {
 	return s.lastText
 }
 
-func (s *Stream) Thought() string {
-	return s.lastThought
+func (s *Stream) Thought() content.Thought {
+	return *s.lastThought
 }
 
 func (s *Stream) ToolCall() llms.ToolCall {
@@ -295,7 +295,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "thinking":
-					s.lastThought = ""
+					s.lastThought = &content.Thought{
+						Text:      event.ContentBlock.Thinking,
+						Signature: event.ContentBlock.Signature,
+					}
 					s.message.Content.AppendThought(event.ContentBlock.Thinking)
 					if event.ContentBlock.Signature != "" {
 						s.message.Content.SetThoughtSignature(event.ContentBlock.Signature)
@@ -304,17 +307,18 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "redacted_thinking":
-					s.lastThought = "(Redacted)"
 					if event.ContentBlock.Data != "" {
 						decodedData, err := base64.StdEncoding.DecodeString(event.ContentBlock.Data)
 						if err != nil {
 							s.err = fmt.Errorf("error decoding redacted_thinking data: %w", err)
 							return
 						}
-						s.message.Content = append(s.message.Content, &content.Thought{
+						thought := &content.Thought{
 							Text:      "(Redacted)",
 							Encrypted: decodedData,
-						})
+						}
+						s.lastThought = thought
+						s.message.Content = append(s.message.Content, thought)
 					}
 					if !yield(llms.StreamStatusThinking) {
 						return
@@ -356,13 +360,14 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "thinking_delta":
-					s.lastThought = event.Delta.Thinking
+					s.lastThought = &content.Thought{Text: event.Delta.Thinking}
 					s.message.Content.AppendThought(event.Delta.Thinking)
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}
 					continue
 				case "signature_delta":
+					s.lastThought = &content.Thought{Signature: event.Delta.Signature}
 					s.message.Content.SetThoughtSignature(event.Delta.Signature)
 					if !yield(llms.StreamStatusThinking) {
 						return

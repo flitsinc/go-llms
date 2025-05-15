@@ -19,7 +19,7 @@ type ProviderStream interface {
 	Message() Message
 	Text() string
 	ToolCall() ToolCall
-	Thought() string
+	Thought() content.Thought
 	Usage() (inputTokens, outputTokens int)
 }
 
