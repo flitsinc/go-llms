@@ -112,7 +112,7 @@ func (c *Content) Append(text string) {
 // otherwise it adds a new thought item to the end of the list.
 func (c *Content) AppendThought(text string) {
 	if l := len(*c); l > 0 {
-		if tc, ok := (*c)[l-1].(*Thought); ok {
+		if tc, ok := (*c)[l-1].(*Thought); ok && len(tc.Encrypted) == 0 {
 			tc.Text += text
 			return
 		}
