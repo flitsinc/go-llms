@@ -67,10 +67,6 @@ func (m *Model) WithMaxTokens(maxTokens int) *Model {
 }
 
 func (m *Model) WithThinking(budgetTokens int) *Model {
-	// FIXME: The codebase needs to be updated to support thinking models.
-	if budgetTokens > 0 {
-		panic("thinking models are not yet supported")
-	}
 	m.maxThinkingTokens = budgetTokens
 	return m
 }
