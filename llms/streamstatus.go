@@ -13,6 +13,6 @@ const (
 	StreamStatusToolCallDelta
 	// StreamStatusToolCallReady means the stream finished streaming the arguments for a tool call.
 	StreamStatusToolCallReady
-
-	// TODO: Add thinking related stream statuses?
+	// StreamStatusThinking means the stream produced a thought.
+	StreamStatusThinking
 )

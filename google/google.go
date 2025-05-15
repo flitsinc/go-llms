@@ -25,6 +25,8 @@ type Model struct {
 	temperature     float64
 	topK            int
 	topP            float64
+	includeThoughts bool
+	thinkingBudget  int
 }
 
 func New(model string) *Model {
@@ -66,6 +68,12 @@ func (m *Model) WithTopK(topK int) *Model {
 
 func (m *Model) WithTopP(topP float64) *Model {
 	m.topP = topP
+	return m
+}
+
+func (m *Model) WithThinking(budgetTokens int) *Model {
+	m.includeThoughts = true
+	m.thinkingBudget = budgetTokens
 	return m
 }
 
@@ -138,6 +146,16 @@ func (m *Model) Generate(
 
 	if len(generationConfig) > 0 {
 		payload["generationConfig"] = generationConfig
+	}
+
+	if m.includeThoughts {
+		thinkingConfig := map[string]any{
+			"includeThoughts": true,
+		}
+		if m.thinkingBudget > 0 {
+			thinkingConfig["thinkingBudget"] = m.thinkingBudget
+		}
+		payload["thinkingConfig"] = thinkingConfig
 	}
 
 	if systemPrompt != nil {
@@ -221,6 +239,11 @@ func (s *Stream) ToolCall() llms.ToolCall {
 		return llms.ToolCall{}
 	}
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+}
+
+func (s *Stream) Thought() content.Thought {
+	// Google Gemini API does not currently stream thoughts.
+	return content.Thought{}
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {

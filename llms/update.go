@@ -3,6 +3,7 @@ package llms
 import (
 	"encoding/json"
 
+	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -14,6 +15,7 @@ const (
 	UpdateTypeToolStatus UpdateType = "tool_status"
 	UpdateTypeToolDone   UpdateType = "tool_done"
 	UpdateTypeText       UpdateType = "text"
+	UpdateTypeThinking   UpdateType = "thinking"
 )
 
 type Update interface {
@@ -64,4 +66,12 @@ type TextUpdate struct {
 
 func (u TextUpdate) Type() UpdateType {
 	return UpdateTypeText
+}
+
+type ThinkingUpdate struct {
+	content.Thought
+}
+
+func (u ThinkingUpdate) Type() UpdateType {
+	return UpdateTypeThinking
 }

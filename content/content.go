@@ -11,6 +11,7 @@ const (
 	TypeText     Type = "text"
 	TypeImageURL Type = "imageURL"
 	TypeJSON     Type = "json"
+	TypeThought  Type = "thought"
 )
 
 type Item interface {
@@ -39,6 +40,16 @@ type JSON struct {
 
 func (j *JSON) Type() Type {
 	return TypeJSON
+}
+
+type Thought struct {
+	Text      string `json:"text,omitempty"`
+	Encrypted []byte `json:"encrypted,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+func (t *Thought) Type() Type {
+	return TypeThought
 }
 
 type Content []Item
@@ -148,6 +159,8 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 			item = &ImageURL{}
 		case TypeJSON:
 			item = &JSON{}
+		case TypeThought:
+			item = &Thought{}
 		default:
 			return fmt.Errorf("unknown content item type: %q", typeContainer.Type)
 		}

@@ -96,6 +96,10 @@ type contentBlock struct {
 	ID    string          `json:"id,omitempty"`    // Unique ID for the content block (used for tool_use blocks)
 	Name  string          `json:"name,omitempty"`  // For tool_use blocks, name of the tool being called
 	Input json.RawMessage `json:"input,omitempty"` // Arguments passed to the tool
+	// Fields for thinking blocks
+	Thinking  string `json:"thinking,omitempty"`  // Initial thinking content if provided directly
+	Signature string `json:"signature,omitempty"` // Initial signature if provided directly
+	Data      string `json:"data,omitempty"`      // For redacted_thinking, the base64 encoded data
 }
 
 // delta represents incremental updates in content_block_delta events

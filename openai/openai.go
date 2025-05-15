@@ -15,6 +15,14 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
+type Effort string
+
+const (
+	EffortLow    Effort = "low"
+	EffortMedium Effort = "medium"
+	EffortHigh   Effort = "high"
+)
+
 type Model struct {
 	accessToken string
 	model       string
@@ -23,6 +31,7 @@ type Model struct {
 	debug       bool
 
 	maxCompletionTokens int
+	reasoningEffort     Effort
 }
 
 func New(accessToken, model string) *Model {
@@ -49,6 +58,11 @@ func (m *Model) WithEndpoint(endpoint, company string) *Model {
 
 func (m *Model) WithMaxCompletionTokens(maxCompletionTokens int) *Model {
 	m.maxCompletionTokens = maxCompletionTokens
+	return m
+}
+
+func (m *Model) WithThinking(effort Effort) *Model {
+	m.reasoningEffort = effort
 	return m
 }
 
@@ -89,6 +103,10 @@ func (m *Model) Generate(
 
 	if m.maxCompletionTokens > 0 {
 		payload["max_completion_tokens"] = m.maxCompletionTokens
+	}
+
+	if m.reasoningEffort != "" {
+		payload["reasoning_effort"] = m.reasoningEffort
 	}
 
 	if toolbox != nil {
@@ -180,6 +198,11 @@ func (s *Stream) ToolCall() llms.ToolCall {
 		return llms.ToolCall{}
 	}
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+}
+
+func (s *Stream) Thought() content.Thought {
+	// OpenAI API does not currently stream thoughts in the way we model them.
+	return content.Thought{}
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {

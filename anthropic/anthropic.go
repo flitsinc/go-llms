@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -187,13 +188,14 @@ func (m *Model) Generate(
 }
 
 type Stream struct {
-	ctx        context.Context
-	model      string
-	stream     io.Reader
-	err        error
-	message    llms.Message
-	lastText   string
-	isJSONMode bool // Flag to indicate if JSON mode was used for generation
+	ctx         context.Context
+	model       string
+	stream      io.Reader
+	err         error
+	message     llms.Message
+	lastText    string
+	lastThought content.Thought
+	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 
 	inputTokens, outputTokens int
 }
@@ -208,6 +210,10 @@ func (s *Stream) Message() llms.Message {
 
 func (s *Stream) Text() string {
 	return s.lastText
+}
+
+func (s *Stream) Thought() content.Thought {
+	return s.lastThought
 }
 
 func (s *Stream) ToolCall() llms.ToolCall {
@@ -292,8 +298,30 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return
 					}
-				case "redacted_thinking", "thinking":
-					// TODO: We need to track thinking blocks.
+				case "thinking":
+					s.lastThought = content.Thought{}
+					if event.ContentBlock.Thinking != "" {
+						s.lastThought.Text = event.ContentBlock.Thinking
+					}
+					if event.ContentBlock.Signature != "" {
+						s.lastThought.Signature = event.ContentBlock.Signature
+					}
+					if !yield(llms.StreamStatusThinking) {
+						return
+					}
+				case "redacted_thinking":
+					s.lastThought = content.Thought{}
+					if event.ContentBlock.Data != "" {
+						decodedData, err := base64.StdEncoding.DecodeString(event.ContentBlock.Data)
+						if err != nil {
+							s.err = fmt.Errorf("error decoding redacted_thinking data: %w", err)
+							return
+						}
+						s.lastThought.Encrypted = decodedData
+					}
+					if !yield(llms.StreamStatusThinking) {
+						return
+					}
 				}
 			case "content_block_delta":
 				switch event.Delta.Type {
@@ -331,10 +359,16 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "thinking_delta":
-					// TODO: We need to track thinking blocks.
+					s.lastThought.Text += event.Delta.Thinking
+					if !yield(llms.StreamStatusThinking) {
+						return
+					}
 					continue
 				case "signature_delta":
-					// TODO: We need to track thinking blocks.
+					s.lastThought.Signature = event.Delta.Signature
+					if !yield(llms.StreamStatusThinking) {
+						return
+					}
 					continue
 				}
 			case "content_block_stop":
