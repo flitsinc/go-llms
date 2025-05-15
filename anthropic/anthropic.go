@@ -456,6 +456,15 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 		case *content.JSON:
 			ci.Type = "text"
 			ci.Text = string(v.Data)
+		case *content.Thought:
+			if len(v.Encrypted) > 0 {
+				ci.Type = "redacted_thinking"
+				ci.Data = base64.StdEncoding.EncodeToString(v.Encrypted)
+			} else {
+				ci.Type = "thinking"
+				ci.Thinking = v.Text
+				ci.Signature = v.Signature
+			}
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}
