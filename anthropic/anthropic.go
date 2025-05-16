@@ -125,7 +125,9 @@ func (m *Model) Generate(
 		payload["tool_choice"] = map[string]string{"type": "auto"}
 	}
 
-	if m.maxThinkingTokens > 0 {
+	// Note: Anthropic does not support thinking when forcing tool use (which we
+	// do to simulate JSON mode from other providers).
+	if m.maxThinkingTokens > 0 && !isJSONMode {
 		payload["thinking"] = map[string]any{
 			"type":          "enabled",
 			"budget_tokens": m.maxThinkingTokens,
