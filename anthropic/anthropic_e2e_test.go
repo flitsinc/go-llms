@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
@@ -28,11 +29,10 @@ func TestAnthropicE2E(t *testing.T) {
 		Query string `json:"query" description:"Search query"`
 	}
 	webSearchTool := tools.Func(
-		"Web Search", // Label (Human readable)
+		"Web Search",
 		"Searches the web",
-		"web_search", // FuncName (API level)
+		"web_search",
 		func(r tools.Runner, p searchParams) tools.Result {
-			// Mock handler - not actually called in this test, but needed for definition
 			return tools.Success(nil)
 		},
 	)
@@ -50,6 +50,10 @@ func TestAnthropicE2E(t *testing.T) {
 		// customResponse allows custom SSE responses from the mock server.
 		// If nil, a default minimal SSE response is sent.
 		customResponse func(t *testing.T, w http.ResponseWriter)
+		// expectedStreamStatuses verifies the stream status sequence.
+		expectedStreamStatuses []llms.StreamStatus
+		// verifyStreamOutput verifies the stream output.
+		verifyStreamOutput func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream)
 	}{
 		{
 			name: "Basic text generation",
@@ -97,7 +101,6 @@ func TestAnthropicE2E(t *testing.T) {
 				toolDef, ok := toolsList[0].(map[string]interface{})
 				require.True(t, ok)
 				assert.Equal(t, "web_search", toolDef["name"])
-				// Verify the schema generated from the searchParams struct
 				inputSchema, ok := toolDef["input_schema"].(map[string]interface{})
 				require.True(t, ok)
 				assert.Equal(t, "object", inputSchema["type"])
@@ -110,7 +113,6 @@ func TestAnthropicE2E(t *testing.T) {
 				required, ok := inputSchema["required"].([]interface{})
 				require.True(t, ok)
 				assert.Contains(t, required, "query")
-				// Check tool choice
 				assert.NotNil(t, body["tool_choice"], "Tool choice should be present")
 				toolChoice, ok := body["tool_choice"].(map[string]interface{})
 				require.True(t, ok)
@@ -123,7 +125,6 @@ func TestAnthropicE2E(t *testing.T) {
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Output JSON")},
 			},
-			// Manually construct the ValueSchema for JSON mode
 			jsonOutputSchema: &tools.ValueSchema{
 				Type: "object",
 				Properties: &map[string]tools.ValueSchema{
@@ -140,7 +141,6 @@ func TestAnthropicE2E(t *testing.T) {
 				toolDef, ok := toolsList[0].(map[string]interface{})
 				require.True(t, ok)
 				assert.Equal(t, jsonModeToolName, toolDef["name"])
-				// Verify the input schema matches the manually constructed one
 				inputSchema, ok := toolDef["input_schema"].(map[string]interface{})
 				require.True(t, ok)
 				assert.Equal(t, "object", inputSchema["type"])
@@ -153,7 +153,6 @@ func TestAnthropicE2E(t *testing.T) {
 				required, ok := inputSchema["required"].([]interface{})
 				require.True(t, ok)
 				assert.Contains(t, required, "data")
-				// Check tool choice
 				assert.NotNil(t, body["tool_choice"], "Tool choice should be present for JSON mode")
 				toolChoice, ok := body["tool_choice"].(map[string]interface{})
 				require.True(t, ok)
@@ -166,32 +165,30 @@ func TestAnthropicE2E(t *testing.T) {
 			name: "Assistant message with only tool_call included in history",
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Initial user query for web search.")},
-				{ // Assistant's response - only tool call, no text content
+				{
 					Role:    "assistant",
-					Content: content.Content{}, // Explicitly empty content
+					Content: content.Content{},
 					ToolCalls: []llms.ToolCall{
 						{
 							ID:        "test_tool_id_search_001",
-							Name:      "web_search", // Matches webSearchTool defined above
+							Name:      "web_search",
 							Arguments: json.RawMessage(`{"query": "anthropic tool use serialization"}`),
 						},
 					},
 				},
-				{ // Tool result message
+				{
 					Role:       "tool",
 					ToolCallID: "test_tool_id_search_001",
 					Content:    content.FromText("Result from web_search about serialization."),
 				},
 			},
-			toolbox:   tools.Box(webSearchTool), // Toolbox is needed for the provider to expect/process tools
+			toolbox:   tools.Box(webSearchTool),
 			maxTokens: 70,
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				assert.Equal(t, mockModel, body["model"])
 				messages, ok := body["messages"].([]interface{})
 				require.True(t, ok, "messages should be an array")
 				require.Len(t, messages, 3, "Should have user, assistant, and tool_result messages in history")
-
-				// --- Verify User Message (Index 0) ---
 				userMsg, ok := messages[0].(map[string]any)
 				require.True(t, ok, "User message should be a map")
 				assert.Equal(t, "user", userMsg["role"])
@@ -206,22 +203,17 @@ func TestAnthropicE2E(t *testing.T) {
 					}
 				}
 				assert.Equal(t, "Initial user query for web search.", userContentText)
-
-				// --- Key verification: Assistant Message (Index 1) ---
 				assistantMsg, ok := messages[1].(map[string]any)
 				require.True(t, ok, "Assistant message should be a map")
 				assert.Equal(t, "assistant", assistantMsg["role"])
 				contentList, ok := assistantMsg["content"].([]interface{})
 				assert.True(t, ok, "Assistant message 'content' should be an array, not a string or null, when tool_calls are present.")
-
 				foundToolUse := false
-				// Loop is safe: if !ok, contentList is nil, loop doesn't run, foundToolUse remains false.
 				for _, item := range contentList {
 					contentItem, itemOk := item.(map[string]any)
 					require.True(t, itemOk, "Content item should be a map")
 					itemType, typeOk := contentItem["type"].(string)
 					require.True(t, typeOk, "Content item should have a 'type' field")
-
 					if itemType == "tool_use" {
 						foundToolUse = true
 						assert.Equal(t, "test_tool_id_search_001", contentItem["id"], "Tool call ID mismatch")
@@ -233,21 +225,16 @@ func TestAnthropicE2E(t *testing.T) {
 					}
 				}
 				assert.True(t, foundToolUse, "Assistant message 'content' MUST include a 'tool_use' block because ToolCalls were specified on the llms.Message")
-
-				// --- Verify Tool Result Message (Index 2) ---
 				toolResultMsg, ok := messages[2].(map[string]any)
 				require.True(t, ok, "Tool result message should be a map")
 				assert.Equal(t, "user", toolResultMsg["role"], "Tool result message role should be transformed to 'user' for Anthropic")
-
 				toolResultContentList, ok := toolResultMsg["content"].([]interface{})
 				require.True(t, ok, "Tool result 'content' should be an array")
 				require.Len(t, toolResultContentList, 1, "Tool result content list should have one item")
-
 				toolResultItem, ok := toolResultContentList[0].(map[string]any)
 				require.True(t, ok, "Tool result content item should be a map")
 				assert.Equal(t, "tool_result", toolResultItem["type"], "Tool result item type mismatch")
 				assert.Equal(t, "test_tool_id_search_001", toolResultItem["tool_use_id"], "Tool result item tool_use_id mismatch")
-
 				var toolResultText string
 				if toolResultActualContent, contentOk := toolResultItem["content"].(string); contentOk {
 					toolResultText = toolResultActualContent
@@ -259,9 +246,89 @@ func TestAnthropicE2E(t *testing.T) {
 					}
 				}
 				assert.Equal(t, "Result from web_search about serialization.", toolResultText, "Tool result text content mismatch")
-
 				assert.Equal(t, float64(70), body["max_tokens"])
 				assert.NotNil(t, body["tools"], "Top-level 'tools' definition should be present in the request if toolbox was used")
+			},
+		},
+		{
+			name: "Tool call with multiple deltas and subsequent text",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Search for a multi-part query and then tell me about it.")},
+			},
+			toolbox:   tools.Box(webSearchTool),
+			maxTokens: 200,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				assert.NotNil(t, body["tools"], "Tools should be present")
+				toolsList, ok := body["tools"].([]interface{})
+				require.True(t, ok)
+				assert.Len(t, toolsList, 1)
+				toolDef, ok := toolsList[0].(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "web_search", toolDef["name"])
+			},
+			customResponse: func(t *testing.T, w http.ResponseWriter) {
+				targetArgs := struct {
+					Query string `json:"query"`
+				}{Query: "hello_world_anthropic"}
+				argBytes, err := json.Marshal(targetArgs)
+				require.NoError(t, err)
+				argStr := string(argBytes) // e.g. {"query":"hello_world_anthropic"}
+
+				// Split argStr into 4 fragments for partial_json
+				// For `{"query":"hello_world_anthropic"}` (length 32)
+				// frag1: `{"query":"` (len 10)
+				// frag2: `hello_wo`  (len 8)
+				// frag3: `rld_anth`  (len 8)
+				// frag4: `ropic"}`   (len 6)
+				// This split is just an example, the provider should handle arbitrary splits.
+				// The key is that partial_json's *value* is the string fragment.
+
+				frag1 := argStr[0:10]  // `{"query":"`
+				frag2 := argStr[10:18] // `hello_wo`
+				frag3 := argStr[18:26] // `rld_anth`
+				frag4 := argStr[26:]   // `ropic"}`
+
+				// Escape the fragments to be valid JSON string values if they were to be inserted directly
+				// into a JSON string. However, for Sprintf, we just need to ensure the Go string literal is correct.
+				// The Go string literal for the "partial_json" value needs to result in the fragment itself.
+				// Example: if frag1 is `{"query":"`, the Go string literal for its use in Sprintf should be `{\\"query\\":\\"`
+
+				responses := []string{
+					fmt.Sprintf(`data: {"type": "message_start", "message": {"id": "msg_123", "type": "message", "role": "assistant", "model": "%s", "usage": {"input_tokens": 10, "output_tokens": 1}}}`, mockModel),
+					`data: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "tool_call_id_001", "name": "web_search", "input": {}}}`,
+					fmt.Sprintf(`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "%s"}}`, escapeJSONStringValue(frag1)),
+					fmt.Sprintf(`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "%s"}}`, escapeJSONStringValue(frag2)),
+					fmt.Sprintf(`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "%s"}}`, escapeJSONStringValue(frag3)),
+					fmt.Sprintf(`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "%s"}}`, escapeJSONStringValue(frag4)),
+					`data: {"type": "content_block_stop", "index": 0}`,
+					`data: {"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}`,
+					`data: {"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Okay, I have performed the Anthropic search."}}`,
+					`data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence":null}, "usage": {"output_tokens": 25}}`,
+					`data: {"type": "message_stop"}`,
+				}
+				for _, res := range responses {
+					_, err := fmt.Fprintln(w, res)
+					require.NoError(t, err)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				}
+			},
+			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusToolCallBegin,
+				llms.StreamStatusToolCallDelta,
+				llms.StreamStatusToolCallDelta,
+				llms.StreamStatusToolCallDelta,
+				llms.StreamStatusToolCallDelta,
+				llms.StreamStatusToolCallReady,
+				llms.StreamStatusText,
+			},
+			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
+				assert.Equal(t, "tool_call_id_001", finalToolCall.ID)
+				assert.Equal(t, "web_search", finalToolCall.Name)
+				expectedArgs := `{"query":"hello_world_anthropic"}`
+				assert.JSONEq(t, expectedArgs, string(finalToolCall.Arguments), "Assembled tool call arguments mismatch")
+				assert.Equal(t, "Okay, I have performed the Anthropic search.", finalText, "Final text content mismatch")
 			},
 		},
 	}
@@ -318,8 +385,27 @@ func TestAnthropicE2E(t *testing.T) {
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
 
-			iter := stream.Iter()
-			iter(func(status llms.StreamStatus) bool { return true }) // Consume the stream
+			var collectedStatuses []llms.StreamStatus
+			var finalToolCall llms.ToolCall
+			var finalTextBuilder strings.Builder
+
+			for status := range stream.Iter() {
+				if tc.verifyStreamOutput != nil || len(tc.expectedStreamStatuses) > 0 {
+					collectedStatuses = append(collectedStatuses, status)
+					currentCall := stream.ToolCall()
+					switch status {
+					case llms.StreamStatusToolCallBegin:
+						finalToolCall.ID = currentCall.ID
+						finalToolCall.Name = currentCall.Name
+					case llms.StreamStatusToolCallReady:
+						finalToolCall = currentCall // Capture the fully formed tool call
+					case llms.StreamStatusText:
+						finalTextBuilder.WriteString(stream.Text())
+					}
+				}
+			}
+
+			finalText := finalTextBuilder.String()
 
 			// Wait for the server handler to finish processing the request and sending the response
 			<-requestHandled
@@ -336,6 +422,21 @@ func TestAnthropicE2E(t *testing.T) {
 			if tc.verifyRequest != nil {
 				assert.True(t, verificationRan, "Request verification logic was defined but did not run.")
 			}
+
+			// Perform stream output verification if defined
+			if len(tc.expectedStreamStatuses) > 0 {
+				assert.Equal(t, tc.expectedStreamStatuses, collectedStatuses, "Stream status sequence mismatch")
+			}
+			if tc.verifyStreamOutput != nil {
+				tc.verifyStreamOutput(t, collectedStatuses, finalToolCall, finalText, stream)
+			}
 		})
 	}
+}
+
+// Helper to escape strings for use as JSON string values within a larger JSON structure,
+// specifically for manual construction of mock SSE data.
+func escapeJSONStringValue(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1]) // Remove the outer quotes added by Marshal
 }
