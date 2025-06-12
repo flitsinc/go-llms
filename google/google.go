@@ -44,8 +44,6 @@ func (m *Model) WithGeminiAPI(apiKey string) *Model {
 }
 
 func (m *Model) WithVertexAI(accessToken, projectID, region string) *Model {
-	// TODO: This API has a cost per 1,000 UTF-8 code points (excluding whitespace).
-	// https://cloud.google.com/vertex-ai/generative-ai/pricing
 	m.accessToken = accessToken
 	if region == "global" {
 		m.endpoint = fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:streamGenerateContent?alt=sse", projectID, m.model)
@@ -123,6 +121,10 @@ func (m *Model) Generate(
 			},
 			{
 				"category":  "HARM_CATEGORY_HARASSMENT",
+				"threshold": "BLOCK_ONLY_HIGH",
+			},
+			{
+				"category":  "HARM_CATEGORY_CIVIC_INTEGRITY",
 				"threshold": "BLOCK_ONLY_HIGH",
 			},
 		},
