@@ -47,7 +47,11 @@ func (m *Model) WithVertexAI(accessToken, projectID, region string) *Model {
 	// TODO: This API has a cost per 1,000 UTF-8 code points (excluding whitespace).
 	// https://cloud.google.com/vertex-ai/generative-ai/pricing
 	m.accessToken = accessToken
-	m.endpoint = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:streamGenerateContent?alt=sse", region, projectID, region, m.model)
+	if region == "global" {
+		m.endpoint = fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:streamGenerateContent?alt=sse", projectID, m.model)
+	} else {
+		m.endpoint = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:streamGenerateContent?alt=sse", region, projectID, region, m.model)
+	}
 	return m
 }
 
