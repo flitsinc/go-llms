@@ -12,13 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
 
 type Model struct {
-	accessToken     string
+	tokenSource     oauth2.TokenSource
 	model           string
 	endpoint        string
 	maxOutputTokens int
@@ -38,19 +40,32 @@ func New(model string) *Model {
 }
 
 func (m *Model) WithGeminiAPI(apiKey string) *Model {
-	m.accessToken = ""
+	m.tokenSource = nil
 	m.endpoint = fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s", m.model, apiKey)
 	return m
 }
 
-func (m *Model) WithVertexAI(accessToken, projectID, region string) *Model {
-	m.accessToken = accessToken
-	if region == "global" {
+// WithVertexAI configures the model to use an OAuth2 token source
+// for authenticating to the Vertex AI API. This is the recommended approach
+// for production environments.
+func (m *Model) WithVertexAI(ts oauth2.TokenSource, projectID, location string) *Model {
+	m.tokenSource = ts
+	if location == "global" {
 		m.endpoint = fmt.Sprintf("https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/google/models/%s:streamGenerateContent?alt=sse", projectID, m.model)
 	} else {
-		m.endpoint = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:streamGenerateContent?alt=sse", region, projectID, region, m.model)
+		m.endpoint = fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:streamGenerateContent?alt=sse", location, projectID, location, m.model)
 	}
 	return m
+}
+
+// WithVertexAIAccessToken configures the model to use a static access token for
+// authenticating to the Vertex AI API.
+func (m *Model) WithVertexAIAccessToken(accessToken, projectID, location string) *Model {
+	return m.WithVertexAI(
+		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken}),
+		projectID,
+		location,
+	)
 }
 
 func (m *Model) WithMaxOutputTokens(maxOutputTokens int) *Model {
@@ -190,8 +205,12 @@ func (m *Model) Generate(
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
 	}
-	if m.accessToken != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.accessToken))
+	if m.tokenSource != nil {
+		token, err := m.tokenSource.Token()
+		if err != nil {
+			return &Stream{err: fmt.Errorf("error getting token from source: %w", err)}
+		}
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
