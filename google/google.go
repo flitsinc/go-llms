@@ -159,14 +159,9 @@ func (m *Model) Generate(
 		generationConfig["topK"] = m.topK
 	}
 
-	// Handle JSON output schema
 	if jsonOutputSchema != nil {
 		generationConfig["responseMimeType"] = "application/json"
 		generationConfig["responseSchema"] = jsonOutputSchema
-	}
-
-	if len(generationConfig) > 0 {
-		payload["generationConfig"] = generationConfig
 	}
 
 	if m.includeThoughts {
@@ -176,7 +171,11 @@ func (m *Model) Generate(
 		if m.thinkingBudget > 0 {
 			thinkingConfig["thinkingBudget"] = m.thinkingBudget
 		}
-		payload["thinkingConfig"] = thinkingConfig
+		generationConfig["thinkingConfig"] = thinkingConfig
+	}
+
+	if len(generationConfig) > 0 {
+		payload["generationConfig"] = generationConfig
 	}
 
 	if systemPrompt != nil {
