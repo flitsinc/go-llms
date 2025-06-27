@@ -45,7 +45,7 @@ type LLM struct {
 
 	// TrackTTFT is a function that will be called with the time it took for the
 	// LLM to generate the first token of the turn.
-	TrackTTFT func(time.Duration)
+	TrackTTFT func(context.Context, time.Duration)
 }
 
 // New creates a new LLM instance with the specified provider and optional
@@ -262,7 +262,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		if shouldReportTTFT {
 			shouldReportTTFT = false
 			ttft := time.Since(turnStart)
-			trackTTFT(ttft)
+			trackTTFT(ctx, ttft)
 		}
 		// Check context at the beginning of each iteration.
 		// This ensures we react promptly if cancellation happens *between* stream events.
