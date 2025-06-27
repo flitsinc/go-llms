@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -41,6 +42,10 @@ type LLM struct {
 	// If set, the LLM output will be JSON conforming to this schema.
 	// Cannot be used simultaneously with tools.
 	JSONOutputSchema *tools.ValueSchema
+
+	// TrackTTFT is a function that will be called with the time it took for the
+	// LLM to generate the first token of the turn.
+	TrackTTFT func(time.Duration)
 }
 
 // New creates a new LLM instance with the specified provider and optional
@@ -198,6 +203,8 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	}
 	l.turns++
 
+	turnStart := time.Now()
+
 	// Check for conflicting configuration: Tools and JSONOutputSchema
 	hasTools := l.toolbox != nil && len(l.toolbox.All()) > 0
 	if l.JSONOutputSchema != nil && hasTools {
@@ -242,12 +249,21 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		}()
 	}
 
+	trackTTFT := l.TrackTTFT
+	shouldReportTTFT := trackTTFT != nil
+
 	// Tracks how many bytes of the tool call arguments we sent so far in
 	// deltas. We probably want to move this into the responsibility of each
 	// provider so we can reduce allocations.
 	var toolCallDeltaSentBytes int
 
 	for status := range stream.Iter() {
+		// For now assume the first event we get on the stream is the first token.
+		if shouldReportTTFT {
+			shouldReportTTFT = false
+			ttft := time.Since(turnStart)
+			trackTTFT(ttft)
+		}
 		// Check context at the beginning of each iteration.
 		// This ensures we react promptly if cancellation happens *between* stream events.
 		select {
