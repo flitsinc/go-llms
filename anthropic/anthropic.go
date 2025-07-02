@@ -459,8 +459,10 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 					Data:      data,
 				}
 			} else {
-				// TODO: Download the image URL and turn it into base64.
-				panic("Anthropic does not support URLs for images")
+				ci.Source = &source{
+					Type: "url",
+					URL:  v.URL,
+				}
 			}
 		case *content.JSON:
 			ci.Type = "text"
