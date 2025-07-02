@@ -34,55 +34,91 @@ func (cl contentList) MarshalJSON() ([]byte, error) {
 
 // contentItem represents a single content block in a message
 type contentItem struct {
-	Type string `json:"type"` // Type of content: "text", "image", "tool_use", "tool_result", "thinking"
+	// Type of content. One of:
+	// - "text"
+	// - "image"
+	// - "tool_use"
+	// - "tool_result"
+	// - "thinking"
+	// - "redacted_thinking"
+	// - "document"
+	// - "server_tool_use"
+	// - "web_search_tool_result"
+	// - "code_execution_tool_result"
+	// - "mcp_tool_use"
+	// - "mcp_tool_result"
+	// - "container_upload"
+	Type string `json:"type"`
+
+	// Thinking related fields:
+
+	Thinking  string `json:"thinking,omitempty"`  // Claude's internal reasoning process (required for "thinking" type)
+	Signature string `json:"signature,omitempty"` // Cryptographic signature for thinking verification (required for "thinking" type)
+	Data      string `json:"data,omitempty"`      // Base64-encoded redacted thinking content (required for "redacted_thinking" type)
+
+	// Text content.
 	Text string `json:"text,omitempty"`
 
-	// Source of an image.
-	Source *source `json:"source,omitempty"` // Contains image data in base64 format
-
-	// Tool use from assistant messages.
+	// Fields for tool use by the assistant:
 
 	ID    string          `json:"id,omitempty"`    // Unique ID for the tool_use block
 	Name  string          `json:"name,omitempty"`  // Name of the tool being called
 	Input json.RawMessage `json:"input,omitempty"` // Arguments passed to the tool
 
-	// Tool results.
+	// Tool results:
 
 	ToolUseID string      `json:"tool_use_id,omitempty"` // ID of the tool_use block this result responds to
 	Content   contentList `json:"content,omitempty"`     // Content of the tool result
+	IsError   bool        `json:"is_error,omitempty"`    // Whether the tool result is an error
 
-	// Citations supporting the text block
+	// Cache control for content up to this point.
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 
-	Citations []citation `json:"citations,omitempty"` // Source citations for the text
+	// Document-specific fields:
 
-	// Thinking content from extended thinking feature
+	Context string `json:"context,omitempty"` // Additional context for document content
+	Title   string `json:"title,omitempty"`   // Title of the document (max 500 chars)
 
-	Thinking  string `json:"thinking,omitempty"`  // Claude's internal reasoning process
-	Signature string `json:"signature,omitempty"` // Cryptographic signature for thinking verification
+	// Name of the MCP server.
+	ServerName string `json:"server_name,omitempty"`
 
-	// Redacted thinking content
+	// File identifier for container uploads.
+	FileID string `json:"file_id,omitempty"`
 
-	Data string `json:"data,omitempty"` // Used for redacted thinking content
+	// Source of an image or document. Contains image data (base64/URL/file) or document data.
+	Source *source `json:"source,omitempty"`
+
+	// Citations for text content.
+	Citations []citation `json:"citations,omitempty"`
 }
 
-// source represents the source of an image
+// source represents the source of an image or document.
 type source struct {
-	Type      string `json:"type"`       // Always "base64" for Anthropic
-	MediaType string `json:"media_type"` // MIME type of the image (e.g., "image/jpeg")
-	Data      string `json:"data"`       // Base64-encoded image data
+	Type      string `json:"type"`                 // "base64", "url", "file", or "content" for documents
+	MediaType string `json:"media_type,omitempty"` // MIME type of the image (e.g., "image/jpeg")
+	Data      string `json:"data,omitempty"`       // Base64-encoded image data
+	URL       string `json:"url,omitempty"`        // URL of the image
+	FileID    string `json:"file_id,omitempty"`    // File ID for uploaded files
+	Content   string `json:"content,omitempty"`    // Content for document sources
 }
 
-// streamEvent represents an event in the streaming response
+// cacheControl represents cache control settings for a content block.
+type cacheControl struct {
+	Type string `json:"type"`          // Cache control type, currently only "ephemeral"
+	TTL  string `json:"ttl,omitempty"` // Time-to-live: "5m" (5 minutes) or "1h" (1 hour), defaults to "5m"
+}
+
+// streamEvent represents an event in the streaming response.
 type streamEvent struct {
 	Type         string        `json:"type"`                    // Event type: "message_start", "content_block_start", etc.
-	Message      *messageEvent `json:"message,omitempty"`       // Used in message_start events
 	Index        int           `json:"index,omitempty"`         // Position of content block in the content array
+	Delta        delta         `json:"delta"`                   // Used in content_block_delta events
+	Message      *messageEvent `json:"message,omitempty"`       // Used in message_start events
 	ContentBlock *contentBlock `json:"content_block,omitempty"` // Used in content_block_start events
-	Delta        delta         `json:"delta,omitempty"`         // Used in content_block_delta events
 	Error        *errorInfo    `json:"error,omitempty"`         // Error information if type is "error"
 }
 
-// messageEvent contains message metadata for message_start events
+// messageEvent contains message metadata for message_start events.
 type messageEvent struct {
 	ID    string `json:"id"`              // Unique message ID
 	Role  string `json:"role"`            // Either "user" or "assistant"
@@ -91,20 +127,20 @@ type messageEvent struct {
 
 // contentBlock represents the initial state of a content block
 type contentBlock struct {
-	Type  string          `json:"type"`            // Type of content block: "text", "tool_use", "thinking"
+	Type  string          `json:"type"`            // Type of content block: "text", "tool_use", "thinking", "redacted_thinking"
 	Text  string          `json:"text,omitempty"`  // Initial text content (typically empty)
 	ID    string          `json:"id,omitempty"`    // Unique ID for the content block (used for tool_use blocks)
 	Name  string          `json:"name,omitempty"`  // For tool_use blocks, name of the tool being called
 	Input json.RawMessage `json:"input,omitempty"` // Arguments passed to the tool
 	// Fields for thinking blocks
-	Thinking  string `json:"thinking,omitempty"`  // Initial thinking content if provided directly
-	Signature string `json:"signature,omitempty"` // Initial signature if provided directly
-	Data      string `json:"data,omitempty"`      // For redacted_thinking, the base64 encoded data
+	Thinking  string `json:"thinking,omitempty"`  // Initial thinking content (for "thinking" type)
+	Signature string `json:"signature,omitempty"` // Initial signature (for "thinking" type)
+	Data      string `json:"data,omitempty"`      // Base64-encoded data (for "redacted_thinking" type)
 }
 
 // delta represents incremental updates in content_block_delta events
 type delta struct {
-	Type         string `json:"type"`                    // Type of delta: "text_delta", "input_json_delta", "thinking_delta", etc.
+	Type         string `json:"type"`                    // Type of delta: "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
 	PartialJSON  string `json:"partial_json,omitempty"`  // For tool_use blocks, fragments of JSON for the input field
 	Text         string `json:"text,omitempty"`          // Text fragment for text content blocks
 	Thinking     string `json:"thinking,omitempty"`      // Thinking fragment for thinking content blocks
@@ -121,26 +157,30 @@ type usage struct {
 
 // citation represents a source citation in a text content block
 type citation struct {
-	// The type of citation will depend on the type of document being cited
-	PageLocation         *pageLocation         `json:"page_location,omitempty"`          // For PDF document citations
-	CharLocation         *charLocation         `json:"char_location,omitempty"`          // For text document citations
-	ContentBlockLocation *contentBlockLocation `json:"content_block_location,omitempty"` // For citations to other content blocks
-}
+	// Common fields for all citation types
+	Type      string `json:"type"`       // Citation type: "char_location", "page_location", "content_block_location", or "web_search_result_location"
+	CitedText string `json:"cited_text"` // The text being cited
 
-// pageLocation identifies a location in a PDF document
-type pageLocation struct {
-	PageNumber int `json:"page_number"` // Page number in the PDF
-}
+	// Document citation fields (for char_location, page_location, content_block_location)
+	DocumentIndex int     `json:"document_index,omitempty"` // Index of the document being cited
+	DocumentTitle *string `json:"document_title,omitempty"` // Title of the document (max 255 chars)
 
-// charLocation identifies a span of characters in a text document
-type charLocation struct {
-	StartChar int `json:"start_char"` // Start character index
-	EndChar   int `json:"end_char"`   // End character index
-}
+	// Character location fields
+	StartCharIndex int `json:"start_char_index,omitempty"` // Start character index (for char_location)
+	EndCharIndex   int `json:"end_char_index,omitempty"`   // End character index (for char_location)
 
-// contentBlockLocation identifies a content block
-type contentBlockLocation struct {
-	BlockID string `json:"block_id"` // ID of the content block being cited
+	// Page location fields
+	StartPageNumber int `json:"start_page_number,omitempty"` // Start page number (for page_location)
+	EndPageNumber   int `json:"end_page_number,omitempty"`   // End page number (for page_location)
+
+	// Content block location fields
+	StartBlockIndex int `json:"start_block_index,omitempty"` // Start block index (for content_block_location)
+	EndBlockIndex   int `json:"end_block_index,omitempty"`   // End block index (for content_block_location)
+
+	// Web search result location fields
+	EncryptedIndex string  `json:"encrypted_index,omitempty"` // Encrypted index for web search results
+	Title          *string `json:"title,omitempty"`           // Title of the web search result (max 512 chars)
+	URL            string  `json:"url,omitempty"`             // URL of the web search result (max 2048 chars)
 }
 
 // errorInfo contains error details in error events
