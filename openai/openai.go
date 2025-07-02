@@ -131,6 +131,11 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
+	if m.debug {
+		fmt.Printf("\033[1;90m%s\033[0m\n", m.endpoint)
+		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
@@ -237,8 +242,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				return // Exit loop on scan failure or EOF
 			}
 
-			if s.debug {
-				fmt.Println(scanner.Text())
+			if s.debug && strings.TrimSpace(scanner.Text()) != "" {
+				fmt.Printf("<- \033[2;32m%s\033[0m\n", scanner.Text())
 			}
 
 			// Process the scanned line.

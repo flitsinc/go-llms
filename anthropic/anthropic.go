@@ -140,7 +140,8 @@ func (m *Model) Generate(
 	}
 
 	if m.debug {
-		fmt.Printf("Request: %s\n%s\n", m.endpoint, string(jsonData))
+		fmt.Printf("\033[1;90m%s\033[0m\n", m.endpoint)
+		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -182,7 +183,7 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode, debug: m.debug}
 }
 
 type Stream struct {
@@ -194,6 +195,7 @@ type Stream struct {
 	lastText    string
 	lastThought *content.Thought
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
+	debug       bool
 
 	inputTokens, outputTokens int
 }
@@ -257,6 +259,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
 				return
+			}
+
+			if s.debug && strings.TrimSpace(scanner.Text()) != "" {
+				fmt.Printf("<- \033[2;32m%s\033[0m\n", scanner.Text())
 			}
 
 			line, ok := strings.CutPrefix(scanner.Text(), "data: ")

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type Model struct {
 	topP            float64
 	includeThoughts bool
 	thinkingBudget  int
+	debug           bool
 }
 
 func New(model string) *Model {
@@ -91,6 +93,11 @@ func (m *Model) WithTopP(topP float64) *Model {
 func (m *Model) WithThinking(budgetTokens int) *Model {
 	m.includeThoughts = true
 	m.thinkingBudget = budgetTokens
+	return m
+}
+
+func (m *Model) WithDebug() *Model {
+	m.debug = true
 	return m
 }
 
@@ -200,6 +207,11 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
+	if m.debug {
+		fmt.Printf("\033[1;90m%s\033[0m\n", regexp.MustCompile(`([&?]key)=[^&]*`).ReplaceAllString(m.endpoint, "$1=…"))
+		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
@@ -233,7 +245,7 @@ func (m *Model) Generate(
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debug: m.debug}
 }
 
 type Stream struct {
@@ -244,6 +256,7 @@ type Stream struct {
 	message  llms.Message
 	lastText string
 	usage    *usageMetadata
+	debug    bool
 }
 
 func (s *Stream) Err() error {
@@ -294,6 +307,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.err = fmt.Errorf("error scanning stream: %w", err)
 				}
 				return
+			}
+
+			if s.debug && strings.TrimSpace(scanner.Text()) != "" {
+				fmt.Printf("<- \033[2;32m%s\033[0m\n", scanner.Text())
 			}
 
 			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
