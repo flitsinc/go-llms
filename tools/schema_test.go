@@ -67,7 +67,8 @@ func TestGenerateSchema(t *testing.T) {
 				"email":   map[string]any{"type": "string"}, // Email is optional
 				"isAdmin": map[string]any{"type": "boolean"},
 			},
-			"required": []string{"name", "age", "isAdmin"}, // Email is not required due to omitempty
+			"required":             []string{"name", "age", "isAdmin"}, // Email is not required due to omitempty
+			"additionalProperties": false,
 		},
 	}
 
@@ -126,6 +127,7 @@ func TestGenerateSchema_AdvancedTypes(t *testing.T) {
 	nestedProps := *apSchema.Properties
 	assert.Equal(t, "string", nestedProps["nested_field"].Type, "nested_field type mismatch")
 	assert.Equal(t, "A nested field.", nestedProps["nested_field"].Description, "nested_field description mismatch")
+	assert.Equal(t, false, apSchema.AdditionalProperties, "Nested struct should also have AdditionalProperties false")
 
 	// Check ignored/unexported fields are absent
 	_, ignoredExists := props["Ignored"]
@@ -145,6 +147,9 @@ func TestGenerateSchema_AdvancedTypes(t *testing.T) {
 	// Check required fields (only non-omitempty and non-ignored)
 	expectedRequired := []string{"string_slice", "struct_map", "renamed_field"}
 	assert.ElementsMatch(t, expectedRequired, schema.Parameters.Required, "Required fields mismatch")
+
+	// Check that AdditionalProperties is set to false for struct-generated schemas
+	assert.Equal(t, false, schema.Parameters.AdditionalProperties, "AdditionalProperties should be false for struct schemas")
 }
 
 // TestValidateJSON tests the validateJSON function with various scenarios.
@@ -205,9 +210,10 @@ func TestValidateJSON(t *testing.T) {
 			errorContains: "invalid JSON format",
 		},
 		{
-			name:        "Extra field (should be ignored)",
-			jsonData:    `{"name":"Heidi", "age":35, "isAdmin":true, "extra":"field"}`,
-			expectError: false,
+			name:          "Extra field (not allowed for structs)",
+			jsonData:      `{"name":"Heidi", "age":35, "isAdmin":true, "extra":"field"}`,
+			expectError:   true,
+			errorContains: "additional property \"extra\" not allowed",
 		},
 	}
 

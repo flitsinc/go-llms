@@ -59,7 +59,7 @@ func TestCancellationDuringToolExecution(t *testing.T) {
 	// 1. Slow Tool
 	slowToolDuration := 150 * time.Millisecond
 	slowTool := tools.Func("Slow Tool", "A tool that takes time", "slow_tool",
-		func(r tools.Runner, p struct{}) tools.Result {
+		func(r tools.Runner, p TestToolParams) tools.Result {
 			// Simulate work, check context periodically
 			select {
 			case <-time.After(slowToolDuration):
@@ -132,7 +132,7 @@ func TestCancellationDuringToolExecution(t *testing.T) {
 func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 	// 1. Use a fast tool
 	fastTool := tools.Func("Fast Tool", "A tool that returns instantly", "fast_tool",
-		func(r tools.Runner, p struct{}) tools.Result {
+		func(r tools.Runner, p TestToolParams) tools.Result {
 			return tools.Success(map[string]any{"status": "done instantly"})
 		})
 

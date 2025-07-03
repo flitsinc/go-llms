@@ -111,9 +111,10 @@ func generateObjectSchema(typ reflect.Type) ValueSchema {
 		}
 	}
 	return ValueSchema{
-		Type:       "object",
-		Properties: &properties,
-		Required:   required,
+		Type:                 "object",
+		Properties:           &properties,
+		Required:             required,
+		AdditionalProperties: false,
 	}
 }
 

@@ -107,9 +107,10 @@ func TestToolRun_InvalidDataType(t *testing.T) {
 	assert.Contains(t, string(resultJSON), "type mismatch")
 }
 
-// TestToolRun_UnexpectedFields verifies that the tool ignores fields that are not defined in the schema.
+// TestToolRun_UnexpectedFields verifies that the tool rejects fields that are not defined in the schema.
 func TestToolRun_UnexpectedFields(t *testing.T) {
 	testFunc := func(r Runner, p Params) Result {
+		// This part shouldn't be reached if validation works
 		return Success(map[string]any{
 			"name":    p.Name,
 			"age":     p.Age,
@@ -123,9 +124,11 @@ func TestToolRun_UnexpectedFields(t *testing.T) {
 	params := json.RawMessage(`{"name":"Alice", "age":28, "isAdmin":true, "location":"unknown"}`)
 	result := tool.Run(&runner{}, params)
 
-	require.NoError(t, result.Error(), "Expected no error for unexpected field")
+	assert.Error(t, result.Error(), "Expected an error for unexpected field")
+	assert.Contains(t, result.Error().Error(), "additional property", "Error should mention additional property")
+	// Check the content of the error result
 	resultJSON := extractJSONFromResult(t, result)
-	assert.JSONEq(t, `{"name":"Alice","age":28,"email":"","isAdmin":true}`, string(resultJSON))
+	assert.Contains(t, string(resultJSON), "additional property")
 }
 
 type AdvancedParams struct {
