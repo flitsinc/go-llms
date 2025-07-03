@@ -1,22 +1,21 @@
 # go-llms
 
-A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI providers.
+A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI compatible providers.
 
 ## Features
 
-- 🔄 Streaming responses for real-time interaction
-- 🛠 Built-in function calling support with a flexible tool system
-- 🔌 Extensible provider system (currently supports Anthropic, Google, and OpenAI)
-- 📦 Simple and intuitive API
-- 🔍 Debug mode for development
-- 💰 Cost tracking for API usage
+- Streaming responses for real-time interaction
+- Built-in tool calling support with a flexible tool system
+- Extensible provider system (currently supports Anthropic, Google, and OpenAI)
+- Prompt cache hints
+- Streaming reasoning (summarized / raw)
+- Image inputs
+- Usage tracking
 
 ### On the roadmap
 
-- [ ] 🗃️ Prompt caching
-- [ ] 🧠 Reasoning
-- [ ] ☎️ Realtime streaming (WebRTC)
-- [ ] 🖼️ Image output
+- [ ] Realtime streaming (WebRTC)
+- [ ] Image output
 
 ## Requirements
 
@@ -225,7 +224,8 @@ llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet
 llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))
 
 // Google Vertex AI
-llm := llms.New(google.New("gemini-2.5-flash").WithVertexAI(accessToken, projectID, region))
+ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+llm := llms.New(google.New("gemini-2.5-flash").WithVertexAI(ts, projectID, "global"))
 
 // OpenAI
 llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1"))
