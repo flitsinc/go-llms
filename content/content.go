@@ -251,3 +251,14 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 	*c = result
 	return nil
 }
+
+// AsString returns the text content and true if the Content contains exactly
+// one Text item. Otherwise, it returns an empty string and false.
+func (c Content) AsString() (string, bool) {
+	if len(c) == 1 {
+		if textItem, ok := c[0].(*Text); ok {
+			return textItem.Text, true
+		}
+	}
+	return "", false
+}
