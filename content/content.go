@@ -45,6 +45,7 @@ func (j *JSON) Type() Type {
 }
 
 type Thought struct {
+	ID        string `json:"id,omitempty"`
 	Text      string `json:"text,omitempty"`
 	Encrypted []byte `json:"encrypted,omitempty"`
 	Signature string `json:"signature,omitempty"`
@@ -131,6 +132,28 @@ func (c *Content) AppendThought(text string) {
 		}
 	}
 	*c = append(*c, &Thought{Text: text})
+}
+
+// AppendThoughtWithID finds an existing thought with the given ID and appends text to it,
+// or creates a new thought with the given ID if none exists. Returns the thought that was
+// updated or created. This is useful for streaming APIs that provide thought IDs upfront.
+func (c *Content) AppendThoughtWithID(id, text string, summary bool) *Thought {
+	// Look for an existing thought with this ID
+	for i := len(*c) - 1; i >= 0; i-- {
+		if thought, ok := (*c)[i].(*Thought); ok && thought.ID == id {
+			thought.Text += text
+			return thought
+		}
+	}
+
+	// No existing thought with this ID, create a new one
+	thought := &Thought{
+		ID:      id,
+		Text:    text,
+		Summary: summary,
+	}
+	*c = append(*c, thought)
+	return thought
 }
 
 // SetThoughtSummary will replace the last content item if it's a thought,
