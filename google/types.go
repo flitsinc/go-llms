@@ -28,13 +28,19 @@ type fileData struct {
 }
 
 type functionCall struct {
+	ID   string          `json:"id,omitempty"`
 	Name string          `json:"name"`
 	Args json.RawMessage `json:"args,omitempty"`
 }
 
 type functionResponse struct {
+	ID       string          `json:"id,omitempty"`
 	Name     string          `json:"name"`
 	Response json.RawMessage `json:"response"`
+
+	WillContinue *bool `json:"willContinue,omitempty"`
+	// Scheduling: "SCHEDULING_UNSPECIFIED", "SILENT", "WHEN_IDLE", "INTERRUPT"
+	Scheduling string `json:"scheduling,omitempty"`
 }
 
 type videoOffset struct {
@@ -43,19 +49,34 @@ type videoOffset struct {
 }
 
 type videoMetadata struct {
+	FPS         *float64    `json:"fps,omitempty"`
 	StartOffset videoOffset `json:"startOffset"`
 	EndOffset   videoOffset `json:"endOffset"`
 }
 
+type codeExecutionResult struct {
+	// Outcome: "OUTCOME_UNSPECIFIED", "OUTCOME_OK", "OUTCOME_FAILED", "OUTCOME_DEADLINE_EXCEEDED"
+	Outcome string `json:"outcome,omitempty"`
+	Output  string `json:"output,omitempty"`
+}
+
+type executableCode struct {
+	Code string `json:"code,omitempty"`
+	// Language: "LANGUAGE_UNSPECIFIED", "PYTHON"
+	Language string `json:"language,omitempty"`
+}
+
 type part struct {
-	Text             *string           `json:"text,omitempty"`
-	InlineData       *inlineData       `json:"inlineData,omitempty"`
-	FileData         *fileData         `json:"fileData,omitempty"`
-	FunctionCall     *functionCall     `json:"functionCall,omitempty"`
-	FunctionResponse *functionResponse `json:"functionResponse,omitempty"`
-	VideoMetadata    *videoMetadata    `json:"videoMetadata,omitempty"`
-	Thought          bool              `json:"thought,omitempty"`
-	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
+	Text                *string              `json:"text,omitempty"`
+	InlineData          *inlineData          `json:"inlineData,omitempty"`
+	FileData            *fileData            `json:"fileData,omitempty"`
+	FunctionCall        *functionCall        `json:"functionCall,omitempty"`
+	FunctionResponse    *functionResponse    `json:"functionResponse,omitempty"`
+	VideoMetadata       *videoMetadata       `json:"videoMetadata,omitempty"`
+	Thought             bool                 `json:"thought,omitempty"`
+	ThoughtSignature    string               `json:"thoughtSignature,omitempty"`
+	CodeExecutionResult *codeExecutionResult `json:"codeExecutionResult,omitempty"`
+	ExecutableCode      *executableCode      `json:"executableCode,omitempty"`
 }
 
 type parts []part
@@ -152,7 +173,6 @@ func messagesFromLLM(m llms.Message) []message {
 		}
 
 		// Create the primary tool/function response message.
-		// Google expects the functionResponse.Response to contain {"name": toolCallID, "content": actual_result}
 		responseWrapperJSON, err := json.Marshal(map[string]any{
 			"name":    m.ToolCallID,      // Use the original ToolCallID here
 			"content": primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
