@@ -2,6 +2,10 @@
 
 A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI compatible providers.
 
+## When to use this?
+
+When you want to make providers easily swappable and a simplified API that focuses on hekoing you implement the most common types of agentic flows. Since each LLM provider has its own quirks, especially around reasoning, streaming, and tool calling, we’ve done our best to smooth those over, but expect some differences still.
+
 ## Features
 
 - Streaming responses for real-time interaction
@@ -182,7 +186,7 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
     }
 
     // Typically, you would now:
-    // 1. Construct a request to your external API endpoint (e.g., using http.Client).
+    // 1. Construct a request to your external API endpoint (or send it to a browser client)
     targetURL := fmt.Sprintf("https://api.example.com/tool?name=%s", toolCall.Name)
     req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(params))
     // ... set headers, handle error ...
@@ -210,9 +214,9 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
 
 The library currently supports:
 
-- Anthropic (Claude models)
+- Anthropic
 - Google (Gemini API and Vertex AI)
-- OpenAI (GPT/O models)
+- OpenAI and all compatible providers (you can customize the endpoint)
 
 Each provider can be initialized with their respective configuration:
 
@@ -275,6 +279,8 @@ Track the usage of your LLM interactions:
 ```go
 inputTokens, outputTokens := llm.Usage()
 ```
+
+As patterns emerge between providers with regards to cache tokens, speculative tokens, etc. these will be added too.
 
 ## License
 
