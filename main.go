@@ -8,8 +8,8 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/flitsinc/go-llms/anthropic"
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/google"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -22,7 +22,8 @@ func init() {
 func main() {
 	llm := llms.New(
 		// openai.New(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
-		anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"),
+		// anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"),
+		google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")),
 		RunShellCmd,
 	)
 
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	// Chat returns a channel of updates.
-	for update := range llm.Chat("Give me a random number between 1 and 100!") {
+	for update := range llm.Chat("Give me a random number between 1 and 100! Then tell me a poem about it.") {
 		switch update := update.(type) {
 		case llms.TextUpdate:
 			// Received for each chunk of text from the LLM.
