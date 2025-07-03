@@ -2,10 +2,6 @@
 
 A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI compatible providers.
 
-## When to use this?
-
-When you want to make providers easily swappable and a simplified API that focuses on hekoing you implement the most common types of agentic flows. Since each LLM provider has its own quirks, especially around reasoning, streaming, and tool calling, we’ve done our best to smooth those over, but expect some differences still.
-
 ## Features
 
 - Streaming responses for real-time interaction
@@ -18,12 +14,9 @@ When you want to make providers easily swappable and a simplified API that focus
 
 ### On the roadmap
 
+- [ ] OpenAI Responses API support
 - [ ] Realtime streaming (WebRTC)
 - [ ] Image output
-
-## Requirements
-
-- Go 1.24.2 or later
 
 ## Installation
 
@@ -281,6 +274,12 @@ inputTokens, outputTokens := llm.Usage()
 ```
 
 As patterns emerge between providers with regards to cache tokens, speculative tokens, etc. these will be added too.
+
+## When to use this?
+
+When you want to make providers easily swappable and a simplified API that focuses on hekoing you implement the most common types of agentic flows.
+
+Since each LLM provider has its own quirks, especially around reasoning, streaming, and tool calling, we’ve done our best to smooth those over, but expect some differences still.
 
 ## License
 
