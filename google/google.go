@@ -249,14 +249,15 @@ func (m *Model) Generate(
 }
 
 type Stream struct {
-	ctx      context.Context
-	model    string
-	stream   io.Reader
-	err      error
-	message  llms.Message
-	lastText string
-	usage    *usageMetadata
-	debug    bool
+	ctx         context.Context
+	model       string
+	stream      io.Reader
+	err         error
+	message     llms.Message
+	lastText    string
+	lastThought *content.Thought
+	usage       *usageMetadata
+	debug       bool
 }
 
 func (s *Stream) Err() error {
@@ -279,8 +280,7 @@ func (s *Stream) ToolCall() llms.ToolCall {
 }
 
 func (s *Stream) Thought() content.Thought {
-	// Google Gemini API does not currently stream thoughts.
-	return content.Thought{}
+	return *s.lastThought
 }
 
 func (s *Stream) Usage() (inputTokens, outputTokens int) {
@@ -333,9 +333,15 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				s.message.Role = delta.Role
 			}
 			for _, p := range delta.Parts {
-				if p.Text != nil {
-					s.lastText = *p.Text
-					if s.lastText != "" {
+				if p.Text != nil && *p.Text != "" {
+					if p.Thought {
+						// Note: Google only gives us summaries.
+						s.message.Content.SetThoughtSummary(*p.Text, p.ThoughtSignature)
+						if !yield(llms.StreamStatusThinking) {
+							return
+						}
+					} else {
+						s.lastText = *p.Text
 						s.message.Content.Append(s.lastText)
 						if !yield(llms.StreamStatusText) {
 							return

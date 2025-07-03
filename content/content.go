@@ -46,6 +46,9 @@ type Thought struct {
 	Text      string `json:"text,omitempty"`
 	Encrypted []byte `json:"encrypted,omitempty"`
 	Signature string `json:"signature,omitempty"`
+	// Summary is true if the thought is a complete summary of the thinking
+	// session, as opposed to the actual thinking stream.
+	Summary bool `json:"summary"`
 }
 
 func (t *Thought) Type() Type {
@@ -118,6 +121,20 @@ func (c *Content) AppendThought(text string) {
 		}
 	}
 	*c = append(*c, &Thought{Text: text})
+}
+
+// SetThoughtSummary will replace the last content item if it's a thought,
+// otherwise it adds a new thought item to the end of the list.
+func (c *Content) SetThoughtSummary(text, signature string) {
+	if l := len(*c); l > 0 {
+		if tc, ok := (*c)[l-1].(*Thought); ok && len(tc.Encrypted) == 0 {
+			tc.Text = text
+			tc.Signature = signature
+			tc.Summary = true
+			return
+		}
+	}
+	*c = append(*c, &Thought{Text: text, Signature: signature, Summary: true})
 }
 
 // SetThoughtSignature sets the signature for the last thought item. Panics if

@@ -54,6 +54,8 @@ type part struct {
 	FunctionCall     *functionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *functionResponse `json:"functionResponse,omitempty"`
 	VideoMetadata    *videoMetadata    `json:"videoMetadata,omitempty"`
+	Thought          bool              `json:"thought,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
 }
 
 type parts []part
@@ -79,6 +81,12 @@ func convertContent(c content.Content) (p parts) {
 		case *content.JSON:
 			text := string(v.Data)
 			pp.Text = &text
+		case *content.Thought:
+			// TODO: Decide if we ever want to send thoughts back to Google, they don't seem to care.
+			thoughtText := v.Text
+			pp.Text = &thoughtText
+			pp.Thought = true
+			pp.ThoughtSignature = v.Signature
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}
