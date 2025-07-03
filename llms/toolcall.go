@@ -21,6 +21,8 @@ type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// Some providers require passing a second id for tool calls.
+	ExtraID string `json:"extra_id,omitempty"`
 }
 
 // GetToolCall retrieves the ToolCall associated with the context, if present.
