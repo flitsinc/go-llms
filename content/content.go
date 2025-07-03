@@ -3,15 +3,17 @@ package content
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type Type string
 
 const (
-	TypeText     Type = "text"
-	TypeImageURL Type = "imageURL"
-	TypeJSON     Type = "json"
-	TypeThought  Type = "thought"
+	TypeText      Type = "text"
+	TypeImageURL  Type = "imageURL"
+	TypeJSON      Type = "json"
+	TypeThought   Type = "thought"
+	TypeCacheHint Type = "cache_hint"
 )
 
 type Item interface {
@@ -53,6 +55,14 @@ type Thought struct {
 
 func (t *Thought) Type() Type {
 	return TypeThought
+}
+
+type CacheHint struct {
+	TTL time.Duration `json:"ttl"`
+}
+
+func (c *CacheHint) Type() Type {
+	return TypeCacheHint
 }
 
 type Content []Item

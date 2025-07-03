@@ -482,6 +482,11 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 				ci.Thinking = v.Text
 				ci.Signature = v.Signature
 			}
+		case *content.CacheHint:
+			// Add cache control to the previous content item.
+			if i := len(cl) - 1; i >= 0 {
+				cl[i].CacheControl = &cacheControl{Type: "ephemeral"}
+			}
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}
