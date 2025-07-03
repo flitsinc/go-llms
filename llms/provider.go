@@ -18,8 +18,8 @@ type ProviderStream interface {
 	Iter() func(yield func(StreamStatus) bool)
 	Message() Message
 	Text() string
-	ToolCall() ToolCall
 	Thought() content.Thought
+	ToolCall() ToolCall
 	Usage() (inputTokens, outputTokens int)
 }
 

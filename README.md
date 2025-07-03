@@ -26,7 +26,7 @@ go get github.com/flitsinc/go-llms
 
 ## Quick Start
 
-Here's a simple example that creates an LLM instance and has a conversation with it:
+Here’s a simple example that creates an LLM instance and has a conversation with it:
 
 ```go
 package main
@@ -69,7 +69,7 @@ func main() {
 
 ## Advanced Usage with Tools
 
-Here's an example showing how to use tools (function calling):
+Here’s an example showing how to use tools (function calling):
 
 ```go
 package main
@@ -210,6 +210,7 @@ The library currently supports:
 - Anthropic
 - Google (Gemini API and Vertex AI)
 - OpenAI and all compatible providers (you can customize the endpoint)
+- OpenAI’s newer Responses API (beta)
 
 Each provider can be initialized with their respective configuration:
 
@@ -249,6 +250,16 @@ type Provider interface {
     // the context for cancellation during its operations.
     Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
 }
+
+type ProviderStream interface {
+    Err() error
+    Iter() func(yield func(StreamStatus) bool)
+    Message() Message
+    Text() string
+    Thought() content.Thought
+    ToolCall() ToolCall
+    Usage() (inputTokens, outputTokens int)
+}
 ```
 
 ## Debug Mode
@@ -283,6 +294,18 @@ As patterns emerge between providers with regards to cache tokens, speculative t
 When you want to make providers easily swappable and a simplified API that focuses on hekoing you implement the most common types of agentic flows.
 
 Since each LLM provider has its own quirks, especially around reasoning, streaming, and tool calling, we’ve done our best to smooth those over, but expect some differences still.
+
+### Provider quirks
+
+#### `additionalProperties` forbidden and required depending on provider
+
+Google doesn’t allow the `additionalProperties` field for JSON schemas (probably a bug), while OpenAI’s new Responses API requires it for tool calls! It’s also commonly required for models with strict JSON outputs since it helps with speculative decoding.
+
+Because of this, we strip out the `additionalProperties` field before sending it to Google, so it shouldn’t be a problem for you, just keep it in mind.
+
+#### Anthropic doesn’t stream partial property values
+
+The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.
 
 ## License
 
