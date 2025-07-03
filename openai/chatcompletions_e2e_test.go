@@ -10,11 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestOpenAIE2E tests the request generation logic of the Generate function
@@ -46,7 +47,7 @@ func TestOpenAIE2E(t *testing.T) {
 		toolbox               *tools.Toolbox
 		jsonOutputSchema      *tools.ValueSchema
 		maxCompletionTokens   int
-		reasoningEffort       Effort // Specific to OpenAI
+		reasoningEffort       Effort
 		customEndpoint        string // For testing WithEndpoint
 		customEndpointCompany string // For testing WithEndpoint
 		// verifyRequest is called after the server handler has sent its response.
@@ -500,7 +501,7 @@ func TestOpenAIE2E(t *testing.T) {
 			}))
 			defer mockServer.Close()
 
-			client := New(mockAPIKey, mockModel)
+			client := NewChatCompletionsAPI(mockAPIKey, mockModel)
 
 			// Special handling for the customEndpoint test case to use the mockServer.URL
 			if tc.name == "With custom endpoint" {
