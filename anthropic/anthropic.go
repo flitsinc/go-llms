@@ -324,6 +324,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						thought := &content.Thought{
 							Text:      "(Redacted)",
 							Encrypted: decodedData,
+							Summary:   true,
 						}
 						s.lastThought = thought
 						s.message.Content = append(s.message.Content, thought)
