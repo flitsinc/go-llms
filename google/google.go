@@ -20,6 +20,28 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
+// clearAdditionalProperties recursively sets AdditionalProperties to nil
+// in all ValueSchemas to make them compatible with Google's API.
+func clearAdditionalProperties(schema *tools.ValueSchema) {
+	schema.AdditionalProperties = nil
+
+	if schema.Items != nil {
+		clearAdditionalProperties(schema.Items)
+	}
+
+	if schema.Properties != nil {
+		for k := range *schema.Properties {
+			v := (*schema.Properties)[k]
+			clearAdditionalProperties(&v)
+			(*schema.Properties)[k] = v
+		}
+	}
+
+	for i := range schema.AnyOf {
+		clearAdditionalProperties(&schema.AnyOf[i])
+	}
+}
+
 type Model struct {
 	tokenSource     oauth2.TokenSource
 	model           string
@@ -195,7 +217,9 @@ func (m *Model) Generate(
 		allTools := toolbox.All()
 		declarations := make([]tools.FunctionSchema, len(allTools))
 		for i, tool := range allTools {
-			declarations[i] = *tool.Schema()
+			schema := *tool.Schema()
+			clearAdditionalProperties(&schema.Parameters)
+			declarations[i] = schema
 		}
 		payload["tools"] = map[string]any{
 			"functionDeclarations": declarations,
