@@ -361,6 +361,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if p.Thought {
 						// Note: Google only gives us summaries.
 						s.message.Content.SetThoughtSummary(*p.Text, p.ThoughtSignature)
+						s.lastThought = &content.Thought{
+							Text:      *p.Text,
+							Signature: p.ThoughtSignature,
+							Summary:   true,
+						}
 						if !yield(llms.StreamStatusThinking) {
 							return
 						}
