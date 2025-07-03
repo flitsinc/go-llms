@@ -15,6 +15,7 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 
 ### On the roadmap
 
+- [ ] Text diffusion model support (Inception, Google)
 - [ ] Realtime streaming (WebRTC)
 - [ ] Image output
 
