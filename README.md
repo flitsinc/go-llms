@@ -11,10 +11,10 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 - Streaming reasoning (summarized / raw)
 - Image inputs
 - Usage tracking
+- OpenAI Responses API support (beta)
 
 ### On the roadmap
 
-- [ ] OpenAI Responses API support
 - [ ] Realtime streaming (WebRTC)
 - [ ] Image output
 
@@ -224,7 +224,10 @@ llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GOOGLE_A
 ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
 llm := llms.New(google.New("gemini-2.5-flash").WithVertexAI(ts, projectID, "global"))
 
-// OpenAI
+// OpenAI (Responses API)
+llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "o4-mini"))
+
+// OpenAI (Chat Completions API)
 llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1"))
 
 // OpenAI-compatible endpoint (e.g., xAI)
