@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/google"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/mcp"
 	"github.com/flitsinc/go-llms/openai"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -63,6 +65,9 @@ func main() {
 	}
 
 	llm := llms.New(llmProvider, RunShellCmd)
+	if err := mcp.LoadConfigToLLM(context.Background(), llm, "mcp-tools-example.json"); err != nil {
+		panic(err)
+	}
 
 	// System prompt is dynamic so it can always be up-to-date.
 	llm.SystemPrompt = func() content.Content {
