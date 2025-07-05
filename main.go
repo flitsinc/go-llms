@@ -75,7 +75,7 @@ func main() {
 	}
 
 	// Chat returns a channel of updates.
-	for update := range llm.Chat("Give me a random number between 1 and 100! Then tell me a poem about it.") {
+	for update := range llm.Chat("Give me a random number between 1 and 100! Then tell me a poem about it. Oh and list ALL your tools.") {
 		switch update := update.(type) {
 		case llms.TextUpdate:
 			// Received for each chunk of text from the LLM.
