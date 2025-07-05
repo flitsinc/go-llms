@@ -198,6 +198,18 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, re
 	}
 }
 
+// idToString converts an interface{} ID to a string, handling both string and json.Number types
+func idToString(id interface{}) string {
+	switch v := id.(type) {
+	case string:
+		return v
+	case json.Number:
+		return string(v)
+	default:
+		return fmt.Sprintf("%v", id)
+	}
+}
+
 // startResponseHandler starts a goroutine to handle incoming responses
 func (c *Client) startResponseHandler() {
 	go func() {
@@ -208,7 +220,7 @@ func (c *Client) startResponseHandler() {
 				return
 			}
 
-			idStr, _ := resp.ID.(string)
+			idStr := idToString(resp.ID)
 			c.mu.RLock()
 			respChan, exists := c.pending[idStr]
 			c.mu.RUnlock()
