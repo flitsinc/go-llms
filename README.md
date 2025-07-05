@@ -240,7 +240,23 @@ llm := llms.New(
 )
 ```
 
-You can easily implement new providers by implementing the `Provider` interface:
+### OpenAI: Custom thinking block support
+
+Some models that have OpenAI API compatibility provide their thinking process inside of a block that is streamed as normal text tokens. To simulate these tokens as reasoning tokens in the event stream, you can configure the start/end of the thinking block.
+
+For example, here's how you would get the correct thinking events with DeepSeek R1 on Together AI:
+
+```go
+llm := llms.New(
+    openai.New(os.Getenv("TOGETHER_API_KEY"), "deepseek-ai/DeepSeek-R1-0528-tput").
+        WithEndpoint("https://api.together.xyz/v1/chat/completions", "Together").
+        WithCustomThinkBlock("<think>", "</think>"),
+)
+```
+
+### Custom providers
+
+You can add support for more providers by implementing the `Provider` interface:
 
 ```go
 type Provider interface {

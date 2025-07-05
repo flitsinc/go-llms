@@ -1,7 +1,9 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
@@ -10,7 +12,110 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMessagesFromLLM_OpenAI(t *testing.T) {
+func TestThinkingSplitter(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputs       []string
+		wantTexts    []string
+		wantThoughts []string
+		wantFlush    string
+	}{
+		{
+			name:         "simple thinking block",
+			inputs:       []string{"Before <think>thinking</think> After"},
+			wantTexts:    []string{"Before  After"},
+			wantThoughts: []string{"thinking"},
+			wantFlush:    "",
+		},
+		{
+			name:         "split marker across chunks",
+			inputs:       []string{"Before <thi", "nk>thinking</", "think> After"},
+			wantTexts:    []string{"Before ", " After"},
+			wantThoughts: []string{"thinking"},
+			wantFlush:    "",
+		},
+		{
+			name:         "multiple thinking blocks",
+			inputs:       []string{"A <think>1</think> B <think>2</think> C"},
+			wantTexts:    []string{"A  B  C"},
+			wantThoughts: []string{"12"},
+			wantFlush:    "",
+		},
+		{
+			name:         "incomplete thinking block flushed",
+			inputs:       []string{"Text <think>incomplete"},
+			wantTexts:    []string{"Text "},
+			wantThoughts: []string{"incomplete"},
+			wantFlush:    "",
+		},
+		{
+			name:         "partial marker flushed",
+			inputs:       []string{"Text <thi"},
+			wantTexts:    []string{"Text "},
+			wantThoughts: []string{},
+			wantFlush:    "<thi",
+		},
+		{
+			name:         "no thinking blocks",
+			inputs:       []string{"Just regular text"},
+			wantTexts:    []string{"Just regular text"},
+			wantThoughts: []string{},
+			wantFlush:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			splitter := &thinkingSplitter{
+				startBlock: "<think>",
+				endBlock:   "</think>",
+			}
+
+			var gotTexts []string
+			var gotThoughts []string
+
+			for _, input := range tt.inputs {
+				thinking, text := splitter.Split(input)
+				if thinking != "" {
+					gotThoughts = append(gotThoughts, thinking)
+				}
+				if text != "" {
+					gotTexts = append(gotTexts, text)
+				}
+			}
+
+			// Get flush result
+			gotFlush := splitter.Flush()
+
+			// Check texts
+			if len(gotTexts) != len(tt.wantTexts) {
+				t.Errorf("got %d texts, want %d", len(gotTexts), len(tt.wantTexts))
+			}
+			for i := range tt.wantTexts {
+				if i < len(gotTexts) && gotTexts[i] != tt.wantTexts[i] {
+					t.Errorf("text[%d] = %q, want %q", i, gotTexts[i], tt.wantTexts[i])
+				}
+			}
+
+			// Check thoughts
+			if len(gotThoughts) != len(tt.wantThoughts) {
+				t.Errorf("got %d thoughts, want %d", len(gotThoughts), len(tt.wantThoughts))
+			}
+			for i := range tt.wantThoughts {
+				if i < len(gotThoughts) && gotThoughts[i] != tt.wantThoughts[i] {
+					t.Errorf("thought[%d] = %q, want %q", i, gotThoughts[i], tt.wantThoughts[i])
+				}
+			}
+
+			// Check flush
+			if gotFlush != tt.wantFlush {
+				t.Errorf("flush = %q, want %q", gotFlush, tt.wantFlush)
+			}
+		})
+	}
+}
+
+func Test_convertContent(t *testing.T) {
 	testCases := []struct {
 		name     string
 		input    llms.Message
@@ -207,4 +312,202 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 // Helper function to get a pointer to a string
 func ptr(s string) *string {
 	return &s
+}
+
+func TestCustomThinkingBlocks(t *testing.T) {
+	// Create a mock response with custom thinking blocks
+	mockResponse := `data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"Let me think about this "},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"<think>"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"I need to analyze the problem"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":" step by step"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"</think>"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":" The answer is 42."},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"finish_reason":"stop"}]}
+data: [DONE]
+`
+
+	stream := &ChatCompletionsStream{
+		ctx:    context.Background(),
+		stream: strings.NewReader(mockResponse),
+		splitter: &thinkingSplitter{
+			startBlock: "<think>",
+			endBlock:   "</think>",
+		},
+	}
+
+	var updates []llms.StreamStatus
+	var texts []string
+	var thoughts []string
+
+	for status := range stream.Iter() {
+		updates = append(updates, status)
+		switch status {
+		case llms.StreamStatusText:
+			texts = append(texts, stream.Text())
+		case llms.StreamStatusThinking:
+			thoughts = append(thoughts, stream.Thought().Text)
+		}
+	}
+
+	// Verify we got the expected updates
+	expectedTexts := []string{"Let me think about this ", " The answer is 42."}
+	expectedThoughts := []string{"I need to analyze the problem", " step by step"}
+
+	if len(texts) != len(expectedTexts) {
+		t.Errorf("Expected %d text updates, got %d", len(expectedTexts), len(texts))
+	}
+
+	for i, expected := range expectedTexts {
+		if i < len(texts) && texts[i] != expected {
+			t.Errorf("Text %d: expected %q, got %q", i, expected, texts[i])
+		}
+	}
+
+	// The thinking content comes in two parts due to how it's chunked
+	if len(thoughts) != len(expectedThoughts) {
+		t.Errorf("Expected %d thinking updates, got %d", len(expectedThoughts), len(thoughts))
+	}
+
+	for i, expected := range expectedThoughts {
+		if i < len(thoughts) && thoughts[i] != expected {
+			t.Errorf("Thought %d: expected %q, got %q", i, expected, thoughts[i])
+		}
+	}
+
+	// Verify the final message content includes both text and thoughts
+	msg := stream.Message()
+	if msg.Content == nil {
+		t.Fatal("Expected message content to be non-nil")
+	}
+
+	// Check that we have both text and thought items in the content
+	var hasText, hasThought bool
+	for _, item := range msg.Content {
+		switch item.Type() {
+		case content.TypeText:
+			hasText = true
+		case content.TypeThought:
+			hasThought = true
+		}
+	}
+
+	if !hasText {
+		t.Error("Expected message content to contain text items")
+	}
+	if !hasThought {
+		t.Error("Expected message content to contain thought items")
+	}
+}
+
+func TestCustomThinkingBlocksSplitMarkers(t *testing.T) {
+	// Test case where thinking block markers are split across chunks
+	// With the new thinkingSplitter, this should be handled correctly
+	mockResponse := `data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"Before <thi"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"nk>Inside thinking</"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"think> After"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"finish_reason":"stop"}]}
+data: [DONE]
+`
+
+	stream := &ChatCompletionsStream{
+		ctx:    context.Background(),
+		stream: strings.NewReader(mockResponse),
+		splitter: &thinkingSplitter{
+			startBlock: "<think>",
+			endBlock:   "</think>",
+		},
+	}
+
+	var texts []string
+	var thoughts []string
+
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusText:
+			texts = append(texts, stream.Text())
+		case llms.StreamStatusThinking:
+			thoughts = append(thoughts, stream.Thought().Text)
+		}
+	}
+
+	// Now the splitter correctly handles split markers
+	expectedTexts := []string{"Before ", " After"}
+	expectedThoughts := []string{"Inside thinking"}
+
+	if len(texts) != len(expectedTexts) {
+		t.Errorf("Expected %d text updates, got %d", len(expectedTexts), len(texts))
+	}
+
+	for i, expected := range expectedTexts {
+		if i < len(texts) && texts[i] != expected {
+			t.Errorf("Text %d: expected %q, got %q", i, expected, texts[i])
+		}
+	}
+
+	if len(thoughts) != len(expectedThoughts) {
+		t.Errorf("Expected %d thinking updates, got %d", len(expectedThoughts), len(thoughts))
+	}
+
+	for i, expected := range expectedThoughts {
+		if i < len(thoughts) && thoughts[i] != expected {
+			t.Errorf("Thought %d: expected %q, got %q", i, expected, thoughts[i])
+		}
+	}
+}
+
+func TestCustomThinkingBlocksMultiple(t *testing.T) {
+	// Test multiple thinking blocks in the same response
+	mockResponse := `data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"delta":{"content":"First <think>thought 1</think> then <think>thought 2</think> end"},"finish_reason":null}]}
+data: {"id":"1","object":"chat.completion.chunk","created":1234567890,"model":"test","choices":[{"index":0,"finish_reason":"stop"}]}
+data: [DONE]
+`
+
+	stream := &ChatCompletionsStream{
+		ctx:    context.Background(),
+		stream: strings.NewReader(mockResponse),
+		splitter: &thinkingSplitter{
+			startBlock: "<think>",
+			endBlock:   "</think>",
+		},
+	}
+
+	var texts []string
+	var thoughts []string
+
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusText:
+			texts = append(texts, stream.Text())
+		case llms.StreamStatusThinking:
+			thoughts = append(thoughts, stream.Thought().Text)
+		}
+	}
+
+	// Verify we got all text parts
+	// Since all content comes in one chunk, the splitter returns joined strings
+	expectedTexts := []string{"First  then  end"}
+	if len(texts) != len(expectedTexts) {
+		t.Errorf("Expected %d text updates, got %d", len(expectedTexts), len(texts))
+	}
+
+	for i, expected := range expectedTexts {
+		if i < len(texts) && texts[i] != expected {
+			t.Errorf("Text %d: expected %q, got %q", i, expected, texts[i])
+		}
+	}
+
+	// Both thoughts are joined when processed in the same chunk
+	expectedThoughts := []string{"thought 1thought 2"}
+	if len(thoughts) != len(expectedThoughts) {
+		t.Errorf("Expected %d thinking updates, got %d", len(expectedThoughts), len(thoughts))
+	}
+
+	for i, expected := range expectedThoughts {
+		if i < len(thoughts) && thoughts[i] != expected {
+			t.Errorf("Thought %d: expected %q, got %q", i, expected, thoughts[i])
+		}
+	}
 }
