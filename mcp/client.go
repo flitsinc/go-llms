@@ -140,7 +140,7 @@ func (c *Client) Close() error {
 // call performs a JSON-RPC method call
 func (c *Client) call(ctx context.Context, method string, params interface{}, result interface{}) error {
 	idNum := atomic.AddInt64(&c.nextID, 1)
-	id := fmt.Sprintf("%d", idNum)
+	id := NewStringID(fmt.Sprintf("%d", idNum))
 
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -153,13 +153,13 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, re
 	respChan := make(chan JSONRPCResponse, 1)
 
 	c.mu.Lock()
-	c.pending[id] = respChan
+	c.pending[id.String()] = respChan
 	c.mu.Unlock()
 
 	// Cleanup on exit
 	defer func() {
 		c.mu.Lock()
-		delete(c.pending, id)
+		delete(c.pending, id.String())
 		c.mu.Unlock()
 		close(respChan)
 	}()
@@ -208,21 +208,8 @@ func (c *Client) startResponseHandler() {
 				return
 			}
 
-			// Handle both string and numeric IDs as per MCP spec
-			var idStr string
-			switch v := resp.ID.(type) {
-			case string:
-				idStr = v
-			case float64:
-				// Convert float64 to string without decimal point for integers
-				idStr = fmt.Sprintf("%.0f", v)
-			default:
-				// Skip responses with unexpected ID types
-				continue
-			}
-
 			c.mu.RLock()
-			respChan, exists := c.pending[idStr]
+			respChan, exists := c.pending[resp.ID.String()]
 			c.mu.RUnlock()
 
 			if exists {

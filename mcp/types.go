@@ -1,20 +1,73 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 )
+
+// MCPID represents a JSON-RPC ID that can be either a string or number
+type MCPID struct {
+	isString bool
+	strVal   string
+	numVal   float64
+}
+
+// NewStringID creates an MCPID from a string
+func NewStringID(s string) MCPID {
+	return MCPID{isString: true, strVal: s}
+}
+
+// NewNumberID creates an MCPID from a number
+func NewNumberID(n float64) MCPID {
+	return MCPID{isString: false, numVal: n}
+}
+
+// String returns a string representation for use as a map key
+func (id MCPID) String() string {
+	if id.isString {
+		return id.strVal
+	}
+	return fmt.Sprintf("%.0f", id.numVal)
+}
+
+// MarshalJSON implements json.Marshaler
+func (id MCPID) MarshalJSON() ([]byte, error) {
+	if id.isString {
+		return json.Marshal(id.strVal)
+	}
+	return json.Marshal(id.numVal)
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (id *MCPID) UnmarshalJSON(data []byte) error {
+	// Try string first
+	var strVal string
+	if err := json.Unmarshal(data, &strVal); err == nil {
+		*id = NewStringID(strVal)
+		return nil
+	}
+
+	// Try number
+	var numVal float64
+	if err := json.Unmarshal(data, &numVal); err == nil {
+		*id = NewNumberID(numVal)
+		return nil
+	}
+
+	return fmt.Errorf("ID must be string or number")
+}
 
 // JSON-RPC 2.0 message types
 type JSONRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
+	ID      MCPID       `json:"id"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
 }
 
 type JSONRPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
+	ID      MCPID       `json:"id"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
