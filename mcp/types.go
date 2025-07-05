@@ -5,25 +5,25 @@ import (
 	"fmt"
 )
 
-// MCPID represents a JSON-RPC ID that can be either a string or number
-type MCPID struct {
+// JSONRPCID represents a JSON-RPC ID that can be either a string or number
+type JSONRPCID struct {
 	isString bool
 	strVal   string
 	numVal   float64
 }
 
-// NewStringID creates an MCPID from a string
-func NewStringID(s string) MCPID {
-	return MCPID{isString: true, strVal: s}
+// NewStringID creates a JSONRPCID from a string
+func NewStringID(s string) JSONRPCID {
+	return JSONRPCID{isString: true, strVal: s}
 }
 
-// NewNumberID creates an MCPID from a number
-func NewNumberID(n float64) MCPID {
-	return MCPID{isString: false, numVal: n}
+// NewNumberID creates a JSONRPCID from a number
+func NewNumberID(n float64) JSONRPCID {
+	return JSONRPCID{isString: false, numVal: n}
 }
 
 // String returns a string representation for use as a map key
-func (id MCPID) String() string {
+func (id JSONRPCID) String() string {
 	if id.isString {
 		return id.strVal
 	}
@@ -31,7 +31,7 @@ func (id MCPID) String() string {
 }
 
 // MarshalJSON implements json.Marshaler
-func (id MCPID) MarshalJSON() ([]byte, error) {
+func (id JSONRPCID) MarshalJSON() ([]byte, error) {
 	if id.isString {
 		return json.Marshal(id.strVal)
 	}
@@ -39,7 +39,7 @@ func (id MCPID) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements json.Unmarshaler
-func (id *MCPID) UnmarshalJSON(data []byte) error {
+func (id *JSONRPCID) UnmarshalJSON(data []byte) error {
 	// Try string first
 	var strVal string
 	if err := json.Unmarshal(data, &strVal); err == nil {
@@ -60,14 +60,14 @@ func (id *MCPID) UnmarshalJSON(data []byte) error {
 // JSON-RPC 2.0 message types
 type JSONRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      MCPID       `json:"id"`
+	ID      JSONRPCID   `json:"id"`
 	Method  string      `json:"method"`
 	Params  interface{} `json:"params,omitempty"`
 }
 
 type JSONRPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      MCPID       `json:"id"`
+	ID      JSONRPCID   `json:"id"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }

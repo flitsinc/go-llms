@@ -70,8 +70,6 @@ func NewStdioTransportWithEnv(command string, env map[string]string, args ...str
 		encoder: json.NewEncoder(stdin),
 		decoder: json.NewDecoder(stdout),
 	}
-	// Note: We don't use decoder.UseNumber() because our custom MCPID type
-	// handles both string and numeric IDs correctly with proper marshaling
 
 	return transport, nil
 }
@@ -149,8 +147,6 @@ func NewTCPTransport(host string, port int) (*TCPTransport, error) {
 		encoder: json.NewEncoder(conn),
 		decoder: json.NewDecoder(conn),
 	}
-	// Note: We don't use decoder.UseNumber() because our custom MCPID type
-	// handles both string and numeric IDs correctly with proper marshaling
 	return t, nil
 }
 
