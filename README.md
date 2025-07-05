@@ -104,7 +104,7 @@ var RunCommand = tools.Func(
 func main() {
     // Create a new LLM instance using Anthropic's Claude with tools
     llm := llms.New(
-        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"),
+        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"),
         RunCommand,
     )
 
@@ -150,7 +150,7 @@ var externalToolSchemas = []tools.FunctionSchema{
 }
 
 func main() {
-    llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"))
+    llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
 
     // Add external tools and their handler
     llm.AddExternalTools(externalToolSchemas, handleExternalTool)
@@ -217,7 +217,7 @@ Each provider can be initialized with their respective configuration:
 
 ```go
 // Anthropic
-llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-3-7-sonnet-latest"))
+llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
 
 // Google Gemini
 llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))

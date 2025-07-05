@@ -28,7 +28,7 @@ func ExampleLLM_Chat() {
 
 	// Create a new LLM instance with Anthropic's Claude Sonnet model
 	llm := llms.New(
-		anthropic.New(apiKey, "claude-3-7-sonnet-latest"),
+		anthropic.New(apiKey, "claude-sonnet-4-20250514"),
 	)
 
 	// Optional: Set a system prompt
@@ -227,7 +227,7 @@ func ExampleLLM_WithMaxTurns() {
 
 	// Create LLM with Anthropic Claude Sonnet and limit to 1 turn
 	llm := llms.New(
-		anthropic.New(apiKey, "claude-3-7-sonnet-latest"),
+		anthropic.New(apiKey, "claude-sonnet-4-20250514"),
 	).WithMaxTurns(1)
 
 	// Perform a simple chat
