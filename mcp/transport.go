@@ -70,7 +70,6 @@ func NewStdioTransportWithEnv(command string, env map[string]string, args ...str
 		encoder: json.NewEncoder(stdin),
 		decoder: json.NewDecoder(stdout),
 	}
-	transport.decoder.UseNumber()
 
 	return transport, nil
 }
@@ -148,7 +147,6 @@ func NewTCPTransport(host string, port int) (*TCPTransport, error) {
 		encoder: json.NewEncoder(conn),
 		decoder: json.NewDecoder(conn),
 	}
-	t.decoder.UseNumber()
 	return t, nil
 }
 

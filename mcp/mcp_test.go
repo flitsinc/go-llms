@@ -150,7 +150,7 @@ func TestMCPClient(t *testing.T) {
 	// Create mock responses for initialization
 	initResponse := JSONRPCResponse{
 		JSONRPC: "2.0",
-		ID:      1,
+		ID:      NewNumberID(1),
 		Result: InitializeResponse{
 			ProtocolVersion: "2024-11-05",
 			Capabilities:    map[string]interface{}{},
