@@ -115,21 +115,28 @@ func TestTransportConfig(t *testing.T) {
 
 // MockTransport implements the Transport interface for testing
 type MockTransport struct {
-	responses []JSONRPCResponse
-	requests  []JSONRPCRequest
-	index     int
+	responses     []JSONRPCResponse
+	requests      []JSONRPCRequest
+	notifications []JSONRPCNotification
+	index         int
 }
 
 func NewMockTransport(responses []JSONRPCResponse) *MockTransport {
 	return &MockTransport{
-		responses: responses,
-		requests:  make([]JSONRPCRequest, 0),
-		index:     0,
+		responses:     responses,
+		requests:      make([]JSONRPCRequest, 0),
+		notifications: make([]JSONRPCNotification, 0),
+		index:         0,
 	}
 }
 
 func (m *MockTransport) Send(request JSONRPCRequest) error {
 	m.requests = append(m.requests, request)
+	return nil
+}
+
+func (m *MockTransport) SendNotification(notification JSONRPCNotification) error {
+	m.notifications = append(m.notifications, notification)
 	return nil
 }
 

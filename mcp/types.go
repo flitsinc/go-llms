@@ -65,10 +65,16 @@ type JSONRPCRequest struct {
 	Params  interface{} `json:"params,omitempty"`
 }
 
-type JSONRPCResponse struct {
+type JSONRPCNotification struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      JSONRPCID   `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
+	Method  string      `json:"method"`
+	Params  interface{} `json:"params,omitempty"`
+}
+
+type JSONRPCResponse struct {
+	JSONRPC string        `json:"jsonrpc"`
+	ID      JSONRPCID     `json:"id"`
+	Result  interface{}   `json:"result,omitempty"`
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
 
@@ -137,6 +143,7 @@ type Content struct {
 // Transport interface for different connection types
 type Transport interface {
 	Send(request JSONRPCRequest) error
+	SendNotification(notification JSONRPCNotification) error
 	Receive() (JSONRPCResponse, error)
 	Close() error
 }
@@ -144,30 +151,30 @@ type Transport interface {
 // TransportConfig holds configuration for connecting to MCP servers
 type TransportConfig struct {
 	Type string // "stdio", "tcp", "http", "sse"
-	
+
 	// For stdio transport
 	Command string
 	Args    []string
 	Env     map[string]string
-	
+
 	// For TCP transport
 	Host string
 	Port int
-	
+
 	// For HTTP/SSE transport
 	URL     string
 	Headers map[string]string
-	
+
 	// Authentication
 	Auth *AuthConfig
 }
 
 type AuthConfig struct {
-	Type string // "bearer", "basic", "apikey"
-	Token string
+	Type     string // "bearer", "basic", "apikey"
+	Token    string
 	Username string
 	Password string
-	APIKey string
+	APIKey   string
 }
 
 // MCPConfig represents the structure of an MCP configuration file
@@ -181,11 +188,11 @@ type MCPServerConfig struct {
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
-	
+
 	// For HTTP-based servers
 	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
-	
+
 	// For TCP-based servers
 	Host string `json:"host,omitempty"`
 	Port int    `json:"port,omitempty"`

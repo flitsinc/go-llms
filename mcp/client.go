@@ -61,6 +61,17 @@ func (c *Client) Initialize(ctx context.Context) error {
 	}
 
 	c.serverInfo = resp.ServerInfo
+
+	// Send initialized notification
+	notif := JSONRPCNotification{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+
+	if err := c.transport.SendNotification(notif); err != nil {
+		return fmt.Errorf("failed to send initialized notification: %w", err)
+	}
+
 	c.initialized = true
 
 	return nil

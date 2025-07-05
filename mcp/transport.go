@@ -71,6 +71,11 @@ func NewStdioTransportWithEnv(command string, env map[string]string, args ...str
 		decoder: json.NewDecoder(stdout),
 	}
 
+	// Start a goroutine to discard stderr output
+	go func() {
+		io.Copy(io.Discard, stderr)
+	}()
+
 	return transport, nil
 }
 
@@ -80,6 +85,17 @@ func (t *StdioTransport) Send(request JSONRPCRequest) error {
 
 	if err := t.encoder.Encode(request); err != nil {
 		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	return nil
+}
+
+func (t *StdioTransport) SendNotification(notification JSONRPCNotification) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if err := t.encoder.Encode(notification); err != nil {
+		return fmt.Errorf("failed to encode notification: %w", err)
 	}
 
 	return nil
@@ -156,6 +172,17 @@ func (t *TCPTransport) Send(request JSONRPCRequest) error {
 
 	if err := t.encoder.Encode(request); err != nil {
 		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	return nil
+}
+
+func (t *TCPTransport) SendNotification(notification JSONRPCNotification) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if err := t.encoder.Encode(notification); err != nil {
+		return fmt.Errorf("failed to encode notification: %w", err)
 	}
 
 	return nil
