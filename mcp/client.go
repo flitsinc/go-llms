@@ -13,15 +13,15 @@ import (
 type Client struct {
 	transport Transport
 	nextID    int64
-	pending   map[interface{}]chan JSONRPCResponse
+	pending   map[string]chan JSONRPCResponse
 	mu        sync.RWMutex
-	
+
 	// Connection state
 	initialized bool
 	serverInfo  ServerInfo
 	tools       []Tool
 	toolsCache  map[string]Tool
-	
+
 	// Configuration
 	clientInfo ClientInfo
 	timeout    time.Duration
@@ -30,8 +30,8 @@ type Client struct {
 // NewClient creates a new MCP client with the given transport
 func NewClient(transport Transport) *Client {
 	return &Client{
-		transport: transport,
-		pending:   make(map[interface{}]chan JSONRPCResponse),
+		transport:  transport,
+		pending:    make(map[string]chan JSONRPCResponse),
 		toolsCache: make(map[string]Tool),
 		clientInfo: ClientInfo{
 			Name:    "go-llms",
@@ -46,7 +46,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if c.initialized {
 		return nil
 	}
-	
+
 	req := InitializeRequest{
 		ProtocolVersion: "2024-11-05",
 		Capabilities: map[string]interface{}{
@@ -54,15 +54,15 @@ func (c *Client) Initialize(ctx context.Context) error {
 		},
 		ClientInfo: c.clientInfo,
 	}
-	
+
 	var resp InitializeResponse
 	if err := c.call(ctx, "initialize", req, &resp); err != nil {
 		return fmt.Errorf("failed to initialize MCP connection: %w", err)
 	}
-	
+
 	c.serverInfo = resp.ServerInfo
 	c.initialized = true
-	
+
 	return nil
 }
 
@@ -73,16 +73,16 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 			return nil, err
 		}
 	}
-	
+
 	req := ListToolsRequest{}
 	var resp ListToolsResponse
-	
+
 	if err := c.call(ctx, "tools/list", req, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
-	
+
 	c.tools = resp.Tools
-	
+
 	// Update cache
 	c.mu.Lock()
 	c.toolsCache = make(map[string]Tool)
@@ -90,7 +90,7 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 		c.toolsCache[tool.Name] = tool
 	}
 	c.mu.Unlock()
-	
+
 	return c.tools, nil
 }
 
@@ -101,17 +101,17 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 			return nil, err
 		}
 	}
-	
+
 	req := CallToolRequest{
 		Name:      name,
 		Arguments: args,
 	}
-	
+
 	var resp CallToolResponse
 	if err := c.call(ctx, "tools/call", req, &resp); err != nil {
 		return nil, fmt.Errorf("failed to call tool %s: %w", name, err)
 	}
-	
+
 	return &resp, nil
 }
 
@@ -127,34 +127,35 @@ func (c *Client) GetTool(name string) (Tool, bool) {
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// Close all pending channels
 	for _, ch := range c.pending {
 		close(ch)
 	}
-	c.pending = make(map[interface{}]chan JSONRPCResponse)
-	
+	c.pending = make(map[string]chan JSONRPCResponse)
+
 	return c.transport.Close()
 }
 
 // call performs a JSON-RPC method call
 func (c *Client) call(ctx context.Context, method string, params interface{}, result interface{}) error {
-	id := atomic.AddInt64(&c.nextID, 1)
-	
+	idNum := atomic.AddInt64(&c.nextID, 1)
+	id := fmt.Sprintf("%d", idNum)
+
 	req := JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  method,
 		Params:  params,
 	}
-	
+
 	// Create response channel
 	respChan := make(chan JSONRPCResponse, 1)
-	
+
 	c.mu.Lock()
 	c.pending[id] = respChan
 	c.mu.Unlock()
-	
+
 	// Cleanup on exit
 	defer func() {
 		c.mu.Lock()
@@ -162,36 +163,36 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, re
 		c.mu.Unlock()
 		close(respChan)
 	}()
-	
+
 	// Send request
 	if err := c.transport.Send(req); err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	
+
 	// Wait for response with timeout
 	select {
 	case resp := <-respChan:
 		if resp.Error != nil {
 			return resp.Error
 		}
-		
+
 		// Unmarshal result if provided
 		if result != nil && resp.Result != nil {
 			resultBytes, err := json.Marshal(resp.Result)
 			if err != nil {
 				return fmt.Errorf("failed to marshal result: %w", err)
 			}
-			
+
 			if err := json.Unmarshal(resultBytes, result); err != nil {
 				return fmt.Errorf("failed to unmarshal result: %w", err)
 			}
 		}
-		
+
 		return nil
-		
+
 	case <-ctx.Done():
 		return ctx.Err()
-		
+
 	case <-time.After(c.timeout):
 		return fmt.Errorf("request timeout after %v", c.timeout)
 	}
@@ -206,11 +207,12 @@ func (c *Client) startResponseHandler() {
 				// Connection closed or error occurred
 				return
 			}
-			
+
+			idStr, _ := resp.ID.(string)
 			c.mu.RLock()
-			respChan, exists := c.pending[resp.ID]
+			respChan, exists := c.pending[idStr]
 			c.mu.RUnlock()
-			
+
 			if exists {
 				select {
 				case respChan <- resp:

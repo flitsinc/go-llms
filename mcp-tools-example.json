@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "fetch": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "mcp/fetch"]
+      "command": "go",
+      "args": ["run", "./cmd/mcp-fetch"]
     }
   }
 }

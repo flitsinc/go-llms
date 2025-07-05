@@ -70,6 +70,7 @@ func NewStdioTransportWithEnv(command string, env map[string]string, args ...str
 		encoder: json.NewEncoder(stdin),
 		decoder: json.NewDecoder(stdout),
 	}
+	transport.decoder.UseNumber()
 
 	return transport, nil
 }
@@ -142,11 +143,13 @@ func NewTCPTransport(host string, port int) (*TCPTransport, error) {
 		return nil, fmt.Errorf("failed to connect to MCP server: %w", err)
 	}
 
-	return &TCPTransport{
+	t := &TCPTransport{
 		conn:    conn,
 		encoder: json.NewEncoder(conn),
 		decoder: json.NewDecoder(conn),
-	}, nil
+	}
+	t.decoder.UseNumber()
+	return t, nil
 }
 
 func (t *TCPTransport) Send(request JSONRPCRequest) error {
