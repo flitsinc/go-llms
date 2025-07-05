@@ -7,6 +7,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/image v0.28.0
 	golang.org/x/oauth2 v0.30.0
+	golang.org/x/sync v0.7.0
 	sigs.k8s.io/yaml v1.5.0
 )
 

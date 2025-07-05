@@ -290,6 +290,61 @@ inputTokens, outputTokens := llm.Usage()
 
 As patterns emerge between providers with regards to cache tokens, speculative tokens, etc. these will be added too.
 
+## MCP (Model Context Protocol) Support
+
+The library includes support for MCP servers, which allow LLMs to connect to external tools and data sources using the Model Context Protocol standard.
+
+### Configuration File (Recommended)
+
+Create an MCP configuration file:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/files"],
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "web-search": {
+      "url": "http://localhost:3000/mcp",
+      "headers": {
+        "Authorization": "Bearer your-api-key"
+      }
+    }
+  }
+}
+```
+
+Load the configuration:
+
+```go
+llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
+
+// Load all MCP servers from config file
+err := mcp.LoadConfigToLLM(ctx, llm, "mcp-config.json")
+if err != nil {
+    panic(err)
+}
+```
+
+### Manual Configuration
+
+```go
+// Add MCP servers directly to an LLM
+llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "o3"))
+
+// Stdio-based server
+err := mcp.AddStdioServerToLLM(ctx, llm, "python", "-m", "mcp_server_web")
+
+// TCP-based server
+err = mcp.AddTCPServerToLLM(ctx, llm, "localhost", 8080)
+```
+
+MCP tools integrate seamlessly with existing tools and work with all supported providers.
+
 ## When to use this?
 
 When you want to make providers easily swappable and a simplified API that focuses on hekoing you implement the most common types of agentic flows.
