@@ -16,7 +16,6 @@ type message struct {
 	Role    string      `json:"role"`    // Either "user" or "assistant"
 	Content contentList `json:"content"` // The content of the message (text, images, tool_use blocks)
 	ID      string      `json:"id,omitempty"`
-	Usage   *usage      `json:"usage,omitempty"` // Token usage statistics
 }
 
 type contentList []contentItem
@@ -112,10 +111,11 @@ type cacheControl struct {
 type streamEvent struct {
 	Type         string        `json:"type"`                    // Event type: "message_start", "content_block_start", etc.
 	Index        int           `json:"index,omitempty"`         // Position of content block in the content array
-	Delta        delta         `json:"delta"`                   // Used in content_block_delta events
-	Message      *messageEvent `json:"message,omitempty"`       // Used in message_start events
-	ContentBlock *contentBlock `json:"content_block,omitempty"` // Used in content_block_start events
+	Delta        delta         `json:"delta"`                   // Used in "message_delta" and "content_block_delta" events
+	Message      *messageEvent `json:"message,omitempty"`       // Used in "message_start" events
+	ContentBlock *contentBlock `json:"content_block,omitempty"` // Used in "content_block_start" events
 	Error        *errorInfo    `json:"error,omitempty"`         // Error information if type is "error"
+	Usage        *usage        `json:"usage,omitempty"`         // Token usage updates (only "message_start" and final "message_delta" events)
 }
 
 // messageEvent contains message metadata for message_start events.
@@ -138,23 +138,27 @@ type contentBlock struct {
 	Data      string `json:"data,omitempty"`      // Base64-encoded data (for "redacted_thinking" type)
 }
 
-// delta represents incremental updates in content_block_delta events
+// delta represents incremental updates in "content_block_delta" and "message_delta" events
 type delta struct {
-	Type         string `json:"type"`                    // Type of delta: "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
-	PartialJSON  string `json:"partial_json,omitempty"`  // For tool_use blocks, fragments of JSON for the input field
-	Text         string `json:"text,omitempty"`          // Text fragment for text content blocks
-	Thinking     string `json:"thinking,omitempty"`      // Thinking fragment for thinking content blocks
-	Signature    string `json:"signature,omitempty"`     // Used in signature_delta events to verify thinking content
-	Usage        *usage `json:"usage,omitempty"`         // Token usage updates
-	StopReason   string `json:"stop_reason,omitempty"`   // Reason for stopping: "end_turn", "tool_use", etc.
-	StopSequence string `json:"stop_sequence,omitempty"` // Custom stop sequence if that caused the stop
+	// content_block_delta
+
+	Type        string `json:"type,omitempty"`         // Type of delta: "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
+	Text        string `json:"text,omitempty"`         // Text fragment for text content blocks
+	PartialJSON string `json:"partial_json,omitempty"` // For tool_use blocks, fragments of JSON for the input field
+	Thinking    string `json:"thinking,omitempty"`     // Thinking fragment for thinking content blocks
+	Signature   string `json:"signature,omitempty"`    // Used in signature_delta events to verify thinking content
+
+	// message_delta
+
+	StopReason   string  `json:"stop_reason,omitempty"`   // Reason for stopping: "end_turn", "tool_use", etc.
+	StopSequence *string `json:"stop_sequence,omitempty"` // Custom stop sequence if that caused the stop
 }
 
 type usage struct {
-	InputTokens              int            `json:"input_tokens"`
-	OutputTokens             int            `json:"output_tokens"`
-	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              *int           `json:"input_tokens,omitempty"`
+	OutputTokens             *int           `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens *int           `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *int           `json:"cache_read_input_tokens,omitempty"`
 	ServerToolUse            *serverToolUse `json:"server_tool_use,omitempty"`
 }
 

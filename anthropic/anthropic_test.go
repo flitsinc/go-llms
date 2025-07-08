@@ -49,6 +49,10 @@ func newTestAnthropicStream(ctx context.Context, model, content string) *Stream 
 	}
 }
 
+func numPtr(i int) *int {
+	return &i
+}
+
 func TestAnthropicStreamHandling(t *testing.T) {
 	t.Run("Zero Argument Tool Call", func(t *testing.T) {
 		var streamContent strings.Builder
@@ -58,7 +62,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 			Type: "message_start",
 			Message: &messageEvent{
 				Role:  "assistant",
-				Usage: &usage{CacheReadInputTokens: 10, InputTokens: 10, OutputTokens: 1},
+				Usage: &usage{CacheReadInputTokens: numPtr(10), InputTokens: numPtr(10), OutputTokens: numPtr(1)},
 			},
 		}))
 		streamContent.WriteString(sseEvent(streamEvent{
@@ -79,8 +83,8 @@ func TestAnthropicStreamHandling(t *testing.T) {
 			Type: "message_delta",
 			Delta: delta{
 				StopReason: "tool_use",
-				Usage:      &usage{OutputTokens: 5}, // Simulate usage delta
 			},
+			Usage: &usage{OutputTokens: numPtr(5)}, // Simulate usage reporting
 		}))
 		streamContent.WriteString(sseEvent(streamEvent{
 			Type: "message_stop",
@@ -133,8 +137,8 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		usage := stream.Usage()
 		assert.Equal(t, 10, usage.CachedInputTokens, "Cached input tokens mismatch")
 		assert.Equal(t, 10, usage.InputTokens, "Input tokens mismatch")
-		// Note: Output tokens accumulate: 1 (start) + 5 (delta) = 6
-		assert.Equal(t, 6, usage.OutputTokens, "Output tokens mismatch")
+		// Note: Output tokens are cumulative: 1 (start) -> 5 (end) = 5
+		assert.Equal(t, 5, usage.OutputTokens, "Output tokens mismatch")
 	})
 
 	t.Run("Simple Argument Tool Call (Single Delta)", func(t *testing.T) {

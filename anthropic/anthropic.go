@@ -283,10 +283,18 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			case "message_start":
 				// Initialize the message with the role from the message_start event
 				s.message.Role = event.Message.Role
-				if event.Message.Usage != nil {
-					s.cachedInputTokens += event.Message.Usage.CacheReadInputTokens
-					s.inputTokens += event.Message.Usage.InputTokens
-					s.outputTokens += event.Message.Usage.OutputTokens
+				if u := event.Message.Usage; u != nil {
+					// Values are cumulative, so we overwrite the numbers instead of adding.
+					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
+					if u.CacheReadInputTokens != nil {
+						s.cachedInputTokens = *u.CacheReadInputTokens
+					}
+					if u.InputTokens != nil {
+						s.inputTokens = *u.InputTokens
+					}
+					if u.OutputTokens != nil {
+						s.outputTokens = *u.OutputTokens
+					}
 				}
 			case "content_block_start":
 				// For now, we only need special handling for tool_use and thinking blocks.
@@ -403,10 +411,18 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 			case "message_delta":
 				// Update usage statistics
-				if event.Delta.Usage != nil {
-					s.cachedInputTokens += event.Delta.Usage.CacheReadInputTokens
-					s.inputTokens += event.Delta.Usage.InputTokens
-					s.outputTokens += event.Delta.Usage.OutputTokens
+				if u := event.Usage; u != nil {
+					// Values are cumulative, so we overwrite the numbers instead of adding.
+					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
+					if u.CacheReadInputTokens != nil {
+						s.cachedInputTokens = *u.CacheReadInputTokens
+					}
+					if u.InputTokens != nil {
+						s.inputTokens = *u.InputTokens
+					}
+					if u.OutputTokens != nil {
+						s.outputTokens = *u.OutputTokens
+					}
 				}
 				// Check stop reason, but allow tool_use and end_turn
 				if event.Delta.StopReason != "" &&
