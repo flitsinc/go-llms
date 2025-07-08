@@ -177,7 +177,9 @@ func (s *mockStream) ToolCall() ToolCall {
 	return ToolCall{}
 }
 
-func (s *mockStream) Usage() (int, int, int) { return 10, 20, 30 }
+func (s *mockStream) Usage() Usage {
+	return Usage{CachedInputTokens: 10, InputTokens: 20, OutputTokens: 30}
+}
 
 // Mock provider that always returns an error stream
 type errorMockProvider struct {
@@ -217,7 +219,7 @@ func (s *errorMockStream) Message() Message         { return Message{} }
 func (s *errorMockStream) Text() string             { return "" }
 func (s *errorMockStream) Thought() content.Thought { return content.Thought{} }
 func (s *errorMockStream) ToolCall() ToolCall       { return ToolCall{} }
-func (s *errorMockStream) Usage() (int, int, int)   { return 0, 0, 0 }
+func (s *errorMockStream) Usage() Usage             { return Usage{} }
 
 // mockEmptyIDProvider is a provider that returns tool calls with empty IDs
 type mockEmptyIDProvider struct{}
@@ -293,7 +295,9 @@ func (s *mockEmptyIDStream) ToolCall() ToolCall {
 	return ToolCall{}
 }
 
-func (s *mockEmptyIDStream) Usage() (int, int, int) { return 10, 20, 30 }
+func (s *mockEmptyIDStream) Usage() Usage {
+	return Usage{CachedInputTokens: 10, InputTokens: 20, OutputTokens: 30}
+}
 
 // mockCancellingProvider creates a stream that will block until context is cancelled (fixed implementation)
 type mockCancellingProvider struct{}
@@ -356,7 +360,7 @@ func (s *mockCancellingStream) Message() Message {
 func (s *mockCancellingStream) Text() string             { return "This is a test message." }
 func (s *mockCancellingStream) Thought() content.Thought { return content.Thought{} }
 func (s *mockCancellingStream) ToolCall() ToolCall       { return ToolCall{} }
-func (s *mockCancellingStream) Usage() (int, int, int)   { return 0, 0, 0 }
+func (s *mockCancellingStream) Usage() Usage             { return Usage{} }
 
 // mockToolWithError always returns an error.
 var mockToolWithError = tools.Func("Error Tool", "A tool that always errors", "error_tool",
@@ -453,7 +457,7 @@ func (s *mockStreamToolNotFound) ToolCall() ToolCall {
 	return ToolCall{}
 }
 
-func (s *mockStreamToolNotFound) Usage() (int, int, int) { return 0, 0, 0 }
+func (s *mockStreamToolNotFound) Usage() Usage { return Usage{} }
 
 // mockProviderToolNotFound returns the mockStreamToolNotFound.
 type mockProviderToolNotFound struct {

@@ -130,11 +130,11 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		assert.Equal(t, "toolu_01", toolCallAtReady.ID, "Ready tool call ID mismatch")
 		assert.JSONEq(t, `{}`, string(toolCallAtReady.Arguments), "Ready tool call arguments should be '{}'")
 
-		cachedInTokens, inTokens, outTokens := stream.Usage()
-		assert.Equal(t, 10, cachedInTokens, "Cached input tokens mismatch")
-		assert.Equal(t, 10, inTokens, "Input tokens mismatch")
+		usage := stream.Usage()
+		assert.Equal(t, 10, usage.CachedInputTokens, "Cached input tokens mismatch")
+		assert.Equal(t, 10, usage.InputTokens, "Input tokens mismatch")
 		// Note: Output tokens accumulate: 1 (start) + 5 (delta) = 6
-		assert.Equal(t, 6, outTokens, "Output tokens mismatch")
+		assert.Equal(t, 6, usage.OutputTokens, "Output tokens mismatch")
 	})
 
 	t.Run("Simple Argument Tool Call (Single Delta)", func(t *testing.T) {

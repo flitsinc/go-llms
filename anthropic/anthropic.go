@@ -223,8 +223,12 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
-func (s *Stream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
-	return s.cachedInputTokens, s.inputTokens, s.outputTokens
+func (s *Stream) Usage() llms.Usage {
+	return llms.Usage{
+		CachedInputTokens: s.cachedInputTokens,
+		InputTokens:       s.inputTokens,
+		OutputTokens:      s.outputTokens,
+	}
 }
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {

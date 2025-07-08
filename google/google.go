@@ -307,12 +307,16 @@ func (s *Stream) Thought() content.Thought {
 	return *s.lastThought
 }
 
-func (s *Stream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
+func (s *Stream) Usage() llms.Usage {
 	if s.usage == nil {
-		return 0, 0, 0
+		return llms.Usage{}
 	}
 	// TODO: Report cache context tokens.
-	return 0, s.usage.PromptTokenCount, s.usage.CandidatesTokenCount
+	return llms.Usage{
+		CachedInputTokens: 0,
+		InputTokens:       s.usage.PromptTokenCount,
+		OutputTokens:      s.usage.CandidatesTokenCount,
+	}
 }
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {

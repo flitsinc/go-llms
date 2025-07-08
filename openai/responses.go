@@ -334,11 +334,15 @@ func (s *ResponsesStream) Thought() content.Thought {
 	return content.Thought{}
 }
 
-func (s *ResponsesStream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
+func (s *ResponsesStream) Usage() llms.Usage {
 	if s.usage == nil {
-		return 0, 0, 0
+		return llms.Usage{}
 	}
-	return s.usage.InputTokensDetails.CachedTokens, s.usage.InputTokens, s.usage.OutputTokens
+	return llms.Usage{
+		CachedInputTokens: s.usage.InputTokensDetails.CachedTokens,
+		InputTokens:       s.usage.InputTokens,
+		OutputTokens:      s.usage.OutputTokens,
+	}
 }
 
 func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {

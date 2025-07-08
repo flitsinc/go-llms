@@ -7,11 +7,12 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
-// TODO: The Usage() API should become detailed enough to track things like:
-//       - Cached vs non-cached input tokens
-//       - Reasoning vs non-reasoning output tokens
-//       - Large inputs (>200K tokens) vs not
-//       - Text/image/audio tokens
+// Usage represents token usage information from an LLM response.
+type Usage struct {
+	CachedInputTokens int
+	InputTokens       int
+	OutputTokens      int
+}
 
 type ProviderStream interface {
 	Err() error
@@ -20,7 +21,7 @@ type ProviderStream interface {
 	Text() string
 	Thought() content.Thought
 	ToolCall() ToolCall
-	Usage() (cachedInputTokens, inputTokens, outputTokens int)
+	Usage() Usage
 }
 
 type Provider interface {

@@ -259,7 +259,7 @@ type ProviderStream interface {
     Text() string
     Thought() content.Thought
     ToolCall() ToolCall
-    Usage() (inputTokens, outputTokens int)
+    Usage() Usage
 }
 ```
 
@@ -285,7 +285,9 @@ The debug file includes:
 Track the usage of your LLM interactions:
 
 ```go
-inputTokens, outputTokens := llm.Usage()
+usage := llm.Usage()
+fmt.Printf("Cached Input Tokens: %d, Input Tokens: %d, Output Tokens: %d\n",
+    usage.CachedInputTokens, usage.InputTokens, usage.OutputTokens)
 ```
 
 As patterns emerge between providers with regards to cache tokens, speculative tokens, etc. these will be added too.

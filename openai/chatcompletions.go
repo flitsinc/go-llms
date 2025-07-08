@@ -203,11 +203,15 @@ func (s *ChatCompletionsStream) Thought() content.Thought {
 	return content.Thought{}
 }
 
-func (s *ChatCompletionsStream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
+func (s *ChatCompletionsStream) Usage() llms.Usage {
 	if s.usage == nil {
-		return 0, 0, 0
+		return llms.Usage{}
 	}
-	return s.usage.PromptTokensDetails.CachedTokens, s.usage.PromptTokens, s.usage.CompletionTokens
+	return llms.Usage{
+		CachedInputTokens: s.usage.PromptTokensDetails.CachedTokens,
+		InputTokens:       s.usage.PromptTokens,
+		OutputTokens:      s.usage.CompletionTokens,
+	}
 }
 
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {

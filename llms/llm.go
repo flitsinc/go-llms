@@ -46,6 +46,10 @@ type LLM struct {
 	// TrackTTFT is a function that will be called with the time it took for the
 	// LLM to generate the first token of the turn.
 	TrackTTFT func(context.Context, time.Duration)
+
+	// TrackUsage is a function that will be called with the token usage
+	// information after each LLM turn completes.
+	TrackUsage func(ctx context.Context, usage Usage, success bool)
 }
 
 // New creates a new LLM instance with the specified provider and optional
@@ -252,6 +256,15 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	trackTTFT := l.TrackTTFT
 	shouldReportTTFT := trackTTFT != nil
 
+	var success bool
+	// Report usage if tracking is enabled.
+	if l.TrackUsage != nil {
+		defer func() {
+			usage := stream.Usage()
+			l.TrackUsage(ctx, usage, success)
+		}()
+	}
+
 	// Tracks how many bytes of the tool call arguments we sent so far in
 	// deltas. We probably want to move this into the responsibility of each
 	// provider so we can reduce allocations.
@@ -324,6 +337,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
+	success = true
 
 	// Add the fully assembled message plus tool call results to the message history.
 	l.lastSentMessages = append(l.lastSentMessages, stream.Message())
