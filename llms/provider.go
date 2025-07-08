@@ -20,7 +20,7 @@ type ProviderStream interface {
 	Text() string
 	Thought() content.Thought
 	ToolCall() ToolCall
-	Usage() (inputTokens, outputTokens int)
+	Usage() (cachedInputTokens, inputTokens, outputTokens int)
 }
 
 type Provider interface {

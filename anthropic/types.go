@@ -151,8 +151,16 @@ type delta struct {
 }
 
 type usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int            `json:"input_tokens"`
+	OutputTokens             int            `json:"output_tokens"`
+	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
+	ServerToolUse            *serverToolUse `json:"server_tool_use,omitempty"`
+}
+
+// serverToolUse represents server tool usage statistics
+type serverToolUse struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
 }
 
 // citation represents a source citation in a text content block

@@ -58,7 +58,7 @@ func TestAnthropicStreamHandling(t *testing.T) {
 			Type: "message_start",
 			Message: &messageEvent{
 				Role:  "assistant",
-				Usage: &usage{InputTokens: 10, OutputTokens: 1},
+				Usage: &usage{CacheReadInputTokens: 10, InputTokens: 10, OutputTokens: 1},
 			},
 		}))
 		streamContent.WriteString(sseEvent(streamEvent{
@@ -130,7 +130,8 @@ func TestAnthropicStreamHandling(t *testing.T) {
 		assert.Equal(t, "toolu_01", toolCallAtReady.ID, "Ready tool call ID mismatch")
 		assert.JSONEq(t, `{}`, string(toolCallAtReady.Arguments), "Ready tool call arguments should be '{}'")
 
-		inTokens, outTokens := stream.Usage()
+		cachedInTokens, inTokens, outTokens := stream.Usage()
+		assert.Equal(t, 10, cachedInTokens, "Cached input tokens mismatch")
 		assert.Equal(t, 10, inTokens, "Input tokens mismatch")
 		// Note: Output tokens accumulate: 1 (start) + 5 (delta) = 6
 		assert.Equal(t, 6, outTokens, "Output tokens mismatch")

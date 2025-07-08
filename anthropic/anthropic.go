@@ -197,7 +197,7 @@ type Stream struct {
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 	debug       bool
 
-	inputTokens, outputTokens int
+	cachedInputTokens, inputTokens, outputTokens int
 }
 
 func (s *Stream) Err() error {
@@ -223,8 +223,8 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
-func (s *Stream) Usage() (inputTokens, outputTokens int) {
-	return s.inputTokens, s.outputTokens
+func (s *Stream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
+	return s.cachedInputTokens, s.inputTokens, s.outputTokens
 }
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
@@ -280,6 +280,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				// Initialize the message with the role from the message_start event
 				s.message.Role = event.Message.Role
 				if event.Message.Usage != nil {
+					s.cachedInputTokens += event.Message.Usage.CacheReadInputTokens
 					s.inputTokens += event.Message.Usage.InputTokens
 					s.outputTokens += event.Message.Usage.OutputTokens
 				}
@@ -399,6 +400,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			case "message_delta":
 				// Update usage statistics
 				if event.Delta.Usage != nil {
+					s.cachedInputTokens += event.Delta.Usage.CacheReadInputTokens
 					s.inputTokens += event.Delta.Usage.InputTokens
 					s.outputTokens += event.Delta.Usage.OutputTokens
 				}

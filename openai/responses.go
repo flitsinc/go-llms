@@ -299,7 +299,7 @@ type ResponsesStream struct {
 	err         error
 	message     llms.Message
 	lastText    string
-	usage       *Usage
+	usage       *responsesUsage
 	reasoning   string
 	lastThought *content.Thought
 }
@@ -334,11 +334,11 @@ func (s *ResponsesStream) Thought() content.Thought {
 	return content.Thought{}
 }
 
-func (s *ResponsesStream) Usage() (inputTokens, outputTokens int) {
+func (s *ResponsesStream) Usage() (cachedInputTokens, inputTokens, outputTokens int) {
 	if s.usage == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
-	return s.usage.InputTokens, s.usage.OutputTokens
+	return s.usage.InputTokensDetails.CachedTokens, s.usage.InputTokens, s.usage.OutputTokens
 }
 
 func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {

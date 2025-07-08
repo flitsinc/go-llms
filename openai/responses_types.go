@@ -659,9 +659,9 @@ type ReasoningConfig struct {
 	GenerateSummary *string `json:"generate_summary,omitempty"` // deprecated
 }
 
-// Usage represents token usage information
+// responsesUsage represents token usage information
 // Note: This is different from ChatCompletions API usage type (different field names)
-type Usage struct {
+type responsesUsage struct {
 	InputTokens         int                 `json:"input_tokens"`
 	OutputTokens        int                 `json:"output_tokens"`
 	TotalTokens         int                 `json:"total_tokens"`
@@ -713,7 +713,7 @@ type ResponseStreamEvent struct {
 	Error *StreamError `json:"error,omitempty"`
 
 	// usage event
-	Usage *Usage `json:"usage,omitempty"`
+	Usage *responsesUsage `json:"usage,omitempty"`
 
 	// other fields for specific events
 	Annotation      json.RawMessage `json:"annotation,omitempty"`

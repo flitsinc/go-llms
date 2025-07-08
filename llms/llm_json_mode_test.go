@@ -48,10 +48,10 @@ func (s *mockJSONStream) Message() Message {
 		Content: content.FromRawJSON(json.RawMessage(`{"foo":"bar"}`)),
 	}
 }
-func (s *mockJSONStream) Text() string                           { return "{\"foo\":\"bar\"}" }
-func (s *mockJSONStream) Thought() content.Thought               { return content.Thought{} }
-func (s *mockJSONStream) ToolCall() ToolCall                     { return ToolCall{} }
-func (s *mockJSONStream) Usage() (inputTokens, outputTokens int) { return 1, 1 }
+func (s *mockJSONStream) Text() string             { return "{\"foo\":\"bar\"}" }
+func (s *mockJSONStream) Thought() content.Thought { return content.Thought{} }
+func (s *mockJSONStream) ToolCall() ToolCall       { return ToolCall{} }
+func (s *mockJSONStream) Usage() (int, int, int)   { return 1, 1, 1 }
 
 // Error provider and stream for error propagation test
 type errorProvider struct{}
@@ -72,7 +72,7 @@ func (s *mockJSONStreamWithError) Message() Message         { return Message{} }
 func (s *mockJSONStreamWithError) Text() string             { return "" }
 func (s *mockJSONStreamWithError) Thought() content.Thought { return content.Thought{} }
 func (s *mockJSONStreamWithError) ToolCall() ToolCall       { return ToolCall{} }
-func (s *mockJSONStreamWithError) Usage() (int, int)        { return 0, 0 }
+func (s *mockJSONStreamWithError) Usage() (int, int, int)   { return 0, 0, 0 }
 
 func TestLLM_JSONMode_PassesSchemaToProvider(t *testing.T) {
 	provider := &mockJSONProvider{}
