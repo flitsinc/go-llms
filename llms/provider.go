@@ -14,6 +14,12 @@ type Usage struct {
 	OutputTokens      int
 }
 
+func (u *Usage) Add(other Usage) {
+	u.CachedInputTokens += other.CachedInputTokens
+	u.InputTokens += other.InputTokens
+	u.OutputTokens += other.OutputTokens
+}
+
 type ProviderStream interface {
 	Err() error
 	Iter() func(yield func(StreamStatus) bool)

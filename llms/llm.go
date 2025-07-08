@@ -43,6 +43,9 @@ type LLM struct {
 	// Cannot be used simultaneously with tools.
 	JSONOutputSchema *tools.ValueSchema
 
+	// TotalUsage tracks the sum of the numbers returned by each turn in the LLM.
+	TotalUsage Usage
+
 	// TrackTTFT is a function that will be called with the time it took for the
 	// LLM to generate the first token of the turn.
 	TrackTTFT func(context.Context, time.Duration)
@@ -261,6 +264,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if l.TrackUsage != nil {
 		defer func() {
 			usage := stream.Usage()
+			l.TotalUsage.Add(usage)
 			l.TrackUsage(ctx, usage, success)
 		}()
 	}
