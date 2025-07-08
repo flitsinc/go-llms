@@ -306,9 +306,11 @@ Google doesn’t allow the `additionalProperties` field for JSON schemas (probab
 
 Because of this, we strip out the `additionalProperties` field before sending it to Google, so it shouldn’t be a problem for you, just keep it in mind.
 
-#### Anthropic doesn’t stream partial property values
+#### Anthropic doesn’t stream partial property values by default
 
 The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.
+
+To fix this, use [fine-grained tool streaming](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/fine-grained-tool-streaming) which is currently in beta, by calling `.WithBeta("fine-grained-tool-streaming-2025-05-14")` on the Anthropic provider instance.
 
 ## License
 
