@@ -26,7 +26,7 @@ func TestContentMarshalJSON(t *testing.T) {
 				"hello",
 				"https://example.com/image.jpg",
 			),
-			want: `[{"text":"hello","type":"text"},{"image_url":"https://example.com/image.jpg","type":"imageURL"}]`,
+			want: `[{"text":"hello","type":"text"},{"image_url":"https://example.com/image.jpg","type":"image_url"}]`,
 		},
 		{
 			name:    "json content",
@@ -65,7 +65,7 @@ func TestContentUnmarshalJSON(t *testing.T) {
 			name: "text and image",
 			json: `[
 				{"type":"text","text":"hello"},
-				{"type":"imageURL","image_url":"https://example.com/image.jpg"}
+				{"type":"image_url","image_url":"https://example.com/image.jpg"}
 			]`,
 			want: Content{
 				&Text{Text: "hello"},

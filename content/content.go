@@ -10,7 +10,7 @@ type Type string
 
 const (
 	TypeText      Type = "text"
-	TypeImageURL  Type = "imageURL"
+	TypeImageURL  Type = "image_url"
 	TypeJSON      Type = "json"
 	TypeThought   Type = "thought"
 	TypeCacheHint Type = "cache_hint"
