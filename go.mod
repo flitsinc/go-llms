@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/image v0.28.0
+	golang.org/x/image v0.29.0
 	golang.org/x/oauth2 v0.30.0
 	sigs.k8s.io/yaml v1.5.0
 )
