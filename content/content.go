@@ -236,6 +236,8 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 			item = &JSON{}
 		case TypeThought:
 			item = &Thought{}
+		case TypeCacheHint:
+			item = &CacheHint{}
 		default:
 			return fmt.Errorf("unknown content item type: %q", typeContainer.Type)
 		}
