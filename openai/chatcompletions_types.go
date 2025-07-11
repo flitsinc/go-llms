@@ -56,8 +56,10 @@ func convertContent(c content.Content) contentList {
 			cp.Text = &text
 		case *content.Thought:
 			// OpenAI does not expect thinking tokens as input; ignore.
+			continue
 		case *content.CacheHint:
 			// OpenAI has implicit caching; ignore.
+			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}

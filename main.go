@@ -49,7 +49,7 @@ func main() {
 			fmt.Println("Error: ANTHROPIC_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-20250514")
+		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-20250514").WithBeta("extended-cache-ttl-2025-04-11")
 	case "google":
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
@@ -66,7 +66,11 @@ func main() {
 
 	// System prompt is dynamic so it can always be up-to-date.
 	llm.SystemPrompt = func() content.Content {
-		return content.Textf("The time is %s. You're a helpful bot of few words. If at first you don't succeed, try again.", time.Now().Format(time.RFC1123))
+		return content.Content{
+			&content.Text{Text: "You're a helpful bot of few words. If at first you don't succeed, try again."},
+			&content.CacheHint{Duration: "long"},
+			&content.Text{Text: fmt.Sprintf(" The time is %s.", time.Now().Format(time.RFC1123))},
+		}
 	}
 
 	// Chat returns a channel of updates.
