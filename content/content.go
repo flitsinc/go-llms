@@ -3,7 +3,6 @@ package content
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 )
 
 type Type string
@@ -59,7 +58,8 @@ func (t *Thought) Type() Type {
 }
 
 type CacheHint struct {
-	TTL time.Duration `json:"ttl"`
+	// Duration: "short", "long"
+	Duration string `json:"duration,omitempty"`
 }
 
 func (c *CacheHint) Type() Type {

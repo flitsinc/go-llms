@@ -508,7 +508,14 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 		case *content.CacheHint:
 			// Add cache control to the previous content item.
 			if i := len(cl) - 1; i >= 0 {
-				cl[i].CacheControl = &cacheControl{Type: "ephemeral"}
+				cc := &cacheControl{Type: "ephemeral"}
+				switch v.Duration {
+				case "short":
+					cc.TTL = "5m"
+				case "long":
+					cc.TTL = "1h"
+				}
+				cl[i].CacheControl = cc
 			}
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
