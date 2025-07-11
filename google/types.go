@@ -110,6 +110,7 @@ func convertContent(c content.Content) (p parts) {
 			pp.ThoughtSignature = v.Signature
 		case *content.CacheHint:
 			// Google has implicit caching; ignore.
+			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}

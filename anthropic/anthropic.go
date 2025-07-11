@@ -517,6 +517,7 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 				}
 				cl[i].CacheControl = cc
 			}
+			continue // Skip appending empty content item
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}
