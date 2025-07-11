@@ -24,9 +24,6 @@ type contentList []contentItem
 // If the list contains exactly one text item, it marshals as a string.
 // Otherwise, it marshals as a normal JSON array.
 func (cl contentList) MarshalJSON() ([]byte, error) {
-	if len(cl) == 1 && cl[0].Type == "text" {
-		return json.Marshal(cl[0].Text)
-	}
 	// Marshal as regular array for all other cases
 	return json.Marshal([]contentItem(cl))
 }
