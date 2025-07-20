@@ -590,10 +590,6 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 
 		// Add the message if there's any non-thought content or if we have tool calls
 		if len(content) > 0 || len(msg.ToolCalls) > 0 {
-			// Ensure content is an empty array instead of nil when there's no content
-			if content == nil {
-				content = []InputContent{}
-			}
 			items = append(items, InputMessage{
 				Type:    "message",
 				Role:    "assistant",
@@ -661,6 +657,10 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 
 // convertContentToInputContent converts content.Content to InputContent array
 func convertContentToInputContent(c content.Content) []InputContent {
+	if len(c) == 0 {
+		return nil
+	}
+
 	var inputContent []InputContent
 
 	for _, item := range c {

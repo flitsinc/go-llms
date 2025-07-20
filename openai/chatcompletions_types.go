@@ -36,6 +36,9 @@ type contentPart struct {
 type contentList []contentPart
 
 func convertContent(c content.Content) contentList {
+	if len(c) == 0 {
+		return nil
+	}
 	cl := make(contentList, 0, len(c))
 	for _, item := range c {
 		var cp contentPart
@@ -65,6 +68,10 @@ func convertContent(c content.Content) contentList {
 		}
 		cl = append(cl, cp)
 	}
+	// Return nil if no content parts were added (e.g., only thoughts/cache hints)
+	if len(cl) == 0 {
+		return nil
+	}
 	return cl
 }
 
@@ -91,7 +98,7 @@ func (cl *contentList) UnmarshalJSON(data []byte) error {
 
 type message struct {
 	Role       string      `json:"role"`
-	Content    contentList `json:"content"`
+	Content    contentList `json:"content,omitempty"`
 	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }

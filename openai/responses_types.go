@@ -35,7 +35,7 @@ func (TextInput) responseInput() {}
 type InputMessage struct {
 	Type    string         `json:"type"` // "message"
 	Role    string         `json:"role"` // "user", "assistant", "system", "developer"
-	Content []InputContent `json:"content"`
+	Content []InputContent `json:"content,omitempty"`
 	Status  string         `json:"status,omitempty"` // "in_progress", "completed", "incomplete"
 	ID      string         `json:"id,omitempty"`
 }

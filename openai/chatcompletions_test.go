@@ -84,6 +84,25 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
+			name: "Assistant message - with tool call and empty content",
+			input: llms.Message{
+				Role: "assistant",
+				ToolCalls: []llms.ToolCall{
+					{ID: "call_456", Name: "web_search", Arguments: json.RawMessage(`{"query": "OpenAI"}`)},
+				},
+				Content: content.Content{}, // Empty content
+			},
+			expected: []message{
+				{
+					Role:    "assistant",
+					Content: nil, // Content should be nil so it's omitted from JSON
+					ToolCalls: []toolCall{
+						{ID: "call_456", Type: "function", Function: toolCallFunction{Name: "web_search", Arguments: `{"query": "OpenAI"}`}},
+					},
+				},
+			},
+		},
+		{
 			name: "Tool result - JSON only",
 			input: llms.Message{
 				Role:       "tool",
