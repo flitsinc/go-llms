@@ -36,9 +36,6 @@ type contentPart struct {
 type contentList []contentPart
 
 func convertContent(c content.Content) contentList {
-	if len(c) == 0 {
-		return nil
-	}
 	cl := make(contentList, 0, len(c))
 	for _, item := range c {
 		var cp contentPart
@@ -67,10 +64,6 @@ func convertContent(c content.Content) contentList {
 			panic(fmt.Sprintf("unhandled content item type %T", item))
 		}
 		cl = append(cl, cp)
-	}
-	// Return nil if no content parts were added (e.g., only thoughts/cache hints)
-	if len(cl) == 0 {
-		return nil
 	}
 	return cl
 }
