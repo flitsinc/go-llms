@@ -57,6 +57,13 @@ func main() {
 			return
 		}
 		llmProvider = google.New("gemini-2.5-flash").WithGeminiAPI(apiKey)
+	case "groq":
+		apiKey := os.Getenv("GROQ_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: GROQ_API_KEY environment variable is not set")
+			return
+		}
+		llmProvider = openai.New(apiKey, "moonshotai/kimi-k2-instruct").WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")
 	default:
 		printUsage()
 		return
@@ -104,6 +111,7 @@ func printUsage() {
 	fmt.Println("  openai-responses - Uses OpenAI's Responses API with o4-mini (requires OPENAI_API_KEY)")
 	fmt.Println("  anthropic        - Uses Anthropic's Claude Sonnet 4 (requires ANTHROPIC_API_KEY)")
 	fmt.Println("  google           - Uses Google's Gemini 2.5 Flash (requires GEMINI_API_KEY)")
+	fmt.Println("  groq             - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()

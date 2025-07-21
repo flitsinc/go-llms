@@ -91,7 +91,7 @@ func (cl *contentList) UnmarshalJSON(data []byte) error {
 
 type message struct {
 	Role       string      `json:"role"`
-	Content    contentList `json:"content"`
+	Content    contentList `json:"content,omitempty"`
 	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
