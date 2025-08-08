@@ -194,30 +194,12 @@ type customToolCall struct {
 	Output json.RawMessage `json:"output,omitempty"`
 }
 
-func (t toolCall) ToLLM() llms.ToolCall {
-	if t.Function != nil {
-		return llms.ToolCall{
-			ID:        t.ID,
-			Name:      t.Function.Name,
-			Arguments: json.RawMessage(t.Function.Arguments),
-		}
-	}
-	if t.Custom != nil && t.Custom.Input != nil {
-		return llms.ToolCall{
-			ID:        t.ID,
-			Name:      "custom",
-			Arguments: t.Custom.Input,
-		}
-	}
-	panic(fmt.Sprintf("toolCall.ToLLM(): malformed tool call with ID %s - both Function and Custom are nil or invalid", t.ID))
-}
-
 type toolCallDelta struct {
-	Index    int                `json:"index"`
-	ID       string             `json:"id,omitempty"`
-	Type     string             `json:"type,omitempty"`
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Type     string            `json:"type,omitempty"`
 	Function *toolCallFunction `json:"function,omitempty"`
-	Custom   *customToolCall    `json:"custom,omitempty"`
+	Custom   *customToolCall   `json:"custom,omitempty"`
 }
 
 func (t toolCallDelta) ToLLM() llms.ToolCall {
@@ -235,11 +217,7 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 			Arguments: t.Custom.Input,
 		}
 	}
-	return llms.ToolCall{
-		ID:        t.ID,
-		Name:      "",
-		Arguments: json.RawMessage("{}"),
-	}
+	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
 }
 
 type chatCompletionDelta struct {
