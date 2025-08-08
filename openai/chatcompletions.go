@@ -306,8 +306,15 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 					} else {
 						// This is appending arguments to an existing tool call
+						var deltaData []byte
 						if toolDelta.Function != nil && toolDelta.Function.Arguments != "" {
-							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
+							deltaData = []byte(toolDelta.Function.Arguments)
+						} else if toolDelta.Custom != nil && toolDelta.Custom.Input != nil {
+							deltaData = toolDelta.Custom.Input
+						}
+						
+						if len(deltaData) > 0 {
+							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, deltaData...)
 							if !yield(llms.StreamStatusToolCallDelta) {
 								return // Abort if yield fails
 							}
