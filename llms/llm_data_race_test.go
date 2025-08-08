@@ -93,8 +93,6 @@ func TestCancellationDuringToolExecution(t *testing.T) {
 	var updates []Update
 	for update := range chatChan {
 		updates = append(updates, update)
-		// Optional: Log updates to see the flow
-		// t.Logf("Received update: %T", update)
 	}
 
 	// 6. Assertion
@@ -122,8 +120,6 @@ func TestCancellationDuringToolExecution(t *testing.T) {
 	assert.True(t, foundText, "Should have received TextUpdate before cancellation")
 	assert.True(t, foundToolStart, "Should have received ToolStartUpdate before cancellation")
 	assert.False(t, foundToolDone, "Should NOT have received ToolDoneUpdate due to cancellation")
-
-	t.Logf("TestCancellationDuringToolExecution completed. Final LLM error: %v", llm.Err())
 }
 
 // TestSlowReceiverLosesToolDoneUpdate demonstrates that the `default` case in the
@@ -206,6 +202,4 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 	assert.True(t, foundFinalText, "Should have received the final TextUpdate after the tool sequence")
 	// The final text will be the default mock response after processing tool results
 	assert.Equal(t, "I've processed the results from the tool.", finalTextContent, "Final text content mismatch")
-
-	t.Logf("TestSlowReceiverLosesToolDoneUpdate completed successfully, demonstrating ToolDoneUpdate is no longer lost.")
 }
