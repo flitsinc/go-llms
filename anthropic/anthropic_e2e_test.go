@@ -80,9 +80,21 @@ func TestAnthropicE2E(t *testing.T) {
 			maxTokens: 100,
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				assert.NotNil(t, body["system"], "System prompt should be present")
-				sysPrompt, ok := body["system"].(string)
-				require.True(t, ok, "System prompt should marshal as string for single text item")
-				assert.Equal(t, "Be helpful.", sysPrompt)
+				if sysPrompt, ok := body["system"].([]any); ok && len(sysPrompt) == 1 {
+					if content, ok := sysPrompt[0].(map[string]any); ok {
+						if text, ok := content["text"].(string); ok {
+							assert.Equal(t, "Be helpful.", text)
+						} else {
+							t.Errorf("System prompt should have a single text content item")
+						}
+					} else {
+						t.Errorf("System prompt should have a single text content item")
+					}
+				} else if sysPrompt, ok := body["system"].(string); ok {
+					assert.Equal(t, "Be helpful.", sysPrompt)
+				} else {
+					t.Errorf("System prompt should marshal as string or list with single text content item")
+				}
 				assert.Equal(t, float64(100), body["max_tokens"])
 			},
 		},

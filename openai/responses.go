@@ -24,6 +24,7 @@ type ResponsesAPI struct {
 
 	maxOutputTokens    int
 	reasoningEffort    Effort
+	verbosity          Verbosity
 	temperature        float64
 	topP               float64
 	topLogprobs        int
@@ -123,6 +124,11 @@ func (m *ResponsesAPI) WithPreviousResponseID(id string) *ResponsesAPI {
 	return m
 }
 
+func (m *ResponsesAPI) WithVerbosity(verbosity Verbosity) *ResponsesAPI {
+	m.verbosity = verbosity
+	return m
+}
+
 func (m *ResponsesAPI) Company() string {
 	return m.company
 }
@@ -190,6 +196,10 @@ func (m *ResponsesAPI) Generate(
 		}
 	}
 
+	if m.verbosity != "" {
+		payload["verbosity"] = m.verbosity
+	}
+
 	if m.serviceTier != "" {
 		payload["service_tier"] = m.serviceTier
 	}
@@ -208,22 +218,55 @@ func (m *ResponsesAPI) Generate(
 
 	// Handle tools
 	if toolbox != nil {
-		// Convert toolbox to array of tools for Responses API
-		var tools []ResponseTool
+		// Build tools for Responses API
+		var toolsArr []any
 		for _, t := range toolbox.All() {
-			schema := t.Schema()
-			if schema != nil {
-				tools = append(tools, FunctionTool{
-					Type:        "function",
-					Name:        schema.Name,
-					Description: schema.Description,
-					Parameters:  &schema.Parameters,
-					Strict:      true,
+			switch g := t.Grammar().(type) {
+			case tools.JSONGrammar:
+				if schema := g.Schema(); schema != nil {
+					toolsArr = append(toolsArr, FunctionTool{
+						Type:        "function",
+						Name:        schema.Name,
+						Description: schema.Description,
+						Parameters:  &schema.Parameters,
+						Strict:      true,
+					})
+				}
+			case tools.TextGrammar:
+				toolsArr = append(toolsArr, map[string]any{
+					"type":        "custom",
+					"name":        t.FuncName(),
+					"description": t.Description(),
+					"format":      map[string]any{"type": "text"},
 				})
+			case tools.LarkGrammar:
+				toolsArr = append(toolsArr, map[string]any{
+					"type":        "custom",
+					"name":        t.FuncName(),
+					"description": t.Description(),
+					"format": map[string]any{
+						"type":       "grammar",
+						"definition": g.Definition,
+						"syntax":     "lark",
+					},
+				})
+			case tools.RegexGrammar:
+				toolsArr = append(toolsArr, map[string]any{
+					"type":        "custom",
+					"name":        t.FuncName(),
+					"description": t.Description(),
+					"format": map[string]any{
+						"type":       "grammar",
+						"definition": g.Definition,
+						"syntax":     "regex",
+					},
+				})
+			default:
+				panic(fmt.Sprintf("unsupported grammar type: %T", g))
 			}
 		}
-		if len(tools) > 0 {
-			payload["tools"] = tools
+		if len(toolsArr) > 0 {
+			payload["tools"] = toolsArr
 			payload["tool_choice"] = "auto"
 		}
 	}
@@ -426,6 +469,36 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 								return
 							}
 						}
+					case "custom_tool_call":
+						// Start of a custom tool call. Capture name and call_id so we can route to the correct tool.
+						if activeToolCall != nil {
+							if !yield(llms.StreamStatusToolCallReady) {
+								return
+							}
+						}
+						var ctc struct {
+							Type   string `json:"type"`
+							ID     string `json:"id"`
+							Name   string `json:"name"`
+							CallID string `json:"call_id"`
+							Input  string `json:"input"`
+						}
+						if err := json.Unmarshal(event.Item, &ctc); err != nil {
+							// Fallback to minimal fields if shape differs
+							ctc.ID = item.ID
+							ctc.Name = "custom"
+						}
+						llmToolCall := llms.ToolCall{
+							ID:        ctc.CallID,
+							Name:      ctc.Name,
+							Arguments: json.RawMessage(ctc.Input),
+							ExtraID:   ctc.ID,
+						}
+						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
+						activeToolCall = &s.message.ToolCalls[len(s.message.ToolCalls)-1]
+						if !yield(llms.StreamStatusToolCallBegin) {
+							return
+						}
 					case "reasoning":
 						// Create a new thought with ID and mark it as summary
 						// The Responses API only sends reasoning summaries, not full traces
@@ -461,6 +534,30 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 
 			case "response.function_call_arguments.done":
+				if activeToolCall != nil {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
+					}
+					activeToolCall = nil
+				}
+
+				// Support custom tool calling input streaming using the events from the docs
+				// https://platform.openai.com/docs/guides/function-calling#custom-tools
+			case "response.custom_tool_call_input.delta":
+				if activeToolCall != nil {
+					var delta struct {
+						Delta string `json:"delta"`
+					}
+					if err := json.Unmarshal([]byte(line), &delta); err == nil {
+						// The delta is a plain string chunk; append
+						activeToolCall.Arguments = append(activeToolCall.Arguments, []byte(delta.Delta)...)
+						if !yield(llms.StreamStatusToolCallDelta) {
+							return
+						}
+					}
+				}
+
+			case "response.custom_tool_call_input.done":
 				if activeToolCall != nil {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
@@ -555,45 +652,46 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 	switch msg.Role {
 	case "user", "system", "developer":
 		content := convertContentToInputContent(msg.Content)
-		if len(content) > 0 {
-			items = append(items, InputMessage{
-				Type:    "message",
-				Role:    msg.Role,
-				Content: content,
-			})
-		}
+		items = append(items, InputMessage{
+			Type:    "message",
+			Role:    msg.Role,
+			Content: content, // can be empty slice
+		})
 
 	case "assistant":
 		// An assistant message from history can have both content and tool calls.
 		// First, check if there are any thoughts with IDs that need to be included as reasoning items
 		var hasReasoningWithID bool
 		var reasoningID string
-		var reasoningSummary []ReasoningSummary
+		reasoningSummary := []ReasoningSummary{}
 
 		// Check for thoughts with IDs that need to be included as separate reasoning items
 		for _, item := range msg.Content {
 			if thought, ok := item.(*content.Thought); ok && thought.ID != "" {
 				hasReasoningWithID = true
 				reasoningID = thought.ID
-				// Create a reasoning summary from the thought
+				// Include a summary part only if we have text; an empty summary is still valid
 				if thought.Text != "" {
 					reasoningSummary = append(reasoningSummary, ReasoningSummary{
 						Type: "summary_text",
 						Text: thought.Text,
 					})
 				}
+				// Only include the first reasoning item for now.
+				// The Responses API requires the prior turn's reasoning item to precede
+				// the replayed tool call, and that association typically refers to the
+				// first reasoning item (output_index 0). We don't yet track mappings
+				// between multiple reasoning IDs and specific tool calls; if we add that,
+				// we should replay all reasoning items in order or map them per call.
+				break
 			}
 		}
 
 		// Convert content to input content (thoughts will be skipped)
 		content := convertContentToInputContent(msg.Content)
 
-		// Add the message if there's any non-thought content or if we have tool calls
-		if len(content) > 0 || len(msg.ToolCalls) > 0 {
-			// Ensure content is an empty array instead of nil when there's no content
-			if content == nil {
-				content = []InputContent{}
-			}
+		// Only include an assistant message if there's non-empty content
+		if len(content) > 0 {
 			items = append(items, InputMessage{
 				Type:    "message",
 				Role:    "assistant",
@@ -601,12 +699,9 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			})
 		}
 
-		// If we found a thought with an ID, add it as a reasoning item before any tool calls
+		// If we found a thought with an ID, add it as a reasoning item before any tool calls.
+		// The API requires the reasoning item to be present even if the summary is empty.
 		if hasReasoningWithID {
-			// Ensure reasoningSummary is at least an empty array, not nil
-			if reasoningSummary == nil {
-				reasoningSummary = []ReasoningSummary{}
-			}
 			items = append(items, Reasoning{
 				Type:    "reasoning",
 				ID:      reasoningID,
@@ -616,6 +711,18 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 
 		// Then add any tool calls
 		for _, tc := range msg.ToolCalls {
+			// If ExtraID looks like a custom tool call id (ctc_), send as custom_tool_call
+			if strings.HasPrefix(tc.ExtraID, "ctc_") {
+				items = append(items, CustomToolCall{
+					Type:   "custom_tool_call",
+					ID:     tc.ExtraID,
+					Name:   tc.Name,
+					Input:  string(tc.Arguments),
+					CallID: tc.ID,
+				})
+				continue
+			}
+			// Otherwise, treat as a JSON function_call
 			items = append(items, FunctionCall{
 				Type:      "function_call",
 				ID:        tc.ExtraID, // The item id is stored as an extra ID on the tool call.

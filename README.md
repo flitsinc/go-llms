@@ -263,23 +263,6 @@ type ProviderStream interface {
 }
 ```
 
-## Debug Mode
-
-Enable debug mode to write detailed interaction logs to `debug.yaml`:
-
-```go
-llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1")).
-    WithDebug()
-```
-
-The debug file includes:
-
-- Received messages
-- Tool results
-- Sent messages
-- System prompts
-- Available tools
-
 ## Usage Tracking
 
 Track the usage of your LLM interactions:

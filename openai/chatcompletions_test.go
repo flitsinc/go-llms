@@ -78,7 +78,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 						{Type: "text", Text: ptr("Okay, getting weather.")},
 					},
 					ToolCalls: []toolCall{
-						{ID: "call_123", Type: "function", Function: toolCallFunction{Name: "get_weather", Arguments: `{"location": "Paris"}`}},
+						{ID: "call_123", Type: "function", Function: &toolCallFunction{Name: "get_weather", Arguments: `{"location": "Paris"}`}},
 					},
 				},
 			},
@@ -97,7 +97,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					Role:    "assistant",
 					Content: nil, // Content should be nil so it's omitted from JSON
 					ToolCalls: []toolCall{
-						{ID: "call_456", Type: "function", Function: toolCallFunction{Name: "web_search", Arguments: `{"query": "OpenAI"}`}},
+						{ID: "call_456", Type: "function", Function: &toolCallFunction{Name: "web_search", Arguments: `{"query": "OpenAI"}`}},
 					},
 				},
 			},
@@ -214,9 +214,14 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					// Compare individual toolCall fields
 					assert.Equal(t, tc.expected[i].ToolCalls[j].ID, actual[i].ToolCalls[j].ID, "ToolCall ID mismatch at index %d in message %d", j, i)
 					assert.Equal(t, tc.expected[i].ToolCalls[j].Type, actual[i].ToolCalls[j].Type, "ToolCall Type mismatch at index %d in message %d", j, i)
-					assert.Equal(t, tc.expected[i].ToolCalls[j].Function.Name, actual[i].ToolCalls[j].Function.Name, "ToolCall Function Name mismatch at index %d in message %d", j, i)
-					// Use JSONEq for arguments as order might not matter
-					assert.JSONEq(t, tc.expected[i].ToolCalls[j].Function.Arguments, actual[i].ToolCalls[j].Function.Arguments, "ToolCall Function Arguments mismatch at index %d in message %d", j, i)
+					if tc.expected[i].ToolCalls[j].Function != nil && actual[i].ToolCalls[j].Function != nil {
+						assert.Equal(t, tc.expected[i].ToolCalls[j].Function.Name, actual[i].ToolCalls[j].Function.Name, "ToolCall Function Name mismatch at index %d in message %d", j, i)
+						// Use JSONEq for arguments as order might not matter
+						assert.JSONEq(t, tc.expected[i].ToolCalls[j].Function.Arguments, actual[i].ToolCalls[j].Function.Arguments, "ToolCall Function Arguments mismatch at index %d in message %d", j, i)
+					} else if tc.expected[i].ToolCalls[j].Function != nil || actual[i].ToolCalls[j].Function != nil {
+						assert.Failf(t, "ToolCall Function nil mismatch", "Expected Function nil: %v, Actual Function nil: %v at index %d in message %d",
+							tc.expected[i].ToolCalls[j].Function == nil, actual[i].ToolCalls[j].Function == nil, j, i)
+					}
 				}
 			}
 		})

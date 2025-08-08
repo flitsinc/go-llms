@@ -166,7 +166,7 @@ func messagesFromLLM(m llms.Message) []message {
 			msg.ToolCalls[i] = toolCall{
 				ID:   tc.ID,
 				Type: "function",
-				Function: toolCallFunction{
+				Function: &toolCallFunction{
 					Name:      tc.Name,
 					Arguments: args,
 				},
@@ -183,32 +183,42 @@ type toolCallFunction struct {
 }
 
 type toolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function toolCallFunction `json:"function"`
+	ID       string            `json:"id"`
+	Type     string            `json:"type"`
+	Function *toolCallFunction `json:"function,omitempty"`
+	Custom   *customToolCall   `json:"custom,omitempty"`
 }
 
-func (t toolCall) ToLLM() llms.ToolCall {
-	return llms.ToolCall{
-		ID:        t.ID,
-		Name:      t.Function.Name,
-		Arguments: json.RawMessage(t.Function.Arguments),
-	}
+type customToolCall struct {
+	Name   string  `json:"name,omitempty"`
+	Input  *string `json:"input,omitempty"`
+	Output *string `json:"output,omitempty"`
 }
 
 type toolCallDelta struct {
-	Index    int              `json:"index"`
-	ID       string           `json:"id,omitempty"`
-	Type     string           `json:"type,omitempty"`
-	Function toolCallFunction `json:"function,omitempty"`
+	Index    int               `json:"index"`
+	ID       string            `json:"id,omitempty"`
+	Type     string            `json:"type,omitempty"`
+	Function *toolCallFunction `json:"function,omitempty"`
+	Custom   *customToolCall   `json:"custom,omitempty"`
 }
 
 func (t toolCallDelta) ToLLM() llms.ToolCall {
-	return llms.ToolCall{
-		ID:        t.ID,
-		Name:      t.Function.Name,
-		Arguments: json.RawMessage(t.Function.Arguments),
+	if t.Function != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      t.Function.Name,
+			Arguments: json.RawMessage(t.Function.Arguments),
+		}
 	}
+	if t.Custom != nil && t.Custom.Input != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      t.Custom.Name,
+			Arguments: json.RawMessage([]byte(*t.Custom.Input)),
+		}
+	}
+	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
 }
 
 type chatCompletionDelta struct {
@@ -250,6 +260,7 @@ type chatCompletionChunk struct {
 	ServiceTier       *string                `json:"service_tier,omitempty"`
 	Choices           []chatCompletionChoice `json:"choices"`
 	Usage             *usage                 `json:"usage,omitempty"`
+	Obfuscation       string                 `json:"obfuscation,omitempty"`
 }
 
 type usage struct {

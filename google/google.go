@@ -217,9 +217,15 @@ func (m *Model) Generate(
 		allTools := toolbox.All()
 		declarations := make([]tools.FunctionSchema, len(allTools))
 		for i, tool := range allTools {
-			schema := *tool.Schema()
-			clearAdditionalProperties(&schema.Parameters)
-			declarations[i] = schema
+			// Google supports only function-style tools; JSON grammar is fine.
+			switch g := tool.Grammar().(type) {
+			case tools.JSONGrammar:
+				schema := *g.Schema()
+				clearAdditionalProperties(&schema.Parameters)
+				declarations[i] = schema
+			default:
+				panic(fmt.Sprintf("unsupported grammar type: %T", g))
+			}
 		}
 		payload["tools"] = map[string]any{
 			"functionDeclarations": declarations,

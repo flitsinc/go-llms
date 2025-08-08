@@ -182,6 +182,19 @@ type FunctionCall struct {
 func (FunctionCall) responseItem()  {}
 func (FunctionCall) responseInput() {}
 
+// CustomToolCall implements ResponseItem for custom tools (grammar/text tools)
+type CustomToolCall struct {
+	Type   string `json:"type"` // "custom_tool_call"
+	ID     string `json:"id,omitempty"`
+	Name   string `json:"name"`
+	Input  string `json:"input"`
+	CallID string `json:"call_id"`
+	Status string `json:"status,omitempty"` // "in_progress", "completed", "incomplete"
+}
+
+func (CustomToolCall) responseItem()  {}
+func (CustomToolCall) responseInput() {}
+
 // FunctionCallOutput implements ResponseInput and ResponseItem
 type FunctionCallOutput struct {
 	Type   string `json:"type"` // "function_call_output"
@@ -427,10 +440,10 @@ func (MCPListTools) responseItem() {}
 
 // MCPTool represents an MCP tool
 type MCPTool struct {
-	Name        string                 `json:"name"`
-	InputSchema map[string]interface{} `json:"input_schema"`
-	Description *string                `json:"description,omitempty"`
-	Annotations map[string]interface{} `json:"annotations,omitempty"`
+	Name        string         `json:"name"`
+	InputSchema map[string]any `json:"input_schema"`
+	Description *string        `json:"description,omitempty"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 // MCPApprovalRequest implements ResponseItem
@@ -507,9 +520,9 @@ type FileSearchFilter interface {
 
 // ComparisonFilter implements FileSearchFilter
 type ComparisonFilter struct {
-	Type  string      `json:"type"` // "eq", "ne", "gt", "gte", "lt", "lte"
-	Key   string      `json:"key"`
-	Value interface{} `json:"value"` // string, number, or boolean
+	Type  string `json:"type"` // "eq", "ne", "gt", "gte", "lt", "lte"
+	Key   string `json:"key"`
+	Value any    `json:"value"` // string, number, or boolean
 }
 
 func (ComparisonFilter) fileSearchFilter() {}
@@ -562,16 +575,16 @@ type MCPToolConfig struct {
 	ServerLabel     string            `json:"server_label"`
 	ServerURL       string            `json:"server_url"`
 	Headers         map[string]string `json:"headers,omitempty"`
-	AllowedTools    interface{}       `json:"allowed_tools,omitempty"`    // array of strings or filter object
-	RequireApproval interface{}       `json:"require_approval,omitempty"` // string ("always", "never") or filter object
+	AllowedTools    any               `json:"allowed_tools,omitempty"`    // array of strings or filter object
+	RequireApproval any               `json:"require_approval,omitempty"` // string ("always", "never") or filter object
 }
 
 func (MCPToolConfig) responseTool() {}
 
 // CodeInterpreterTool implements ResponseTool
 type CodeInterpreterTool struct {
-	Type      string      `json:"type"`      // "code_interpreter"
-	Container interface{} `json:"container"` // string (container ID) or CodeInterpreterContainerAuto
+	Type      string `json:"type"`      // "code_interpreter"
+	Container any    `json:"container"` // string (container ID) or CodeInterpreterContainerAuto
 }
 
 func (CodeInterpreterTool) responseTool() {}
@@ -630,7 +643,7 @@ type JSONSchemaFormat struct {
 // Tool choice types
 
 // ToolChoice can be a string or an object
-type ToolChoice interface{}
+type ToolChoice any
 
 // HostedToolChoice represents a hosted tool choice
 type HostedToolChoice struct {

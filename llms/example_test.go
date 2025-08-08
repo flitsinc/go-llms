@@ -176,45 +176,6 @@ func ExampleLLM_Chat_withTools() {
 	*/
 }
 
-// This example demonstrates enabling debug mode with Google Gemini.
-func ExampleLLM_WithDebug() {
-	// Note: Requires GOOGLE_API_KEY environment variable to be set.
-	apiKey := os.Getenv("GOOGLE_API_KEY")
-	if apiKey == "" {
-		fmt.Println("GOOGLE_API_KEY environment variable not set.")
-		// Skip example if key is not set.
-		return
-	}
-
-	// Create LLM with Google Gemini and enable debug mode
-	llm := llms.New(
-		google.New("gemini-2.5-flash-preview-04-17").WithGeminiAPI(apiKey),
-	).WithDebug() // Enable debug logging to debug.yaml
-
-	// Subsequent calls to llm.Chat() will write detailed logs.
-	fmt.Println("Debug mode enabled. Interactions will be logged to debug.yaml.")
-
-	// Perform a simple chat to generate some debug output
-	for update := range llm.Chat("Hello!") {
-		switch update := update.(type) {
-		case llms.TextUpdate:
-			fmt.Print(update.Text)
-		}
-	}
-	fmt.Println()
-
-	if err := llm.Err(); err != nil {
-		log.Printf("Chat failed: %v", err)
-	}
-
-	/*
-		Example Interaction:
-
-		Debug mode enabled. Interactions will be logged to debug.yaml.
-		Hello there! How can I help you today?
-	*/
-}
-
 // This example demonstrates setting a maximum number of LLM turns with Anthropic.
 func ExampleLLM_WithMaxTurns() {
 	// Note: Requires ANTHROPIC_API_KEY environment variable to be set.

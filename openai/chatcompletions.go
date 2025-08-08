@@ -24,6 +24,7 @@ type ChatCompletionsAPI struct {
 
 	maxCompletionTokens int
 	reasoningEffort     Effort
+	verbosity           Verbosity
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -55,6 +56,11 @@ func (m *ChatCompletionsAPI) WithMaxCompletionTokens(maxCompletionTokens int) *C
 
 func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 	m.reasoningEffort = effort
+	return m
+}
+
+func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
+	m.verbosity = verbosity
 	return m
 }
 
@@ -99,6 +105,10 @@ func (m *ChatCompletionsAPI) Generate(
 
 	if m.reasoningEffort != "" {
 		payload["reasoning_effort"] = m.reasoningEffort
+	}
+
+	if m.verbosity != "" {
+		payload["verbosity"] = m.verbosity
 	}
 
 	if toolbox != nil {
@@ -306,8 +316,16 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 					} else {
 						// This is appending arguments to an existing tool call
-						if toolDelta.Function.Arguments != "" {
-							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
+						var deltaData []byte
+						if toolDelta.Function != nil && toolDelta.Function.Arguments != "" {
+							deltaData = []byte(toolDelta.Function.Arguments)
+						} else if toolDelta.Custom != nil && toolDelta.Custom.Input != nil {
+							// Custom tool input arrives as a JSON string token; treat it as plain text
+							deltaData = []byte(*toolDelta.Custom.Input)
+						}
+
+						if len(deltaData) > 0 {
+							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, deltaData...)
 							if !yield(llms.StreamStatusToolCallDelta) {
 								return // Abort if yield fails
 							}
@@ -331,17 +349,44 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 func Tools(toolbox *tools.Toolbox) []Tool {
 	apiTools := []Tool{}
 	for _, t := range toolbox.All() {
-		// Get the schema which is *tools.FunctionSchema
-		schema := t.Schema()
-		if schema == nil {
-			// Handle cases where a tool might not have a schema (though unlikely with current structure)
-			continue
+		switch g := t.Grammar().(type) {
+		case tools.JSONGrammar:
+			if schema := g.Schema(); schema != nil {
+				apiTools = append(apiTools, Tool{Type: "function", Function: schema})
+			}
+		case tools.TextGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format:      map[string]any{"type": "text"},
+			}})
+		case tools.LarkGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format: map[string]any{
+					"type": "grammar",
+					"grammar": map[string]any{
+						"definition": g.Definition,
+						"syntax":     "lark",
+					},
+				},
+			}})
+		case tools.RegexGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format: map[string]any{
+					"type": "grammar",
+					"grammar": map[string]any{
+						"definition": g.Definition,
+						"syntax":     "regex",
+					},
+				},
+			}})
+		default:
+			panic(fmt.Sprintf("unsupported grammar type: %T", g))
 		}
-		apiTools = append(apiTools, Tool{
-			Type: "function",
-			// Dereference the pointer to get tools.FunctionSchema
-			Function: *schema,
-		})
 	}
 	return apiTools
 }

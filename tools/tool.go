@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -16,8 +17,8 @@ type Tool interface {
 	FuncName() string
 	// Run runs the tool with the provided parameters.
 	Run(r Runner, params json.RawMessage) Result
-	// Schema returns the JSON schema for the tool.
-	Schema() *FunctionSchema
+	// Grammar returns the grammar configuration for this tool.
+	Grammar() Grammar
 }
 
 var jsonRawMessageType = reflect.TypeOf(json.RawMessage{})
@@ -29,15 +30,19 @@ func Func[Params any](label, description, funcName string, fn func(r Runner, par
 	if schemaType.Kind() != reflect.Struct && schemaType != jsonRawMessageType {
 		panic("Params must be a struct or json.RawMessage")
 	}
-	var t *tool
-	t = &tool{
+	// Create JSON grammar up front so we can avoid runtime type assertions.
+	jg := NewJSONGrammar(funcName, description, schemaType)
+	t := &tool{
 		label:       label,
 		description: description,
-		schemaType:  schemaType,
+		grammar:     jg,
 		funcName:    funcName,
 		fn: func(r Runner, params json.RawMessage) Result {
-			if err := t.validateParams(params); err != nil {
-				return ErrorWithLabel("LLM misbehaved", fmt.Errorf("validation error for %s: %w", funcName, err))
+			// Validate against the known JSON grammar when applicable.
+			if !jg.SkipValidation() {
+				if err := validateJSON(jg.Schema(), params); err != nil {
+					return ErrorWithLabel("LLM misbehaved", fmt.Errorf("validation error for %s: %w", funcName, err))
+				}
 			}
 			var p Params
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -60,12 +65,9 @@ func External(label string, schema *FunctionSchema, fn func(r Runner, params jso
 		label:       label,
 		description: schema.Description, // Use description from schema
 		funcName:    schema.Name,        // Use name from schema
-		schemaType:  jsonRawMessageType, // Mark as raw JSON type
-		schema:      schema,             // Assign schema directly
 		fn:          fn,                 // Handler directly accepts raw JSON
+		grammar:     NewJSONGrammarWithSchema(schema, true /*skipValidation*/),
 	}
-	// Mark schemaOnce as completed so Schema() doesn't try to generate via reflection.
-	t.schemaOnce.Do(func() {})
 	return t
 }
 
@@ -74,10 +76,8 @@ type tool struct {
 
 	fn func(r Runner, params json.RawMessage) Result
 
-	// Note: Lazily initialized.
-	schema     *FunctionSchema
-	schemaOnce sync.Once
-	schemaType reflect.Type
+	// If non-nil, this is a grammar-based tool (custom tool for providers that support it).
+	grammar Grammar
 }
 
 func (t *tool) Label() string {
@@ -92,23 +92,120 @@ func (t *tool) FuncName() string {
 	return t.funcName
 }
 
-func (t *tool) Run(r Runner, params json.RawMessage) Result {
-	return t.fn(r, params)
+func (t *tool) Run(r Runner, params json.RawMessage) Result { return t.fn(r, params) }
+
+func (t *tool) Grammar() Grammar { return t.grammar }
+
+// Grammar specifies input format for grammar-based tools.
+// Providers that support custom tools can expose these to the model.
+type Grammar interface{ isGrammar() }
+
+// TextGrammar accepts arbitrary free-form text.
+type TextGrammar struct{}
+
+func (TextGrammar) isGrammar() {}
+
+// LarkGrammar enforces a Lark grammar definition.
+type LarkGrammar struct{ Definition string }
+
+func (LarkGrammar) isGrammar() {}
+
+// RegexGrammar enforces a regex grammar definition.
+type RegexGrammar struct{ Definition string }
+
+func (RegexGrammar) isGrammar() {}
+
+// JSONGrammar implements Grammar for JSON-schema-based tools so that JSON
+// tools follow the same grammar pathway as other grammars while preserving
+// the existing public API behavior.
+type JSONGrammar interface {
+	Grammar
+	Schema() *FunctionSchema
+	// SkipValidation returns true when the tool should bypass JSON validation
+	// (e.g., External tools that accept arbitrary json.RawMessage parameters).
+	SkipValidation() bool
 }
 
-func (t *tool) Schema() *FunctionSchema {
-	// Note: For external tools, the `schemaOnce` should be triggered already elsewhere.
-	t.schemaOnce.Do(func() {
-		schema := generateSchema(t.funcName, t.description, t.schemaType)
-		t.schema = &schema
-	})
-	return t.schema
+type jsonGrammarImpl struct {
+	name        string
+	description string
+
+	// If provided, use this schema directly (External tools).
+	preset *FunctionSchema
+
+	// For reflection-based schema generation.
+	schemaOnce sync.Once
+	schema     *FunctionSchema
+	schemaType reflect.Type
+
+	// Whether to skip JSON validation for params.
+	skipValidation bool
 }
 
-func (t *tool) validateParams(params json.RawMessage) error {
-	if t.schemaType == jsonRawMessageType {
-		// All data is valid json.RawMessage data.
-		return nil
+func (*jsonGrammarImpl) isGrammar() {}
+
+func (g *jsonGrammarImpl) Schema() *FunctionSchema {
+	if g.preset != nil {
+		return g.preset
 	}
-	return validateJSON(t.Schema(), params)
+	g.schemaOnce.Do(func() {
+		schema := generateSchema(g.name, g.description, g.schemaType)
+		g.schema = &schema
+	})
+	return g.schema
+}
+
+func (g *jsonGrammarImpl) SkipValidation() bool { return g.skipValidation }
+
+// NewJSONGrammar constructs a JSON grammar that will lazily generate a schema
+// using reflection over the provided params type.
+func NewJSONGrammar(name, description string, schemaType reflect.Type) JSONGrammar {
+	return &jsonGrammarImpl{
+		name:           name,
+		description:    description,
+		schemaType:     schemaType,
+		skipValidation: schemaType == jsonRawMessageType,
+	}
+}
+
+// NewJSONGrammarWithSchema constructs a JSON grammar around an explicit schema.
+func NewJSONGrammarWithSchema(schema *FunctionSchema, skipValidation bool) JSONGrammar {
+	return &jsonGrammarImpl{
+		name:           schema.Name,
+		description:    schema.Description,
+		preset:         schema,
+		skipValidation: skipValidation,
+	}
+}
+
+// Text returns a Grammar that accepts unconstrained free-form text.
+func Text() Grammar { return TextGrammar{} }
+
+// Lark returns a Grammar that enforces a Lark grammar.
+func Lark(definition string) Grammar { return LarkGrammar{Definition: strings.TrimSpace(definition)} }
+
+// Regex returns a Grammar that enforces a regex grammar.
+func Regex(definition string) Grammar { return RegexGrammar{Definition: strings.TrimSpace(definition)} }
+
+// FuncGrammar registers a grammar-based tool that receives a single string input.
+// The input is derived from the provider's streaming arguments. If the raw
+// parameters are a JSON string, it's unmarshaled; otherwise, the raw bytes are
+// interpreted as a plain string.
+func FuncGrammar(grammar Grammar, label, description, funcName string, fn func(r Runner, input string) Result) Tool {
+	if grammar == nil {
+		panic("FuncGrammar requires a non-nil grammar (use tools.Text(), tools.Lark(), or tools.Regex())")
+	}
+	t := &tool{
+		label:       label,
+		description: description,
+		funcName:    funcName,
+		grammar:     grammar,
+	}
+	t.fn = func(r Runner, params json.RawMessage) Result {
+		// Providers for grammar tools must supply plain text (not JSON-wrapped) input.
+		// We pass it through as-is to the tool implementation.
+		input := string(params)
+		return fn(r, input)
+	}
+	return t
 }
