@@ -202,6 +202,13 @@ func (t toolCall) ToLLM() llms.ToolCall {
 			Arguments: json.RawMessage(t.Function.Arguments),
 		}
 	}
+	if t.Custom != nil && t.Custom.Input != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      "custom",
+			Arguments: t.Custom.Input,
+		}
+	}
 	return llms.ToolCall{
 		ID:        t.ID,
 		Name:      "custom",
@@ -210,17 +217,32 @@ func (t toolCall) ToLLM() llms.ToolCall {
 }
 
 type toolCallDelta struct {
-	Index    int              `json:"index"`
-	ID       string           `json:"id,omitempty"`
-	Type     string           `json:"type,omitempty"`
-	Function toolCallFunction `json:"function,omitempty"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *toolCallFunction `json:"function,omitempty"`
+	Custom   *customToolCall    `json:"custom,omitempty"`
 }
 
 func (t toolCallDelta) ToLLM() llms.ToolCall {
+	if t.Function != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      t.Function.Name,
+			Arguments: json.RawMessage(t.Function.Arguments),
+		}
+	}
+	if t.Custom != nil && t.Custom.Input != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      "custom",
+			Arguments: t.Custom.Input,
+		}
+	}
 	return llms.ToolCall{
 		ID:        t.ID,
-		Name:      t.Function.Name,
-		Arguments: json.RawMessage(t.Function.Arguments),
+		Name:      "custom",
+		Arguments: json.RawMessage("{}"),
 	}
 }
 
