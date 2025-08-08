@@ -24,6 +24,7 @@ type ChatCompletionsAPI struct {
 
 	maxCompletionTokens int
 	reasoningEffort     Effort
+	verbosity           string
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -55,6 +56,11 @@ func (m *ChatCompletionsAPI) WithMaxCompletionTokens(maxCompletionTokens int) *C
 
 func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 	m.reasoningEffort = effort
+	return m
+}
+
+func (m *ChatCompletionsAPI) WithVerbosity(verbosity string) *ChatCompletionsAPI {
+	m.verbosity = verbosity
 	return m
 }
 
@@ -99,6 +105,10 @@ func (m *ChatCompletionsAPI) Generate(
 
 	if m.reasoningEffort != "" {
 		payload["reasoning_effort"] = m.reasoningEffort
+	}
+
+	if m.verbosity != "" {
+		payload["verbosity"] = m.verbosity
 	}
 
 	if toolbox != nil {
