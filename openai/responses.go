@@ -34,6 +34,7 @@ type ResponsesAPI struct {
 	user               string
 	metadata           map[string]string
 	previousResponseID string
+	verbosity          string
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
@@ -123,6 +124,11 @@ func (m *ResponsesAPI) WithPreviousResponseID(id string) *ResponsesAPI {
 	return m
 }
 
+func (m *ResponsesAPI) WithVerbosity(verbosity string) *ResponsesAPI {
+	m.verbosity = verbosity
+	return m
+}
+
 func (m *ResponsesAPI) Company() string {
 	return m.company
 }
@@ -188,6 +194,10 @@ func (m *ResponsesAPI) Generate(
 		payload["reasoning"] = map[string]any{
 			"effort": m.reasoningEffort,
 		}
+	}
+
+	if m.verbosity != "" {
+		payload["verbosity"] = m.verbosity
 	}
 
 	if m.serviceTier != "" {

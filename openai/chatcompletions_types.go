@@ -166,7 +166,7 @@ func messagesFromLLM(m llms.Message) []message {
 			msg.ToolCalls[i] = toolCall{
 				ID:   tc.ID,
 				Type: "function",
-				Function: toolCallFunction{
+				Function: &toolCallFunction{
 					Name:      tc.Name,
 					Arguments: args,
 				},
@@ -183,16 +183,29 @@ type toolCallFunction struct {
 }
 
 type toolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function toolCallFunction `json:"function"`
+	ID       string            `json:"id"`
+	Type     string            `json:"type"`
+	Function *toolCallFunction `json:"function,omitempty"`
+	Custom   *customToolCall   `json:"custom,omitempty"`
+}
+
+type customToolCall struct {
+	Input  json.RawMessage `json:"input,omitempty"`
+	Output json.RawMessage `json:"output,omitempty"`
 }
 
 func (t toolCall) ToLLM() llms.ToolCall {
+	if t.Function != nil {
+		return llms.ToolCall{
+			ID:        t.ID,
+			Name:      t.Function.Name,
+			Arguments: json.RawMessage(t.Function.Arguments),
+		}
+	}
 	return llms.ToolCall{
 		ID:        t.ID,
-		Name:      t.Function.Name,
-		Arguments: json.RawMessage(t.Function.Arguments),
+		Name:      "custom",
+		Arguments: json.RawMessage("{}"),
 	}
 }
 

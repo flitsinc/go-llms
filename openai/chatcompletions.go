@@ -338,9 +338,8 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 			continue
 		}
 		apiTools = append(apiTools, Tool{
-			Type: "function",
-			// Dereference the pointer to get tools.FunctionSchema
-			Function: *schema,
+			Type:     "function",
+			Function: schema,
 		})
 	}
 	return apiTools

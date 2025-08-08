@@ -489,6 +489,16 @@ type FunctionTool struct {
 
 func (FunctionTool) responseTool() {}
 
+// CustomTool implements ResponseTool
+type CustomTool struct {
+	Type        string                 `json:"type"` // "custom"
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+}
+
+func (CustomTool) responseTool() {}
+
 // FileSearchTool implements ResponseTool
 type FileSearchTool struct {
 	Type           string            `json:"type"` // "file_search"
