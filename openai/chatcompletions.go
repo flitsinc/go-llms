@@ -306,7 +306,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 					} else {
 						// This is appending arguments to an existing tool call
-						if toolDelta.Function.Arguments != "" {
+						if toolDelta.Function != nil && toolDelta.Function.Arguments != "" {
 							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, toolDelta.Function.Arguments...)
 							if !yield(llms.StreamStatusToolCallDelta) {
 								return // Abort if yield fails

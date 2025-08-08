@@ -209,11 +209,7 @@ func (t toolCall) ToLLM() llms.ToolCall {
 			Arguments: t.Custom.Input,
 		}
 	}
-	return llms.ToolCall{
-		ID:        t.ID,
-		Name:      "custom",
-		Arguments: json.RawMessage("{}"),
-	}
+	panic(fmt.Sprintf("toolCall.ToLLM(): malformed tool call with ID %s - both Function and Custom are nil or invalid", t.ID))
 }
 
 type toolCallDelta struct {
@@ -241,7 +237,7 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 	}
 	return llms.ToolCall{
 		ID:        t.ID,
-		Name:      "custom",
+		Name:      "",
 		Arguments: json.RawMessage("{}"),
 	}
 }
