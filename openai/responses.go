@@ -24,6 +24,7 @@ type ResponsesAPI struct {
 
 	maxOutputTokens    int
 	reasoningEffort    Effort
+	verbosity          Verbosity
 	temperature        float64
 	topP               float64
 	topLogprobs        int
@@ -34,7 +35,6 @@ type ResponsesAPI struct {
 	user               string
 	metadata           map[string]string
 	previousResponseID string
-	verbosity          string
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
@@ -124,7 +124,7 @@ func (m *ResponsesAPI) WithPreviousResponseID(id string) *ResponsesAPI {
 	return m
 }
 
-func (m *ResponsesAPI) WithVerbosity(verbosity string) *ResponsesAPI {
+func (m *ResponsesAPI) WithVerbosity(verbosity Verbosity) *ResponsesAPI {
 	m.verbosity = verbosity
 	return m
 }

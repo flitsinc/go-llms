@@ -5,16 +5,18 @@ import "github.com/flitsinc/go-llms/tools"
 type Effort string
 
 const (
+	EffortMinimal Effort = "minimal"
 	EffortLow     Effort = "low"
 	EffortMedium  Effort = "medium"
 	EffortHigh    Effort = "high"
-	EffortMinimal Effort = "minimal"
 )
 
+type Verbosity string
+
 const (
-	ModelGPT5     = "gpt-5"
-	ModelGPT5Mini = "gpt-5-mini"
-	ModelGPT5Nano = "gpt-5-nano"
+	VerbosityLow    Verbosity = "low"
+	VerbosityMedium Verbosity = "medium"
+	VerbosityHigh   Verbosity = "high"
 )
 
 type Tool struct {

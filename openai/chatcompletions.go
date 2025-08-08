@@ -24,7 +24,7 @@ type ChatCompletionsAPI struct {
 
 	maxCompletionTokens int
 	reasoningEffort     Effort
-	verbosity           string
+	verbosity           Verbosity
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -59,7 +59,7 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 	return m
 }
 
-func (m *ChatCompletionsAPI) WithVerbosity(verbosity string) *ChatCompletionsAPI {
+func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
 	return m
 }
@@ -322,7 +322,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						} else if toolDelta.Custom != nil && toolDelta.Custom.Input != nil {
 							deltaData = toolDelta.Custom.Input
 						}
-						
+
 						if len(deltaData) > 0 {
 							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, deltaData...)
 							if !yield(llms.StreamStatusToolCallDelta) {
