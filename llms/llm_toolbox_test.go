@@ -91,14 +91,18 @@ func TestAddExternalTools(t *testing.T) {
 	// Assert: Verify external tools have non-nil and correct schemas
 	searchTool := llm.toolbox.Get("search")
 	require.NotNil(t, searchTool, "Search tool should exist")
-	searchSchema := searchTool.Schema()
+	sg, ok := searchTool.Grammar().(tools.JSONGrammar)
+	require.True(t, ok, "Search tool should expose JSON schema via grammar")
+	searchSchema := sg.Schema()
 	require.NotNil(t, searchSchema, "Schema for external tool 'search' should not be nil")
 	assert.Equal(t, "search", searchSchema.Name)
 	assert.Equal(t, "Perform a search", searchSchema.Description)
 
 	dbTool := llm.toolbox.Get("database")
 	require.NotNil(t, dbTool, "Database tool should exist")
-	dbSchema := dbTool.Schema()
+	dg, ok := dbTool.Grammar().(tools.JSONGrammar)
+	require.True(t, ok, "Database tool should expose JSON schema via grammar")
+	dbSchema := dg.Schema()
 	require.NotNil(t, dbSchema, "Schema for external tool 'database' should not be nil")
 	assert.Equal(t, "database", dbSchema.Name)
 	assert.Equal(t, "Query a database", dbSchema.Description)
@@ -123,7 +127,7 @@ func TestAddExternalTools(t *testing.T) {
 	// 1 + (1+2+1) + (1+2+1) + 1 = 1 + 4 + 4 + 1 = 10
 	require.Equal(t, 10, len(updates), "Should receive 10 updates for the full flow")
 
-	_, ok := updates[0].(TextUpdate)
+	_, ok = updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 
 	// Search tool: TS at 1, TD at 4

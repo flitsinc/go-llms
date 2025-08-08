@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/maja42/goval"
 
 	"github.com/flitsinc/go-llms/anthropic"
 	"github.com/flitsinc/go-llms/content"
@@ -39,9 +40,9 @@ func main() {
 			return
 		}
 		if provider == "openai-responses" {
-			llmProvider = openai.NewResponsesAPI(apiKey, "o4-mini")
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5")
 		} else {
-			llmProvider = openai.New(apiKey, "o4-mini")
+			llmProvider = openai.New(apiKey, "gpt-5")
 		}
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
@@ -81,7 +82,7 @@ func main() {
 	}
 
 	// Chat returns a channel of updates.
-	for update := range llm.Chat("Give me a random number between 1 and 100! Then tell me a poem about it.") {
+	for update := range llm.Chat("List the files in the current directory. Then tell me a poem about it.") {
 		switch update := update.(type) {
 		case llms.TextUpdate:
 			// Received for each chunk of text from the LLM.
@@ -107,8 +108,8 @@ func printUsage() {
 	fmt.Println("Usage: go run main.go <provider>")
 	fmt.Println()
 	fmt.Println("Supported providers:")
-	fmt.Println("  openai           - Uses OpenAI's o4-mini (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-responses - Uses OpenAI's Responses API with o4-mini (requires OPENAI_API_KEY)")
+	fmt.Println("  openai           - Uses OpenAI's gpt-5 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-responses - Uses OpenAI's Responses API with gpt-5 (requires OPENAI_API_KEY)")
 	fmt.Println("  anthropic        - Uses Anthropic's Claude Sonnet 4 (requires ANTHROPIC_API_KEY)")
 	fmt.Println("  google           - Uses Google's Gemini 2.5 Flash (requires GEMINI_API_KEY)")
 	fmt.Println("  groq             - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
@@ -138,3 +139,34 @@ var RunShellCmd = tools.Func(
 		}
 		return tools.SuccessWithLabel(p.Command, map[string]any{"output": string(output)})
 	})
+
+// Example of a custom tool that uses a Lark grammar (OpenAI only!)
+
+var mathExpr = tools.Lark(`
+start: expr
+expr: term (SP ADD SP term)* -> add
+| term
+term: factor (SP MUL SP factor)* -> mul
+| factor
+factor: INT
+SP: " "
+ADD: "+"
+MUL: "*"
+%import common.INT
+`)
+
+var DoMath = tools.FuncGrammar(
+	mathExpr,
+	"Do some math",
+	"Evaluate a math expression and return the result",
+	"do_math",
+	func(r tools.Runner, expr string) tools.Result {
+		// Evaluate the math expression and return the result.
+		eval := goval.NewEvaluator()
+		result, err := eval.Evaluate(expr, nil, nil)
+		if err != nil {
+			return tools.ErrorWithLabel("Math evaluation failed", err)
+		}
+		return tools.SuccessWithLabel(expr, result)
+	},
+)

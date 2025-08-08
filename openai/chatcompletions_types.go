@@ -190,8 +190,9 @@ type toolCall struct {
 }
 
 type customToolCall struct {
-	Input  json.RawMessage `json:"input,omitempty"`
-	Output json.RawMessage `json:"output,omitempty"`
+	Name   string  `json:"name,omitempty"`
+	Input  *string `json:"input,omitempty"`
+	Output *string `json:"output,omitempty"`
 }
 
 type toolCallDelta struct {
@@ -213,8 +214,8 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 	if t.Custom != nil && t.Custom.Input != nil {
 		return llms.ToolCall{
 			ID:        t.ID,
-			Name:      "custom",
-			Arguments: t.Custom.Input,
+			Name:      t.Custom.Name,
+			Arguments: json.RawMessage([]byte(*t.Custom.Input)),
 		}
 	}
 	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
@@ -259,6 +260,7 @@ type chatCompletionChunk struct {
 	ServiceTier       *string                `json:"service_tier,omitempty"`
 	Choices           []chatCompletionChoice `json:"choices"`
 	Usage             *usage                 `json:"usage,omitempty"`
+	Obfuscation       string                 `json:"obfuscation,omitempty"`
 }
 
 type usage struct {

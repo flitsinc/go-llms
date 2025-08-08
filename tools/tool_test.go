@@ -281,7 +281,9 @@ func TestExternalTool(t *testing.T) {
 	assert.Equal(t, label, tool.Label(), "Tool label mismatch")
 	assert.Equal(t, externalSchema.Description, tool.Description(), "Tool description mismatch")
 	assert.Equal(t, externalSchema.Name, tool.FuncName(), "Tool func name mismatch")
-	retrievedSchema := tool.Schema()
+    g, ok := tool.Grammar().(interface{ Schema() *FunctionSchema })
+    require.True(t, ok, "External tool should expose JSON schema via grammar")
+    retrievedSchema := g.Schema()
 	assert.Equal(t, externalSchema, retrievedSchema, "Tool schema mismatch")
 	// Quick check on AnyOf part preservation
 	valueProp, ok := (*retrievedSchema.Parameters.Properties)["value"]

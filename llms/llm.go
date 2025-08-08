@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"time"
-
-	"sigs.k8s.io/yaml"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/tools"
@@ -30,8 +27,7 @@ type LLM struct {
 	turns, maxTurns  int
 	lastSentMessages []Message
 
-	debug bool
-	err   error // Last error encountered during operation
+	err error // Last error encountered during operation
 
 	// SystemPrompt should return the system prompt for the LLM. It's a function
 	// to allow the system prompt to dynamically change throughout a single
@@ -180,15 +176,6 @@ func (l *LLM) String() string {
 	return fmt.Sprintf("%s (%s)", l.provider.Model(), l.provider.Company())
 }
 
-// WithDebug enables debug mode. When debug mode is enabled, the LLM will write
-// detailed information about each interaction to a debug.yaml file, including
-// the message history, tool calls, and other relevant data. This is useful for
-// troubleshooting and understanding the LLM's behavior.
-func (l *LLM) WithDebug() *LLM {
-	l.debug = true
-	return l
-}
-
 // WithMaxTurns sets the maximum number of turns the LLM will make. This is
 // useful to prevent infinite loops or excessive usage. A value of 0 means no
 // limit. A value of 1 means the LLM will only ever do one API call, and so on.
@@ -229,31 +216,6 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	stream := l.provider.Generate(ctx, systemPrompt, l.lastSentMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
-	}
-
-	if l.debug {
-		// Write the entire message history to the file debug.yaml. The function
-		// is deferred so that we get data even if a panic occurs.
-		defer func() {
-			var toolsSchema []*tools.FunctionSchema
-			if l.toolbox != nil {
-				for _, tool := range l.toolbox.All() {
-					toolsSchema = append(toolsSchema, tool.Schema())
-				}
-			}
-			debugData := map[string]any{
-				// Prefixed with numbers so the keys remain in this order.
-				"1_receivedMessage": stream.Message(),
-				"2_toolResults":     toolMessages,
-				"3_sentMessages":    l.lastSentMessages,
-				"4_systemPrompt":    systemPrompt,
-				"5_availableTools":  toolsSchema,
-				"6_jsonValueSchema": l.JSONOutputSchema,
-			}
-			if debugYAML, err := yaml.Marshal(debugData); err == nil {
-				os.WriteFile("debug.yaml", debugYAML, 0644)
-			}
-		}()
 	}
 
 	trackTTFT := l.TrackTTFT

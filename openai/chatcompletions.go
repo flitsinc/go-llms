@@ -320,7 +320,8 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						if toolDelta.Function != nil && toolDelta.Function.Arguments != "" {
 							deltaData = []byte(toolDelta.Function.Arguments)
 						} else if toolDelta.Custom != nil && toolDelta.Custom.Input != nil {
-							deltaData = toolDelta.Custom.Input
+							// Custom tool input arrives as a JSON string token; treat it as plain text
+							deltaData = []byte(*toolDelta.Custom.Input)
 						}
 
 						if len(deltaData) > 0 {
@@ -348,16 +349,44 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 func Tools(toolbox *tools.Toolbox) []Tool {
 	apiTools := []Tool{}
 	for _, t := range toolbox.All() {
-		// Get the schema which is *tools.FunctionSchema
-		schema := t.Schema()
-		if schema == nil {
-			// Handle cases where a tool might not have a schema (though unlikely with current structure)
-			continue
+		switch g := t.Grammar().(type) {
+		case tools.JSONGrammar:
+			if schema := g.Schema(); schema != nil {
+				apiTools = append(apiTools, Tool{Type: "function", Function: schema})
+			}
+		case tools.TextGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format:      map[string]any{"type": "text"},
+			}})
+		case tools.LarkGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format: map[string]any{
+					"type": "grammar",
+					"grammar": map[string]any{
+						"definition": g.Definition,
+						"syntax":     "lark",
+					},
+				},
+			}})
+		case tools.RegexGrammar:
+			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
+				Name:        t.FuncName(),
+				Description: t.Description(),
+				Format: map[string]any{
+					"type": "grammar",
+					"grammar": map[string]any{
+						"definition": g.Definition,
+						"syntax":     "regex",
+					},
+				},
+			}})
+		default:
+			panic(fmt.Sprintf("unsupported grammar type: %T", g))
 		}
-		apiTools = append(apiTools, Tool{
-			Type:     "function",
-			Function: schema,
-		})
 	}
 	return apiTools
 }

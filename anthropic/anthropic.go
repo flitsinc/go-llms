@@ -120,7 +120,6 @@ func (m *Model) Generate(
 			"name": jsonModeToolName,
 		}
 	} else if toolbox != nil {
-		// Regular tool use
 		payload["tools"] = Tools(toolbox)
 		payload["tool_choice"] = map[string]string{"type": "auto"}
 	}
@@ -451,16 +450,21 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	tools := []Tool{}
+	toolDefs := []Tool{}
 	for _, t := range toolbox.All() {
-		schema := t.Schema()
-		tools = append(tools, Tool{
-			Name:        schema.Name,
-			Description: schema.Description,
-			InputSchema: schema.Parameters,
-		})
+		switch g := t.Grammar().(type) {
+		case tools.JSONGrammar:
+			schema := g.Schema()
+			toolDefs = append(toolDefs, Tool{
+				Name:        schema.Name,
+				Description: schema.Description,
+				InputSchema: schema.Parameters,
+			})
+		default:
+			panic(fmt.Sprintf("unsupported grammar type: %T", g))
+		}
 	}
-	return tools
+	return toolDefs
 }
 
 func contentFromLLM(llmContent content.Content) (cl contentList) {

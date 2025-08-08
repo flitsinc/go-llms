@@ -26,7 +26,7 @@ type Tool struct {
 }
 
 type CustomToolSchema struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Format      map[string]any `json:"format,omitempty"`
 }
