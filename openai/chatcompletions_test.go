@@ -218,8 +218,9 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 						assert.Equal(t, tc.expected[i].ToolCalls[j].Function.Name, actual[i].ToolCalls[j].Function.Name, "ToolCall Function Name mismatch at index %d in message %d", j, i)
 						// Use JSONEq for arguments as order might not matter
 						assert.JSONEq(t, tc.expected[i].ToolCalls[j].Function.Arguments, actual[i].ToolCalls[j].Function.Arguments, "ToolCall Function Arguments mismatch at index %d in message %d", j, i)
-					} else {
-						assert.Fail(t, "ToolCall Function is nil at index %d in message %d", j, i)
+					} else if tc.expected[i].ToolCalls[j].Function != nil || actual[i].ToolCalls[j].Function != nil {
+						assert.Failf(t, "ToolCall Function nil mismatch", "Expected Function nil: %v, Actual Function nil: %v at index %d in message %d", 
+							tc.expected[i].ToolCalls[j].Function == nil, actual[i].ToolCalls[j].Function == nil, j, i)
 					}
 				}
 			}
