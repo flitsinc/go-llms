@@ -204,6 +204,139 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
 }
 ```
 
+## Grammar-Based Tools (OpenAI Only)
+
+OpenAI supports custom tools that can enforce specific input formats using grammars. This allows you to constrain the model's output to follow precise patterns, which is useful for structured data extraction, validation, or parsing tasks.
+
+The library supports three grammar types:
+- **Lark Grammar**: For complex parsing using [Lark parser syntax](https://lark-parser.readthedocs.io/)
+- **Regex Grammar**: For pattern matching using regular expressions
+- **Text Grammar**: For free-form text input
+
+Here are examples of grammar-based tools:
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+    "regexp"
+    "strconv"
+    "strings"
+
+    "github.com/flitsinc/go-llms/llms"
+    "github.com/flitsinc/go-llms/openai"
+    "github.com/flitsinc/go-llms/tools"
+)
+
+// Example 1: Lark Grammar for Math Expressions
+var mathGrammar = tools.Lark(`
+start: expr
+expr: term (SP ADD SP term)* -> add
+    | term
+term: factor (SP MUL SP factor)* -> mul
+    | factor
+factor: INT
+SP: " "
+ADD: "+"
+MUL: "*"
+%import common.INT
+`)
+
+var MathTool = tools.FuncGrammar(
+    mathGrammar,
+    "Math Calculator",
+    "Evaluate simple math expressions with addition and multiplication",
+    "calculate_math",
+    func(r tools.Runner, expression string) tools.Result {
+        // Simple evaluation for demo (in practice, use a proper parser)
+        expression = strings.ReplaceAll(expression, " ", "")
+        
+        // Handle simple cases for demonstration
+        if strings.Contains(expression, "+") {
+            parts := strings.Split(expression, "+")
+            if len(parts) == 2 {
+                a, err1 := strconv.Atoi(parts[0])
+                b, err2 := strconv.Atoi(parts[1])
+                if err1 == nil && err2 == nil {
+                    result := a + b
+                    return tools.SuccessWithLabel(expression, map[string]any{
+                        "result": result,
+                        "expression": expression,
+                    })
+                }
+            }
+        }
+        
+        // Fallback for single numbers
+        if num, err := strconv.Atoi(expression); err == nil {
+            return tools.SuccessWithLabel(expression, map[string]any{
+                "result": num,
+                "expression": expression,
+            })
+        }
+        
+        return tools.ErrorWithLabel("Invalid expression", fmt.Errorf("could not parse: %s", expression))
+    },
+)
+
+// Example 2: Regex Grammar for Email Validation
+var emailGrammar = tools.Regex(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+var EmailValidator = tools.FuncGrammar(
+    emailGrammar,
+    "Email Validator",
+    "Validate and extract information from email addresses",
+    "validate_email",
+    func(r tools.Runner, email string) tools.Result {
+        emailRegex := regexp.MustCompile(`^([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})$`)
+        matches := emailRegex.FindStringSubmatch(email)
+        
+        if len(matches) != 3 {
+            return tools.ErrorWithLabel("Invalid email", fmt.Errorf("email format is invalid: %s", email))
+        }
+        
+        username := matches[1]
+        domain := matches[2]
+        
+        return tools.SuccessWithLabel(email, map[string]any{
+            "email": email,
+            "username": username,
+            "domain": domain,
+            "is_valid": true,
+        })
+    },
+)
+
+func main() {
+    // Create LLM with grammar-based tools (OpenAI only)
+    llm := llms.New(
+        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4"),
+        MathTool,
+        EmailValidator,
+    )
+
+    // The model can now use structured tools with grammar constraints
+    for update := range llm.Chat("Calculate 15 + 27 and validate the email user@example.com") {
+        switch update := update.(type) {
+        case llms.TextUpdate:
+            fmt.Print(update.Text)
+        case llms.ToolStartUpdate:
+            fmt.Printf("(Using %s: ", update.Tool.Label())
+        case llms.ToolDoneUpdate:
+            fmt.Printf("%s)\n", update.Result.Label())
+        }
+    }
+    
+    if err := llm.Err(); err != nil {
+        panic(err)
+    }
+}
+```
+
+**Note**: Grammar-based tools are currently only supported by OpenAI's API. Other providers will fall back to standard JSON-based function calling for these tools.
+
 ## Provider Support
 
 The library currently supports:
