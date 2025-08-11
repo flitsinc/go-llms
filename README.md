@@ -312,7 +312,7 @@ var EmailValidator = tools.FuncGrammar(
 func main() {
     // Create LLM with grammar-based tools (OpenAI only)
     llm := llms.New(
-        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4"),
+        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5"),
         MathTool,
         EmailValidator,
     )
