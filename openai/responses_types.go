@@ -626,18 +626,13 @@ func (LocalShellTool) responseTool() {}
 
 // Response format types
 
-// TextResponseFormat represents text response format configuration
+// TextResponseFormat represents the text response format configuration.
 type TextResponseFormat struct {
-	Type       string            `json:"type"` // "text", "json_object", "json_schema"
-	JSONSchema *JSONSchemaFormat `json:"json_schema,omitempty"`
-}
-
-// JSONSchemaFormat represents JSON schema format details
-type JSONSchemaFormat struct {
-	Name        string             `json:"name"`
-	Schema      *tools.ValueSchema `json:"schema"`
-	Description string             `json:"description,omitempty"`
-	Strict      bool               `json:"strict,omitempty"`
+	Type        string             `json:"type"`                  // "text", "json_object", "json_schema"
+	Name        string             `json:"name,omitempty"`        // only for Type == "json_schema"
+	Schema      *tools.ValueSchema `json:"schema,omitempty"`      // only for Type == "json_schema"
+	Description string             `json:"description,omitempty"` // only for Type == "json_schema"
+	Strict      bool               `json:"strict,omitempty"`      // only for Type == "json_schema"
 }
 
 // Tool choice types

@@ -275,12 +275,10 @@ func (m *ResponsesAPI) Generate(
 	if jsonOutputSchema != nil {
 		payload["text"] = map[string]any{
 			"format": TextResponseFormat{
-				Type: "json_schema",
-				JSONSchema: &JSONSchemaFormat{
-					Name:   "structured_output",
-					Schema: jsonOutputSchema,
-					Strict: true,
-				},
+				Type:   "json_schema",
+				Name:   "structured_output",
+				Schema: jsonOutputSchema,
+				Strict: true,
 			},
 		}
 	}
