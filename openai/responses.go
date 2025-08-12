@@ -197,8 +197,26 @@ func (m *ResponsesAPI) Generate(
 		}
 	}
 
+	// Set up .text related settings.
+	text := map[string]any{}
+
 	if m.verbosity != "" {
-		payload["verbosity"] = m.verbosity
+		text["verbosity"] = m.verbosity
+	}
+
+	// Handle JSON output schema
+	if jsonOutputSchema != nil {
+		text["format"] = TextResponseFormat{
+			Type:   "json_schema",
+			Name:   "structured_output",
+			Schema: jsonOutputSchema,
+			Strict: true,
+		}
+	}
+
+	// Only include .text if there's anything configured.
+	if len(text) > 0 {
+		payload["text"] = text
 	}
 
 	if m.serviceTier != "" {
@@ -269,18 +287,6 @@ func (m *ResponsesAPI) Generate(
 		if len(toolsArr) > 0 {
 			payload["tools"] = toolsArr
 			payload["tool_choice"] = "auto"
-		}
-	}
-
-	// Handle JSON output schema
-	if jsonOutputSchema != nil {
-		payload["text"] = map[string]any{
-			"format": TextResponseFormat{
-				Type:   "json_schema",
-				Name:   "structured_output",
-				Schema: jsonOutputSchema,
-				Strict: true,
-			},
 		}
 	}
 

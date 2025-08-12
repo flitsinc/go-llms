@@ -40,9 +40,13 @@ func main() {
 			return
 		}
 		if provider == "openai-responses" {
-			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5")
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
+				WithThinking(openai.EffortLow).
+				WithVerbosity(openai.VerbosityLow)
 		} else {
-			llmProvider = openai.New(apiKey, "gpt-5")
+			llmProvider = openai.New(apiKey, "gpt-5").
+				WithThinking(openai.EffortLow).
+				WithVerbosity(openai.VerbosityLow)
 		}
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
