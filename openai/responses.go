@@ -192,7 +192,8 @@ func (m *ResponsesAPI) Generate(
 
 	if m.reasoningEffort != "" {
 		payload["reasoning"] = map[string]any{
-			"effort": m.reasoningEffort,
+			"effort":  m.reasoningEffort,
+			"summary": "auto",
 		}
 	}
 
