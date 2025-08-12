@@ -394,7 +394,7 @@ func (s *ResponsesStream) Usage() llms.Usage {
 }
 
 func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
-	scanner := bufio.NewScanner(s.stream)
+	reader := bufio.NewReader(s.stream)
 	var activeToolCall *llms.ToolCall
 
 	return func(yield func(llms.StreamStatus) bool) {
@@ -407,14 +407,29 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 			default:
 			}
 
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					s.err = fmt.Errorf("error scanning stream: %w", err)
+			// Read a full logical line using ReadLine to support very long lines
+			var lineBuilder strings.Builder
+			for {
+				part, isPrefix, err := reader.ReadLine()
+				if err != nil {
+					if err == io.EOF {
+						// If we have accumulated partial data, process it before returning
+						if lineBuilder.Len() == 0 {
+							return
+						}
+						break
+					}
+					s.err = fmt.Errorf("error reading stream: %w", err)
+					return
 				}
-				return
+				lineBuilder.Write(part)
+				if !isPrefix {
+					break
+				}
 			}
 
-			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			rawLine := lineBuilder.String()
+			line, ok := strings.CutPrefix(rawLine, "data: ")
 			if !ok {
 				continue
 			}
