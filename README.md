@@ -4,14 +4,15 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 
 ## Features
 
-- Streaming responses for real-time interaction
-- Built-in tool calling support with a flexible tool system
-- Extensible provider system (currently supports Anthropic, Google, and OpenAI)
+- Supports Anthropic, Google (Gemini + Vertex), and OpenAI (Chat Completions + Responses)
+- Also supports using custom endpoints compatible with any of the APIs above
+- Streaming responses (including thinking) for real-time interaction
+- Built-in tool calling with Go generics to generate JSON schemas automatically
+- Structured output (JSON schema based) for model response
+- OpenAI only: Custom grammars like Lark / Regex for structured output
 - Prompt cache hints
-- Streaming reasoning (summarized / raw)
 - Image inputs
 - Usage tracking
-- OpenAI Responses API support
 
 ### On the roadmap
 
