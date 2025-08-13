@@ -85,19 +85,39 @@ func main() {
 		}
 	}
 
-	// Chat returns a channel of updates.
+	var prevUpdate llms.UpdateType
+
+	// llm.Chat returns a channel of updates.
 	for update := range llm.Chat("List the files in the current directory. Then tell me a poem about it.") {
+		// Output formatting: Add two newlines before new update types.
+		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
+			if prevUpdate == llms.UpdateTypeThinking {
+				// Disable dimmed color for thinking.
+				fmt.Print("\033[0m")
+			}
+			fmt.Println()
+			fmt.Println()
+		}
+
+		// Handle the update.
 		switch update := update.(type) {
+		case llms.ThinkingUpdate:
+			// Show a thinking bubble and dim the text for thinking blocks.
+			if prevUpdate != llms.UpdateTypeThinking {
+				fmt.Print("\033[2m💭 ")
+			}
+			fmt.Print(update.Text)
 		case llms.TextUpdate:
-			// Received for each chunk of text from the LLM.
+			// Print each chunk of text from the LLM as they come in.
 			fmt.Print(update.Text)
 		case llms.ToolStartUpdate:
-			// Received the moment the LLM streams that it intends to use a tool.
+			// Print the tool name when the LLM streams that it intends to use a tool.
 			fmt.Printf("(%s: ", update.Tool.Label())
 		case llms.ToolDoneUpdate:
-			// Received after the LLM finished sending arguments and the tool ran.
-			fmt.Printf("%s)\n", update.Result.Label())
+			// Print the tool result when the LLM finished sending arguments and the tool ran.
+			fmt.Printf("%s)", update.Result.Label())
 		}
+		prevUpdate = update.Type()
 	}
 
 	// Check for errors at the end of the chat
