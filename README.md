@@ -11,7 +11,7 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 - Streaming reasoning (summarized / raw)
 - Image inputs
 - Usage tracking
-- OpenAI Responses API support (beta)
+- OpenAI Responses API support
 
 ### On the roadmap
 
@@ -45,7 +45,7 @@ import (
 func main() {
     // Create a new LLM instance with OpenAI's o4-mini model
     llm := llms.New(
-        openai.New(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
+        openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
     )
 
     // Optional: Set a system prompt
@@ -209,6 +209,7 @@ func handleExternalTool(r tools.Runner, params json.RawMessage) tools.Result {
 OpenAI supports custom tools that can enforce specific input formats using grammars. This allows you to constrain the model's output to follow precise patterns, which is useful for structured data extraction, validation, or parsing tasks.
 
 The library supports three grammar types:
+
 - **Lark Grammar**: For complex parsing using [Lark parser syntax](https://lark-parser.readthedocs.io/)
 - **Regex Grammar**: For pattern matching using regular expressions
 - **Text Grammar**: For free-form text input
@@ -335,7 +336,7 @@ func main() {
 }
 ```
 
-**Note**: Grammar-based tools are currently only supported by OpenAI's API. Other providers will fall back to standard JSON-based function calling for these tools.
+**Note**: Grammar-based tools are currently only supported by OpenAI's API. Other providers currently do not support grammar-based tools.
 
 ## Provider Support
 
@@ -344,7 +345,7 @@ The library currently supports:
 - Anthropic
 - Google (Gemini API and Vertex AI)
 - OpenAI and all compatible providers (you can customize the endpoint)
-- OpenAI’s newer Responses API (beta)
+- OpenAI’s newer Responses API
 
 Each provider can be initialized with their respective configuration:
 
@@ -379,10 +380,15 @@ You can easily implement new providers by implementing the `Provider` interface:
 type Provider interface {
     Company() string
     Model() string
-    // Generate takes a context, system prompt, message history, and optional toolbox,
-    // returning a stream for the LLM's response. The provider should respect
-    // the context for cancellation during its operations.
-    Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox) ProviderStream
+    // Generate takes a system prompt, message history, optional toolbox, and an optional JSON output schema.
+    // The provider should respect the context for cancellation during its operations.
+    Generate(
+        ctx context.Context,
+        systemPrompt content.Content,
+        messages []Message,
+        toolbox *tools.Toolbox,
+        jsonOutputSchema *tools.ValueSchema,
+    ) ProviderStream
 }
 
 type ProviderStream interface {
@@ -401,7 +407,7 @@ type ProviderStream interface {
 Track the usage of your LLM interactions:
 
 ```go
-usage := llm.Usage()
+usage := llm.TotalUsage
 fmt.Printf("Cached Input Tokens: %d, Input Tokens: %d, Output Tokens: %d\n",
     usage.CachedInputTokens, usage.InputTokens, usage.OutputTokens)
 ```
