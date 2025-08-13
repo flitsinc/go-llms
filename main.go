@@ -126,6 +126,7 @@ func main() {
 	}
 
 	fmt.Println()
+	fmt.Printf("Usage: %+v\n", llm.TotalUsage)
 }
 
 func printUsage() {
