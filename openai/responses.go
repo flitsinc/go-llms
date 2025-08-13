@@ -35,6 +35,7 @@ type ResponsesAPI struct {
 	user               string
 	metadata           map[string]string
 	previousResponseID string
+	promptCacheKey     string
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
@@ -124,6 +125,11 @@ func (m *ResponsesAPI) WithPreviousResponseID(id string) *ResponsesAPI {
 	return m
 }
 
+func (m *ResponsesAPI) WithPromptCacheKey(key string) *ResponsesAPI {
+	m.promptCacheKey = key
+	return m
+}
+
 func (m *ResponsesAPI) WithVerbosity(verbosity Verbosity) *ResponsesAPI {
 	m.verbosity = verbosity
 	return m
@@ -147,17 +153,8 @@ func (m *ResponsesAPI) Generate(
 	// Build the input array
 	var input []ResponseInput
 
-	// Handle system prompt and extract cache hints
+	// Handle system prompt
 	var instructions string
-	var promptCacheKey string
-
-	// Extract cache hints from system prompt
-	for _, item := range systemPrompt {
-		if cacheHint, ok := item.(*content.CacheHint); ok {
-			promptCacheKey = cacheHint.Duration
-			break // Use the first cache hint found
-		}
-	}
 
 	// Check if system prompt is a single text item
 	if text, ok := systemPrompt.AsString(); ok {
@@ -245,8 +242,8 @@ func (m *ResponsesAPI) Generate(
 		payload["previous_response_id"] = m.previousResponseID
 	}
 
-	if promptCacheKey != "" {
-		payload["prompt_cache_key"] = promptCacheKey
+	if m.promptCacheKey != "" {
+		payload["prompt_cache_key"] = m.promptCacheKey
 	}
 
 	// Handle tools
