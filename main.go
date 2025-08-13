@@ -41,7 +41,6 @@ func main() {
 		}
 		if provider == "openai-responses" {
 			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
-				WithDebug().
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		} else {
