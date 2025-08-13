@@ -348,7 +348,6 @@ type ResponsesStream struct {
 	message     llms.Message
 	lastText    string
 	usage       *responsesUsage
-	reasoning   string
 	lastThought *content.Thought
 }
 
@@ -374,10 +373,6 @@ func (s *ResponsesStream) ToolCall() llms.ToolCall {
 func (s *ResponsesStream) Thought() content.Thought {
 	if s.lastThought != nil {
 		return *s.lastThought
-	}
-	// The Responses API can stream thoughts/reasoning
-	if s.reasoning != "" {
-		return content.Thought{Text: s.reasoning}
 	}
 	return content.Thought{}
 }
@@ -520,9 +515,9 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 							return
 						}
 					case "reasoning":
-						// Create a new thought with ID and mark it as summary
-						// The Responses API only sends reasoning summaries, not full traces
-						s.lastThought = s.message.Content.AppendThoughtWithID(item.ID, "", true)
+						// Initialize an aggregated thought in message content; lastThought will carry only deltas
+						s.message.Content.AppendThoughtWithID(item.ID, "", true)
+						s.lastThought = &content.Thought{ID: item.ID, Summary: true}
 					}
 				}
 
@@ -595,8 +590,10 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					ItemID string `json:"item_id"`
 				}
 				if err := json.Unmarshal([]byte(line), &partEvent); err == nil && partEvent.Part.Text != "" {
-					// Append to the thought with matching ID (creates if needed)
-					s.lastThought = s.message.Content.AppendThoughtWithID(partEvent.ItemID, partEvent.Part.Text, true)
+					// Update aggregated thought
+					s.message.Content.AppendThoughtWithID(partEvent.ItemID, partEvent.Part.Text, true)
+					// Set lastThought delta
+					s.lastThought = &content.Thought{ID: partEvent.ItemID, Text: partEvent.Part.Text, Summary: true}
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}
@@ -622,8 +619,10 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					ItemID string `json:"item_id"`
 				}
 				if err := json.Unmarshal([]byte(line), &deltaEvent); err == nil && deltaEvent.Delta != "" {
-					// Append to the thought with matching ID (creates if needed)
-					s.lastThought = s.message.Content.AppendThoughtWithID(deltaEvent.ItemID, deltaEvent.Delta, true)
+					// Update aggregated thought
+					s.message.Content.AppendThoughtWithID(deltaEvent.ItemID, deltaEvent.Delta, true)
+					// Set lastThought delta
+					s.lastThought = &content.Thought{ID: deltaEvent.ItemID, Text: deltaEvent.Delta, Summary: true}
 					if !yield(llms.StreamStatusThinking) {
 						return
 					}
@@ -679,77 +678,51 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 		})
 
 	case "assistant":
-		// An assistant message from history can have both content and tool calls.
-		// First, check if there are any thoughts with IDs that need to be included as reasoning items
+		// Replaying assistant messages into Responses API must use output item types,
+		// not input content types. Build an output message with output_text parts.
+		var outParts []OutputContent
 		var hasReasoningWithID bool
 		var reasoningID string
 		reasoningSummary := []ReasoningSummary{}
 
-		// Check for thoughts with IDs that need to be included as separate reasoning items
 		for _, item := range msg.Content {
-			if thought, ok := item.(*content.Thought); ok && thought.ID != "" {
-				hasReasoningWithID = true
-				reasoningID = thought.ID
-				// Include a summary part only if we have text; an empty summary is still valid
-				if thought.Text != "" {
-					reasoningSummary = append(reasoningSummary, ReasoningSummary{
-						Type: "summary_text",
-						Text: thought.Text,
-					})
-				}
+			switch v := item.(type) {
+			case *content.Text:
+				outParts = append(outParts, OutputText{Type: "output_text", Text: v.Text})
+			case *content.JSON:
+				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
+			case *content.Thought:
 				// Only include the first reasoning item for now.
 				// The Responses API requires the prior turn's reasoning item to precede
 				// the replayed tool call, and that association typically refers to the
 				// first reasoning item (output_index 0). We don't yet track mappings
 				// between multiple reasoning IDs and specific tool calls; if we add that,
 				// we should replay all reasoning items in order or map them per call.
-				break
+				if !hasReasoningWithID && v.ID != "" && v.Text != "" {
+					hasReasoningWithID = true
+					reasoningID = v.ID
+					reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+				}
 			}
 		}
 
-		// Convert content to input content (thoughts will be skipped)
-		content := convertContentToInputContent(msg.Content)
-
-		// Only include an assistant message if there's non-empty content
-		if len(content) > 0 {
-			items = append(items, InputMessage{
-				Type:    "message",
-				Role:    "assistant",
-				Content: content,
-			})
+		if len(outParts) > 0 {
+			items = append(items, OutputMessage{Type: "message", Role: "assistant", Content: outParts})
 		}
 
-		// If we found a thought with an ID, add it as a reasoning item before any tool calls.
-		// The API requires the reasoning item to be present even if the summary is empty.
 		if hasReasoningWithID {
-			items = append(items, Reasoning{
-				Type:    "reasoning",
-				ID:      reasoningID,
-				Summary: reasoningSummary,
-			})
+			items = append(items, Reasoning{Type: "reasoning", ID: reasoningID, Summary: reasoningSummary})
 		}
 
-		// Then add any tool calls
+		// Then add any tool calls. The item id is stored as an extra ID on the tool call.
 		for _, tc := range msg.ToolCalls {
-			// If ExtraID looks like a custom tool call id (ctc_), send as custom_tool_call
+			// If ExtraID looks like a custom tool call id (ctc_), send as custom_tool_call.
 			if strings.HasPrefix(tc.ExtraID, "ctc_") {
-				items = append(items, CustomToolCall{
-					Type:   "custom_tool_call",
-					ID:     tc.ExtraID,
-					Name:   tc.Name,
-					Input:  string(tc.Arguments),
-					CallID: tc.ID,
-				})
+				items = append(items, CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID})
 				continue
 			}
-			// Otherwise, treat as a JSON function_call
-			items = append(items, FunctionCall{
-				Type:      "function_call",
-				ID:        tc.ExtraID, // The item id is stored as an extra ID on the tool call.
-				Name:      tc.Name,
-				Arguments: string(tc.Arguments),
-				CallID:    tc.ID,
-			})
+			// Otherwise, treat as a JSON function_call.
+			items = append(items, FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID})
 		}
 
 	case "tool":
