@@ -147,8 +147,18 @@ func (m *ResponsesAPI) Generate(
 	// Build the input array
 	var input []ResponseInput
 
-	// Handle system prompt
+	// Handle system prompt and extract cache hints
 	var instructions string
+	var promptCacheKey string
+
+	// Extract cache hints from system prompt
+	for _, item := range systemPrompt {
+		if cacheHint, ok := item.(*content.CacheHint); ok {
+			promptCacheKey = cacheHint.Duration
+			break // Use the first cache hint found
+		}
+	}
+
 	// Check if system prompt is a single text item
 	if text, ok := systemPrompt.AsString(); ok {
 		// Single text item - use instructions field
@@ -233,6 +243,10 @@ func (m *ResponsesAPI) Generate(
 
 	if m.previousResponseID != "" {
 		payload["previous_response_id"] = m.previousResponseID
+	}
+
+	if promptCacheKey != "" {
+		payload["prompt_cache_key"] = promptCacheKey
 	}
 
 	// Handle tools
@@ -698,10 +712,12 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 				// first reasoning item (output_index 0). We don't yet track mappings
 				// between multiple reasoning IDs and specific tool calls; if we add that,
 				// we should replay all reasoning items in order or map them per call.
-				if !hasReasoningWithID && v.ID != "" && v.Text != "" {
+				if !hasReasoningWithID && v.ID != "" {
 					hasReasoningWithID = true
 					reasoningID = v.ID
-					reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+					if v.Text != "" {
+						reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+					}
 				}
 			}
 		}
