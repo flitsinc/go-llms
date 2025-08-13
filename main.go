@@ -43,7 +43,8 @@ func main() {
 			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
 				WithPromptCacheKey("long").
 				WithThinking(openai.EffortLow).
-				WithVerbosity(openai.VerbosityLow)
+				WithVerbosity(openai.VerbosityLow).
+				WithDebug()
 		} else {
 			llmProvider = openai.New(apiKey, "gpt-5").
 				WithThinking(openai.EffortLow).
@@ -1178,6 +1179,7 @@ Remember to always provide helpful, accurate, and concise responses while drawin
 	if err := llm.Err(); err != nil {
 		panic(err)
 	}
+
 
 	fmt.Println()
 }

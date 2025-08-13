@@ -657,6 +657,15 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 
 			case "response.completed":
+				if event.Response != nil {
+					var response struct {
+						Usage *responsesUsage `json:"usage"`
+					}
+					if err := json.Unmarshal(event.Response, &response); err == nil && response.Usage != nil {
+						s.usage = response.Usage
+					}
+				}
+
 				if activeToolCall != nil {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return

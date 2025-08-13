@@ -229,6 +229,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			l.TotalUsage.Add(usage)
 			l.TrackUsage(ctx, usage, success)
 		}()
+	} else {
+		defer func() {
+			usage := stream.Usage()
+			l.TotalUsage.Add(usage)
+		}()
 	}
 
 	// Tracks how many bytes of the tool call arguments we sent so far in
