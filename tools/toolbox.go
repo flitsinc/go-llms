@@ -30,7 +30,11 @@ func (t *Toolbox) Add(tool Tool) {
 }
 
 func (t *Toolbox) All() []Tool {
+	// Be nil-safe so callers can iterate even when the toolbox hasn't been configured.
 	tools := []Tool{}
+	if t == nil {
+		return tools
+	}
 	for _, tool := range t.tools {
 		tools = append(tools, tool)
 	}
@@ -39,6 +43,10 @@ func (t *Toolbox) All() []Tool {
 
 // Get returns the tool with the given function name.
 func (t *Toolbox) Get(funcName string) Tool {
+	// Be nil-safe so code paths that receive unexpected tool calls don't panic.
+	if t == nil {
+		return nil
+	}
 	return t.tools[funcName]
 }
 
