@@ -120,8 +120,7 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 		`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}`,
 		`data: {"type":"response.content_part.added","part":{"type":"text","text":"Hello"},"item_id":"msg_1","content_index":0}`,
 		`data: {"type":"response.content_part.done","part":{"type":"text","text":"Hello"},"item_id":"msg_1","content_index":0}`,
-		`data: {"type":"response.usage","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"input_tokens_details":{"cached_tokens":25},"output_tokens_details":{"reasoning_tokens":10}}}`,
-		`data: {"type":"response.completed"}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"input_tokens_details":{"cached_tokens":25},"output_tokens_details":{"reasoning_tokens":10}}}}`,
 		"",
 	}, "\n")
 

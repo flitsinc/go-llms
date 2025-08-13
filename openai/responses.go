@@ -651,11 +651,6 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.lastThought = nil // Reset for next reasoning item
 				}
 
-			case "response.usage":
-				if event.Usage != nil {
-					s.usage = event.Usage
-				}
-
 			case "response.completed":
 				if event.Response != nil {
 					var response struct {
