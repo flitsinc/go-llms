@@ -43,8 +43,7 @@ func main() {
 			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
 				WithPromptCacheKey("long").
 				WithThinking(openai.EffortLow).
-				WithVerbosity(openai.VerbosityLow).
-				WithDebug()
+				WithVerbosity(openai.VerbosityLow)
 		} else {
 			llmProvider = openai.New(apiKey, "gpt-5").
 				WithThinking(openai.EffortLow).
