@@ -197,7 +197,11 @@ func (m *ResponsesAPI) Generate(
 		payload["top_logprobs"] = m.topLogprobs
 	}
 
-	if m.reasoningEffort != "" {
+	if m.reasoningEffort == "" {
+		payload["reasoning"] = map[string]any{
+			"summary": "auto",
+		}
+	} else {
 		payload["reasoning"] = map[string]any{
 			"effort":  m.reasoningEffort,
 			"summary": "auto",
