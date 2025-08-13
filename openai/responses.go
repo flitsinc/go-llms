@@ -475,6 +475,9 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 				if err := json.Unmarshal(event.Item, &item); err == nil {
 					switch item.Type {
+					case "message":
+						// Capture the assistant message ID so it can be replayed later
+						s.message.ID = item.ID
 					case "function_call":
 						if activeToolCall != nil {
 							if !yield(llms.StreamStatusToolCallReady) {
@@ -728,7 +731,7 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 		}
 
 		if len(outParts) > 0 {
-			items = append(items, OutputMessage{Type: "message", Role: "assistant", Content: outParts})
+			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
 		}
 
 		if hasReasoningWithID {

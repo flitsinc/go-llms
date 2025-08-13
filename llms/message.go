@@ -10,6 +10,8 @@ import (
 type Message struct {
 	// Role can be "system", "user", "assistant", or "tool".
 	Role string `json:"role"`
+	// ID is an optional identifier for the message when provided by a provider API.
+	ID string `json:"id,omitempty"`
 	// Name can be used to identify different identities within the same role.
 	Name string `json:"name,omitempty"`
 	// Content is the message content.
