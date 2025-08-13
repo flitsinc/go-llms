@@ -10,12 +10,13 @@ import (
 type UpdateType string
 
 const (
-	UpdateTypeToolStart  UpdateType = "tool_start"
-	UpdateTypeToolDelta  UpdateType = "tool_delta"
-	UpdateTypeToolStatus UpdateType = "tool_status"
-	UpdateTypeToolDone   UpdateType = "tool_done"
-	UpdateTypeText       UpdateType = "text"
-	UpdateTypeThinking   UpdateType = "thinking"
+	UpdateTypeToolStart    UpdateType = "tool_start"
+	UpdateTypeToolDelta    UpdateType = "tool_delta"
+	UpdateTypeToolStatus   UpdateType = "tool_status"
+	UpdateTypeToolDone     UpdateType = "tool_done"
+	UpdateTypeText         UpdateType = "text"
+	UpdateTypeThinking     UpdateType = "thinking"
+	UpdateTypeThinkingDone UpdateType = "thinking_done"
 )
 
 type Update interface {
@@ -74,4 +75,10 @@ type ThinkingUpdate struct {
 
 func (u ThinkingUpdate) Type() UpdateType {
 	return UpdateTypeThinking
+}
+
+type ThinkingDoneUpdate struct{}
+
+func (u ThinkingDoneUpdate) Type() UpdateType {
+	return UpdateTypeThinkingDone
 }

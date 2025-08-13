@@ -15,4 +15,6 @@ const (
 	StreamStatusToolCallReady
 	// StreamStatusThinking means the stream produced a thought.
 	StreamStatusThinking
+	// StreamStatusThinkingDone means the stream finished a thought.
+	StreamStatusThinkingDone
 )

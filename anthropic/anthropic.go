@@ -237,6 +237,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 		lastToolCallIndex := -1
 		var handlingJsonModeTool bool // Flag if we are inside the JSON mode tool block
 		var resetNextArgumentsDelta bool
+		// Track content block types by index so we can signal when a thinking block ends
+		contentBlockTypeByIndex := map[int]string{}
 		// The Anthropic SSE stream follows this pattern:
 		// 1. message_start - contains initial message metadata
 		// 2. For each content block:
@@ -297,6 +299,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				}
 			case "content_block_start":
 				// For now, we only need special handling for tool_use and thinking blocks.
+				// Record content block type so we can detect when it stops later.
+				contentBlockTypeByIndex[event.Index] = event.ContentBlock.Type
 				switch event.ContentBlock.Type {
 				case "tool_use":
 					if s.isJSONMode && event.ContentBlock.Name == jsonModeToolName {
@@ -407,6 +411,15 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
 					}
+				}
+				// For thinking blocks, signal that thinking has finished
+				if blockType, ok := contentBlockTypeByIndex[event.Index]; ok {
+					if blockType == "thinking" || blockType == "redacted_thinking" {
+						if !yield(llms.StreamStatusThinkingDone) {
+							return
+						}
+					}
+					delete(contentBlockTypeByIndex, event.Index)
 				}
 			case "message_delta":
 				// Update usage statistics

@@ -260,6 +260,9 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		case StreamStatusThinking:
 			updateChan <- ThinkingUpdate{stream.Thought()}
 
+		case StreamStatusThinkingDone:
+			updateChan <- ThinkingDoneUpdate{}
+
 		case StreamStatusToolCallBegin:
 			toolCall := stream.ToolCall()
 			if toolCall.ID == "" {

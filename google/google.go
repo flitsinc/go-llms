@@ -329,6 +329,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	scanner := bufio.NewScanner(s.stream)
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
+		// Track whether the last yielded event was a thinking update, so we can emit ThinkingDone
+		lastEventWasThinking := false
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -380,7 +382,15 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						if !yield(llms.StreamStatusThinking) {
 							return
 						}
+						lastEventWasThinking = true
 					} else {
+						// Before yielding text, if we were previously thinking, signal done
+						if lastEventWasThinking {
+							if !yield(llms.StreamStatusThinkingDone) {
+								return
+							}
+							lastEventWasThinking = false
+						}
 						s.lastText = *p.Text
 						s.message.Content.Append(s.lastText)
 						if !yield(llms.StreamStatusText) {
@@ -389,6 +399,13 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 				}
 				if p.FunctionCall != nil {
+					// Before yielding tool events, if we were previously thinking, signal done
+					if lastEventWasThinking {
+						if !yield(llms.StreamStatusThinkingDone) {
+							return
+						}
+						lastEventWasThinking = false
+					}
 					// Note: Gemini's streaming API doesn't have partial tool calls.
 					// Google doesn't provide tool call IDs, so we generate our own
 					// using a combination of function name and a timestamp to ensure uniqueness
@@ -406,6 +423,16 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
+					}
+				}
+				// If the candidate reports a finish reason and we were thinking just before,
+				// signal that thinking has completed.
+				if chunk.Candidates[0].FinishReason != "" {
+					if lastEventWasThinking {
+						if !yield(llms.StreamStatusThinkingDone) {
+							return
+						}
+						lastEventWasThinking = false
 					}
 				}
 			}

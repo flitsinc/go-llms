@@ -91,10 +91,6 @@ func main() {
 	for update := range llm.Chat("List the files in the current directory. Then tell me a poem about it.") {
 		// Output formatting: Add two newlines before new update types.
 		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
-			if prevUpdate == llms.UpdateTypeThinking {
-				// Disable dimmed color for thinking.
-				fmt.Print("\033[0m")
-			}
 			fmt.Println()
 			fmt.Println()
 		}
@@ -107,6 +103,9 @@ func main() {
 				fmt.Print("\033[2m💭 ")
 			}
 			fmt.Print(update.Text)
+		case llms.ThinkingDoneUpdate:
+			// End of thinking; restore color and break line.
+			fmt.Print("\033[0m")
 		case llms.TextUpdate:
 			// Print each chunk of text from the LLM as they come in.
 			fmt.Print(update.Text)
@@ -125,6 +124,7 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Println()
 	fmt.Println()
 	fmt.Printf("Usage: %+v\n", llm.TotalUsage)
 }

@@ -656,6 +656,9 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// The done event contains the complete text
 					// For summaries, we could validate or replace, but we've been building it correctly
 					s.lastThought = nil // Reset for next reasoning item
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
 				}
 
 			case "response.completed":
