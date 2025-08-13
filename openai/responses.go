@@ -35,6 +35,7 @@ type ResponsesAPI struct {
 	user               string
 	metadata           map[string]string
 	previousResponseID string
+	promptCacheKey     string
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
@@ -124,6 +125,11 @@ func (m *ResponsesAPI) WithPreviousResponseID(id string) *ResponsesAPI {
 	return m
 }
 
+func (m *ResponsesAPI) WithPromptCacheKey(key string) *ResponsesAPI {
+	m.promptCacheKey = key
+	return m
+}
+
 func (m *ResponsesAPI) WithVerbosity(verbosity Verbosity) *ResponsesAPI {
 	m.verbosity = verbosity
 	return m
@@ -149,6 +155,7 @@ func (m *ResponsesAPI) Generate(
 
 	// Handle system prompt
 	var instructions string
+
 	// Check if system prompt is a single text item
 	if text, ok := systemPrompt.AsString(); ok {
 		// Single text item - use instructions field
@@ -233,6 +240,10 @@ func (m *ResponsesAPI) Generate(
 
 	if m.previousResponseID != "" {
 		payload["previous_response_id"] = m.previousResponseID
+	}
+
+	if m.promptCacheKey != "" {
+		payload["prompt_cache_key"] = m.promptCacheKey
 	}
 
 	// Handle tools
@@ -640,12 +651,16 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					s.lastThought = nil // Reset for next reasoning item
 				}
 
-			case "response.usage":
-				if event.Usage != nil {
-					s.usage = event.Usage
+			case "response.completed":
+				if event.Response != nil {
+					var response struct {
+						Usage *responsesUsage `json:"usage"`
+					}
+					if err := json.Unmarshal(event.Response, &response); err == nil && response.Usage != nil {
+						s.usage = response.Usage
+					}
 				}
 
-			case "response.completed":
 				if activeToolCall != nil {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
@@ -698,10 +713,12 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 				// first reasoning item (output_index 0). We don't yet track mappings
 				// between multiple reasoning IDs and specific tool calls; if we add that,
 				// we should replay all reasoning items in order or map them per call.
-				if !hasReasoningWithID && v.ID != "" && v.Text != "" {
+				if !hasReasoningWithID && v.ID != "" {
 					hasReasoningWithID = true
 					reasoningID = v.ID
-					reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+					if v.Text != "" {
+						reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+					}
 				}
 			}
 		}

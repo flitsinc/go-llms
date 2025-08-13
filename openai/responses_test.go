@@ -113,3 +113,34 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 		t.Fatalf("expected a Reasoning item with summary text")
 	}
 }
+
+func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}`,
+		`data: {"type":"response.content_part.added","part":{"type":"text","text":"Hello"},"item_id":"msg_1","content_index":0}`,
+		`data: {"type":"response.content_part.done","part":{"type":"text","text":"Hello"},"item_id":"msg_1","content_index":0}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"input_tokens_details":{"cached_tokens":25},"output_tokens_details":{"reasoning_tokens":10}}}}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-4o", stream: strings.NewReader(sse)}
+
+	for yield := range stream.Iter() {
+		_ = yield
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	usage := stream.Usage()
+	if usage.InputTokens != 100 {
+		t.Errorf("expected InputTokens=100, got %d", usage.InputTokens)
+	}
+	if usage.OutputTokens != 50 {
+		t.Errorf("expected OutputTokens=50, got %d", usage.OutputTokens)
+	}
+	if usage.CachedInputTokens != 25 {
+		t.Errorf("expected CachedInputTokens=25, got %d", usage.CachedInputTokens)
+	}
+}

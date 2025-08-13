@@ -223,13 +223,14 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 
 	var success bool
 	// Report usage if tracking is enabled.
-	if l.TrackUsage != nil {
-		defer func() {
-			usage := stream.Usage()
-			l.TotalUsage.Add(usage)
-			l.TrackUsage(ctx, usage, success)
-		}()
-	}
+	trackUsage := l.TrackUsage
+	defer func() {
+		usage := stream.Usage()
+		l.TotalUsage.Add(usage)
+		if trackUsage != nil {
+			trackUsage(ctx, usage, success)
+		}
+	}()
 
 	// Tracks how many bytes of the tool call arguments we sent so far in
 	// deltas. We probably want to move this into the responsibility of each
