@@ -316,13 +316,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							if s.message.Metadata == nil {
 								s.message.Metadata = make(map[string]interface{})
 							}
-							if s.message.Metadata["annotations"] == nil {
-								s.message.Metadata["annotations"] = []map[string]interface{}{}
-							}
 							
 							var annotations []map[string]interface{}
-							if existingAnnotations, ok := s.message.Metadata["annotations"].([]map[string]interface{}); ok {
-								annotations = existingAnnotations
+							if existingValue, exists := s.message.Metadata["annotations"]; exists {
+								if existingAnnotations, ok := existingValue.([]map[string]interface{}); ok {
+									annotations = existingAnnotations
+								} else {
+									continue
+								}
 							} else {
 								annotations = []map[string]interface{}{}
 							}
