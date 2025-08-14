@@ -9,13 +9,15 @@ import (
 
 // Usage represents token usage information from an LLM response.
 type Usage struct {
-	CachedInputTokens int
-	InputTokens       int
-	OutputTokens      int
+	CachedInputTokens        int // Number of cached input tokens (cache reads)
+	CacheCreationInputTokens int // Number of input tokens used to create cache (cache writes)
+	InputTokens              int // Number of input tokens
+	OutputTokens             int // Number of output tokens
 }
 
 func (u *Usage) Add(other Usage) {
 	u.CachedInputTokens += other.CachedInputTokens
+	u.CacheCreationInputTokens += other.CacheCreationInputTokens
 	u.InputTokens += other.InputTokens
 	u.OutputTokens += other.OutputTokens
 }
