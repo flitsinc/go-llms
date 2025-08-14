@@ -24,7 +24,6 @@ type Message struct {
 	// This field is used when the message is a tool response (Role="tool") that is responding to a previous tool call.
 	// It should match the ID of the original ToolCall that this message is responding to.
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Message. It
