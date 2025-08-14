@@ -196,7 +196,7 @@ type Stream struct {
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 	debug       bool
 
-	cachedInputTokens, inputTokens, outputTokens int
+	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
 }
 
 func (s *Stream) Err() error {
@@ -224,9 +224,10 @@ func (s *Stream) ToolCall() llms.ToolCall {
 
 func (s *Stream) Usage() llms.Usage {
 	return llms.Usage{
-		CachedInputTokens: s.cachedInputTokens,
-		InputTokens:       s.inputTokens,
-		OutputTokens:      s.outputTokens,
+		CachedInputTokens:        s.cachedInputTokens,
+		CacheCreationInputTokens: s.cacheCreationInputTokens,
+		InputTokens:              s.inputTokens,
+		OutputTokens:             s.outputTokens,
 	}
 }
 
@@ -289,6 +290,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
 					if u.CacheReadInputTokens != nil {
 						s.cachedInputTokens = *u.CacheReadInputTokens
+					}
+					if u.CacheCreationInputTokens != nil {
+						s.cacheCreationInputTokens = *u.CacheCreationInputTokens
 					}
 					if u.InputTokens != nil {
 						s.inputTokens = *u.InputTokens
@@ -428,6 +432,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
 					if u.CacheReadInputTokens != nil {
 						s.cachedInputTokens = *u.CacheReadInputTokens
+					}
+					if u.CacheCreationInputTokens != nil {
+						s.cacheCreationInputTokens = *u.CacheCreationInputTokens
 					}
 					if u.InputTokens != nil {
 						s.inputTokens = *u.InputTokens
