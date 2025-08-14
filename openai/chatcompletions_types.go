@@ -222,11 +222,11 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 }
 
 type chatCompletionDelta struct {
-	Role        string          `json:"role,omitempty"`
-	Content     *string         `json:"content,omitempty"`
-	Refusal     *string         `json:"refusal,omitempty"`
-	ToolCalls   []toolCallDelta `json:"tool_calls,omitempty"`
-	Annotations []interface{}   `json:"annotations,omitempty"`
+	Role        string                 `json:"role,omitempty"`
+	Content     *string                `json:"content,omitempty"`
+	Refusal     *string                `json:"refusal,omitempty"`
+	ToolCalls   []toolCallDelta        `json:"tool_calls,omitempty"`
+	Annotations []map[string]interface{} `json:"annotations,omitempty"`
 }
 
 type logprobsContent struct {

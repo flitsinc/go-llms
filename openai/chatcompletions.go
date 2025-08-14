@@ -303,7 +303,34 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 			}
 
-			// Handle annotations - for now we'll skip processing them in Chat Completions
+			// Handle annotations
+			if len(delta.Annotations) > 0 {
+				for _, annotationData := range delta.Annotations {
+					if annotationType, ok := annotationData["type"].(string); ok && annotationType == "url_citation" {
+						if urlData, exists := annotationData["url_citation"].(map[string]interface{}); exists {
+							url, _ := urlData["url"].(string)
+							title, _ := urlData["title"].(string)
+							startIndex, _ := urlData["start_index"].(float64)
+							endIndex, _ := urlData["end_index"].(float64)
+							
+							if s.message.Metadata == nil {
+								s.message.Metadata = make(map[string]interface{})
+							}
+							if s.message.Metadata["annotations"] == nil {
+								s.message.Metadata["annotations"] = []map[string]interface{}{}
+							}
+							annotations := s.message.Metadata["annotations"].([]map[string]interface{})
+							s.message.Metadata["annotations"] = append(annotations, map[string]interface{}{
+								"type": "url_citation",
+								"url": url,
+								"title": title,
+								"start_index": int(startIndex),
+								"end_index": int(endIndex),
+							})
+						}
+					}
+				}
+			}
 
 			// Handle Tool Calls Delta
 			if len(delta.ToolCalls) > 0 {
