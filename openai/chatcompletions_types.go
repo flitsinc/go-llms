@@ -222,10 +222,11 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 }
 
 type chatCompletionDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	Refusal   *string         `json:"refusal,omitempty"`
-	ToolCalls []toolCallDelta `json:"tool_calls,omitempty"`
+	Role        string                 `json:"role,omitempty"`
+	Content     *string                `json:"content,omitempty"`
+	Refusal     *string                `json:"refusal,omitempty"`
+	ToolCalls   []toolCallDelta        `json:"tool_calls,omitempty"`
+	Annotations []map[string]interface{} `json:"annotations,omitempty"`
 }
 
 type logprobsContent struct {
@@ -281,4 +282,38 @@ type completionTokensDetails struct {
 type promptTokensDetails struct {
 	AudioTokens  int `json:"audio_tokens"`
 	CachedTokens int `json:"cached_tokens"`
+}
+
+type WebSearchOptions struct {
+	UserLocation      *WebSearchUserLocation `json:"user_location,omitempty"`
+	SearchContextSize string                 `json:"search_context_size,omitempty"`
+}
+
+type WebSearchUserLocation struct {
+	Type        string                        `json:"type"`
+	Approximate *WebSearchApproximateLocation `json:"approximate,omitempty"`
+}
+
+type WebSearchApproximateLocation struct {
+	Country string `json:"country,omitempty"`
+	City    string `json:"city,omitempty"`
+	Region  string `json:"region,omitempty"`
+}
+
+func NewWebSearchOptions(contextSize string) *WebSearchOptions {
+	return &WebSearchOptions{
+		SearchContextSize: contextSize,
+	}
+}
+
+func (w *WebSearchOptions) WithUserLocation(country, city, region string) *WebSearchOptions {
+	w.UserLocation = &WebSearchUserLocation{
+		Type: "approximate",
+		Approximate: &WebSearchApproximateLocation{
+			Country: country,
+			City:    city,
+			Region:  region,
+		},
+	}
+	return w
 }

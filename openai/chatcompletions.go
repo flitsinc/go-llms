@@ -25,6 +25,7 @@ type ChatCompletionsAPI struct {
 	maxCompletionTokens int
 	reasoningEffort     Effort
 	verbosity           Verbosity
+	webSearchOptions    *WebSearchOptions
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -61,6 +62,11 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 
 func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
+	return m
+}
+
+func (m *ChatCompletionsAPI) WithWebSearchOptions(options *WebSearchOptions) *ChatCompletionsAPI {
+	m.webSearchOptions = options
 	return m
 }
 
@@ -109,6 +115,10 @@ func (m *ChatCompletionsAPI) Generate(
 
 	if m.verbosity != "" {
 		payload["verbosity"] = m.verbosity
+	}
+
+	if m.webSearchOptions != nil && isSearchPreviewModel(m.model) {
+		payload["web_search_options"] = m.webSearchOptions
 	}
 
 	if toolbox != nil {
@@ -293,6 +303,43 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 			}
 
+			// Handle annotations
+			if len(delta.Annotations) > 0 {
+				for _, annotationData := range delta.Annotations {
+					if annotationType, ok := annotationData["type"].(string); ok && annotationType == "url_citation" {
+						if urlData, exists := annotationData["url_citation"].(map[string]interface{}); exists {
+							url, _ := urlData["url"].(string)
+							title, _ := urlData["title"].(string)
+							startIndex, _ := urlData["start_index"].(float64)
+							endIndex, _ := urlData["end_index"].(float64)
+							
+							if s.message.Metadata == nil {
+								s.message.Metadata = make(map[string]interface{})
+							}
+							
+							var annotations []map[string]interface{}
+							if existingValue, exists := s.message.Metadata["annotations"]; exists {
+								if existingAnnotations, ok := existingValue.([]map[string]interface{}); ok {
+									annotations = existingAnnotations
+								} else {
+									continue
+								}
+							} else {
+								annotations = []map[string]interface{}{}
+							}
+							
+							s.message.Metadata["annotations"] = append(annotations, map[string]interface{}{
+								"type": "url_citation",
+								"url": url,
+								"title": title,
+								"start_index": int(startIndex),
+								"end_index": int(endIndex),
+							})
+						}
+					}
+				}
+			}
+
 			// Handle Tool Calls Delta
 			if len(delta.ToolCalls) > 0 {
 				for _, toolDelta := range delta.ToolCalls {
@@ -389,4 +436,8 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 		}
 	}
 	return apiTools
+}
+
+func isSearchPreviewModel(model string) bool {
+	return model == "gpt-4o-search-preview" || model == "gpt-4o-mini-search-preview"
 }
