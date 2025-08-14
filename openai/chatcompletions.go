@@ -319,7 +319,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							if s.message.Metadata["annotations"] == nil {
 								s.message.Metadata["annotations"] = []map[string]interface{}{}
 							}
-							annotations := s.message.Metadata["annotations"].([]map[string]interface{})
+							
+							var annotations []map[string]interface{}
+							if existingAnnotations, ok := s.message.Metadata["annotations"].([]map[string]interface{}); ok {
+								annotations = existingAnnotations
+							} else {
+								annotations = []map[string]interface{}{}
+							}
+							
 							s.message.Metadata["annotations"] = append(annotations, map[string]interface{}{
 								"type": "url_citation",
 								"url": url,
