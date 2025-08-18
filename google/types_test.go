@@ -1,11 +1,15 @@
 package google
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -200,6 +204,68 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGoogle_ToolChoice_Config(t *testing.T) {
+	// Build toolbox with two JSON tools
+	weatherSchema := tools.FunctionSchema{Name: "get_weather", Description: "Weather", Parameters: tools.ValueSchema{Type: "object"}}
+	timeSchema := tools.FunctionSchema{Name: "get_time", Description: "Time", Parameters: tools.ValueSchema{Type: "object"}}
+	tb := tools.Box(
+		tools.External("Weather", &weatherSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+		tools.External("Time", &timeSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+	)
+
+	// Test server to capture request payload
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		payloadCh <- m
+		w.Header().Set("Content-Type", "text/event-stream")
+		// send minimal stream
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer ts.Close()
+
+	t.Run("AllowOnly non-empty -> AUTO with allowedFunctionNames", func(t *testing.T) {
+		tb.Choice = tools.AllowOnly("get_weather")
+		m := New("gemini-2.0-flash-exp")
+		m.WithGeminiAPI("key")
+		m.endpoint = ts.URL
+		stream := m.Generate(context.Background(), nil, nil, tb, nil)
+		require.NoError(t, stream.Err())
+		payload := <-payloadCh
+		cfg := payload["toolConfig"].(map[string]any)["functionCallingConfig"].(map[string]any)
+		assert.Equal(t, "AUTO", cfg["mode"])
+		names := cfg["allowedFunctionNames"].([]any)
+		require.Len(t, names, 1)
+		assert.Equal(t, "get_weather", names[0])
+	})
+
+	t.Run("RequireOneOf multiple -> ANY with allowedFunctionNames", func(t *testing.T) {
+		tb.Choice = tools.RequireOneOf("get_weather", "get_time")
+		m := New("gemini-2.0-flash-exp")
+		m.WithGeminiAPI("key")
+		m.endpoint = ts.URL
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		cfg := payload["toolConfig"].(map[string]any)["functionCallingConfig"].(map[string]any)
+		assert.Equal(t, "ANY", cfg["mode"])
+		names := cfg["allowedFunctionNames"].([]any)
+		require.Len(t, names, 2)
+	})
+
+	t.Run("AllowOnly empty -> NONE", func(t *testing.T) {
+		tb.Choice = tools.AllowOnly()
+		m := New("gemini-2.0-flash-exp")
+		m.WithGeminiAPI("key")
+		m.endpoint = ts.URL
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		cfg := payload["toolConfig"].(map[string]any)["functionCallingConfig"].(map[string]any)
+		assert.Equal(t, "NONE", cfg["mode"])
+	})
 }
 
 // Helper function to get a pointer to a string

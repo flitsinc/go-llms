@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -562,5 +565,84 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 		assert.Equal(t, "toolB", apiMsg.Content[2].Name)
 		require.NotNil(t, apiMsg.Content[2].Input, "Input should not be nil for tool_use")
 		assert.JSONEq(t, `{}`, string(apiMsg.Content[2].Input))
+	})
+}
+
+func TestAnthropic_ToolChoice_Mapping(t *testing.T) {
+	// Build toolbox with two tools
+	weatherSchema := tools.FunctionSchema{Name: "get_weather", Description: "Weather", Parameters: tools.ValueSchema{Type: "object"}}
+	timeSchema := tools.FunctionSchema{Name: "get_time", Description: "Time", Parameters: tools.ValueSchema{Type: "object"}}
+	tb := tools.Box(
+		tools.External("Weather", &weatherSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+		tools.External("Time", &timeSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+	)
+
+	// Test server to capture payload
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		payloadCh <- m
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	t.Run("AllowOnly non-empty filters tools and sets auto", func(t *testing.T) {
+		tb.Choice = tools.AllowOnly("get_weather")
+		m := New("key", "claude-3-sonnet")
+		m.WithEndpoint(ts.URL, "Test")
+		stream := m.Generate(context.Background(), nil, nil, tb, nil)
+		require.NoError(t, stream.Err())
+		payload := <-payloadCh
+		toolsArr := payload["tools"].([]any)
+		require.Len(t, toolsArr, 1)
+		first := toolsArr[0].(map[string]any)
+		assert.Equal(t, "get_weather", first["name"])
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "auto", tc["type"])
+	})
+
+	t.Run("RequireOneOf single -> force tool", func(t *testing.T) {
+		tb.Choice = tools.RequireOneOf("get_time")
+		m := New("key", "claude-3-sonnet")
+		m.WithEndpoint(ts.URL, "Test")
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		toolsArr := payload["tools"].([]any)
+		require.Len(t, toolsArr, 2)
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "tool", tc["type"])
+		assert.Equal(t, "get_time", tc["name"])
+	})
+
+	t.Run("RequireOneOf multiple -> filter allowed and any", func(t *testing.T) {
+		tb.Choice = tools.RequireOneOf("get_time", "get_weather")
+		m := New("key", "claude-3-sonnet")
+		m.WithEndpoint(ts.URL, "Test")
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		toolsArr := payload["tools"].([]any)
+		require.Len(t, toolsArr, 2)
+		names := map[string]bool{}
+		for _, it := range toolsArr {
+			names[it.(map[string]any)["name"].(string)] = true
+		}
+		assert.True(t, names["get_time"])
+		assert.True(t, names["get_weather"])
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "any", tc["type"])
+	})
+
+	t.Run("AllowOnly empty -> none", func(t *testing.T) {
+		tb.Choice = tools.AllowOnly()
+		m := New("key", "claude-3-sonnet")
+		m.WithEndpoint(ts.URL, "Test")
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "none", tc["type"])
 	})
 }

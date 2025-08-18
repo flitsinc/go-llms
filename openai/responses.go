@@ -300,8 +300,114 @@ func (m *ResponsesAPI) Generate(
 			}
 		}
 		if len(toolsArr) > 0 {
+			// Include all tools by default for cacheability.
 			payload["tools"] = toolsArr
-			payload["tool_choice"] = "auto"
+			// Map tool choice using explicit allowed_tools object when constraining,
+			// which Responses API supports.
+			choice := toolbox.Choice
+			switch choice.Mode {
+			case tools.ChoiceAllowOnly:
+				if len(choice.AllowedTools) == 0 {
+					payload["tool_choice"] = "none"
+				} else {
+					// Validate that at least one of the allowed tools exists in toolsArr.
+					exists := false
+					for _, n := range choice.AllowedTools {
+						for _, it := range toolsArr {
+							switch v := it.(type) {
+							case FunctionTool:
+								if v.Name == n {
+									exists = true
+								}
+							case map[string]any:
+								if name, ok := v["name"].(string); ok && name == n {
+									exists = true
+								}
+							}
+							if exists {
+								break
+							}
+						}
+						if exists {
+							break
+						}
+					}
+					if !exists {
+						return &ResponsesStream{err: fmt.Errorf("openai responses: no allowed tools found in toolbox")}
+					}
+					// Use allowed_tools with mode:auto
+					var allowedEntries []any
+					for _, n := range choice.AllowedTools {
+						allowedEntries = append(allowedEntries, map[string]any{"type": "function", "name": n})
+					}
+					payload["tool_choice"] = AllowedToolsToolChoice{Type: "allowed_tools", Mode: "auto", Tools: allowedEntries}
+				}
+			case tools.ChoiceRequireOneOf:
+				switch len(choice.AllowedTools) {
+				case 0:
+					payload["tool_choice"] = "none"
+				case 1:
+					// Force single tool by name; validate it exists.
+					name := choice.AllowedTools[0]
+					exists := false
+					for _, it := range toolsArr {
+						switch v := it.(type) {
+						case FunctionTool:
+							if v.Name == name {
+								exists = true
+							}
+						case map[string]any:
+							if n, ok := v["name"].(string); ok && n == name {
+								exists = true
+							}
+						}
+						if exists {
+							break
+						}
+					}
+					if !exists {
+						return &ResponsesStream{err: fmt.Errorf("openai responses: required tool %q not found in toolbox", name)}
+					}
+					payload["tool_choice"] = map[string]any{
+						"type": "function",
+						"name": name,
+					}
+				default:
+					// Multiple allowed: use allowed_tools with mode:required
+					// Validate at least one exists.
+					exists := false
+					for _, n := range choice.AllowedTools {
+						for _, it := range toolsArr {
+							switch v := it.(type) {
+							case FunctionTool:
+								if v.Name == n {
+									exists = true
+								}
+							case map[string]any:
+								if name, ok := v["name"].(string); ok && name == n {
+									exists = true
+								}
+							}
+							if exists {
+								break
+							}
+						}
+						if exists {
+							break
+						}
+					}
+					if !exists {
+						return &ResponsesStream{err: fmt.Errorf("openai responses: none of the required tools are present in toolbox")}
+					}
+					var allowedEntries []any
+					for _, n := range choice.AllowedTools {
+						allowedEntries = append(allowedEntries, map[string]any{"type": "function", "name": n})
+					}
+					payload["tool_choice"] = AllowedToolsToolChoice{Type: "allowed_tools", Mode: "required", Tools: allowedEntries}
+				}
+			default:
+				payload["tool_choice"] = "auto"
+			}
 		}
 	}
 

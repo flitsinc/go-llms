@@ -7,6 +7,8 @@ import (
 
 type Toolbox struct {
 	tools map[string]Tool
+	// Choice controls tool selection policy for providers.
+	Choice Choice
 }
 
 // Box returns a new Toolbox containing the given tools.

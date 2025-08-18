@@ -1,11 +1,15 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -231,4 +235,75 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 // Helper function to get a pointer to a string
 func ptr(s string) *string {
 	return &s
+}
+
+func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
+	// Build toolbox with two function tools
+	weatherSchema := tools.FunctionSchema{Name: "get_weather", Description: "Weather", Parameters: tools.ValueSchema{Type: "object"}}
+	timeSchema := tools.FunctionSchema{Name: "get_time", Description: "Time", Parameters: tools.ValueSchema{Type: "object"}}
+	tb := tools.Box(
+		tools.External("Weather", &weatherSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+		tools.External("Time", &timeSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+	)
+
+	// Start test server to capture payloads
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		payloadCh <- m
+		w.Header().Set("Content-Type", "text/event-stream")
+		// minimal SSE stream
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	t.Run("AllowOnly->allowed_tools auto", func(t *testing.T) {
+		tb.Choice = tools.AllowOnly("get_weather")
+		m := NewChatCompletionsAPI("", "gpt-4o")
+		m.WithEndpoint(ts.URL, "Test")
+		// Fire request
+		stream := m.Generate(context.Background(), nil, nil, tb, nil)
+		require.NoError(t, stream.Err())
+		payload := <-payloadCh
+		// tools present
+		require.NotNil(t, payload["tools"])
+		// tool_choice should be allowed_tools with mode auto
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "allowed_tools", tc["type"])
+		assert.Equal(t, "auto", tc["mode"])
+		toolsList := tc["tools"].([]any)
+		require.GreaterOrEqual(t, len(toolsList), 1)
+		first := toolsList[0].(map[string]any)
+		assert.Equal(t, "function", first["type"])
+		fn := first["function"].(map[string]any)
+		assert.Equal(t, "get_weather", fn["name"])
+	})
+
+	t.Run("RequireOneOf single -> force function", func(t *testing.T) {
+		tb.Choice = tools.RequireOneOf("get_time")
+		m := NewChatCompletionsAPI("", "gpt-4o")
+		m.WithEndpoint(ts.URL, "Test")
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "function", tc["type"])
+		fn := tc["function"].(map[string]any)
+		assert.Equal(t, "get_time", fn["name"])
+	})
+
+	t.Run("RequireOneOf multiple -> allowed_tools required", func(t *testing.T) {
+		tb.Choice = tools.RequireOneOf("get_weather", "get_time")
+		m := NewChatCompletionsAPI("", "gpt-4o")
+		m.WithEndpoint(ts.URL, "Test")
+		_ = m.Generate(context.Background(), nil, nil, tb, nil)
+		payload := <-payloadCh
+		tc := payload["tool_choice"].(map[string]any)
+		assert.Equal(t, "allowed_tools", tc["type"])
+		assert.Equal(t, "required", tc["mode"])
+		toolsList := tc["tools"].([]any)
+		require.Len(t, toolsList, 2)
+	})
 }

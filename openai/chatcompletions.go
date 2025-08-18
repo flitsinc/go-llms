@@ -112,7 +112,102 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 
 	if toolbox != nil {
-		payload["tools"] = Tools(toolbox)
+		// Build tools first.
+		apiTools := Tools(toolbox)
+		// Always include full tools for cacheability; constrain with tool_choice
+		payload["tools"] = apiTools
+
+		// Map tools.Choice to Chat Completions tool_choice.
+		// Chat Completions now supports an allowed_tools object similar to Responses API.
+		choice := toolbox.Choice
+		switch choice.Mode {
+		case tools.ChoiceAllowOnly:
+			if len(choice.AllowedTools) == 0 {
+				payload["tool_choice"] = "none"
+			} else {
+				// Validate that at least one allowed tool exists in apiTools
+				exists := false
+				for _, n := range choice.AllowedTools {
+					for _, t := range apiTools {
+						name := ""
+						if t.Function != nil {
+							name = t.Function.Name
+						}
+						if t.Custom != nil {
+							name = t.Custom.Name
+						}
+						if name == n {
+							exists = true
+							break
+						}
+					}
+					if exists {
+						break
+					}
+				}
+				if !exists {
+					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: no allowed tools found in toolbox")}
+				}
+				// Build allowed_tools object
+				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
+				for _, n := range choice.AllowedTools {
+					// Prefer function type; fall back to custom if applicable
+					// We don’t try to disambiguate; include function entry, which the model resolves
+					allowed = append(allowed, ChatAllowedTool{Type: "function", Function: &ChatAllowedToolFunc{Name: n}})
+				}
+				payload["tool_choice"] = ChatAllowedToolsChoice{Type: "allowed_tools", Mode: "auto", Tools: allowed}
+			}
+		case tools.ChoiceRequireOneOf:
+			switch len(choice.AllowedTools) {
+			case 0:
+				payload["tool_choice"] = "none"
+			case 1:
+				// Force the specific tool by name; validate it exists
+				name := choice.AllowedTools[0]
+				exists := false
+				for _, t := range apiTools {
+					if (t.Function != nil && t.Function.Name == name) || (t.Custom != nil && t.Custom.Name == name) {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: required tool %q not found in toolbox", name)}
+				}
+				payload["tool_choice"] = ChatToolChoice{Type: "function", Function: &ChatToolChoiceFunc{Name: name}}
+			default:
+				// Multiple allowed: use allowed_tools with mode:required
+				exists := false
+				for _, n := range choice.AllowedTools {
+					for _, t := range apiTools {
+						name := ""
+						if t.Function != nil {
+							name = t.Function.Name
+						}
+						if t.Custom != nil {
+							name = t.Custom.Name
+						}
+						if name == n {
+							exists = true
+							break
+						}
+					}
+					if exists {
+						break
+					}
+				}
+				if !exists {
+					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: none of the required tools are present in toolbox")}
+				}
+				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
+				for _, n := range choice.AllowedTools {
+					allowed = append(allowed, ChatAllowedTool{Type: "function", Function: &ChatAllowedToolFunc{Name: n}})
+				}
+				payload["tool_choice"] = ChatAllowedToolsChoice{Type: "allowed_tools", Mode: "required", Tools: allowed}
+			}
+		default:
+			payload["tool_choice"] = "auto"
+		}
 	}
 
 	// Add response_format if JSON schema is provided

@@ -115,13 +115,90 @@ func (m *Model) Generate(
 			InputSchema: *jsonOutputSchema, // Use the provided schema
 		}
 		payload["tools"] = []Tool{jsonModeTool}
-		payload["tool_choice"] = map[string]string{
-			"type": "tool",
-			"name": jsonModeToolName,
-		}
+		payload["tool_choice"] = ToolChoice{Type: "tool", Name: jsonModeToolName}
 	} else if toolbox != nil {
-		payload["tools"] = Tools(toolbox)
-		payload["tool_choice"] = map[string]string{"type": "auto"}
+		// Build full tool list first.
+		allTools := Tools(toolbox)
+		choice := toolbox.Choice
+
+		// Map Choice to Anthropic tool_choice.
+		// Anthropic does NOT support an allow-list in tool_choice; it supports:
+		// - type: "auto" (model may or may not call a tool)
+		// - type: "any" (model must call one of the provided tools)
+		// - type: "tool", name: "..." (force a particular tool)
+		// - type: "none" (disallow any tool use)
+		// Therefore, whenever we must restrict the set of usable tools (AllowOnly or RequireOneOf with multiple),
+		// we FILTER the tools array to the allowed subset, because Anthropic cannot take an allowed list separately.
+		var toolChoice any
+		switch choice.Mode {
+		case tools.ChoiceAllowOnly:
+			if len(choice.AllowedTools) == 0 {
+				// Explicitly disallow tool use for this call; keep the tools list intact for cacheability.
+				toolChoice = ToolChoice{Type: "none"}
+			} else {
+				// Filter to allowed tools; error if none of the allowed tools exist.
+				allowed := map[string]bool{}
+				for _, name := range choice.AllowedTools {
+					allowed[name] = true
+				}
+				filtered := make([]Tool, 0, len(allTools))
+				for _, t := range allTools {
+					if allowed[t.Name] {
+						filtered = append(filtered, t)
+					}
+				}
+				if len(filtered) == 0 {
+					return &Stream{err: fmt.Errorf("anthropic: no allowed tools found in toolbox")}
+				}
+				allTools = filtered
+				toolChoice = ToolChoice{Type: "auto"}
+			}
+		case tools.ChoiceRequireOneOf:
+			switch len(choice.AllowedTools) {
+			case 0:
+				// Require one-of with empty list means no tools may be used.
+				toolChoice = ToolChoice{Type: "none"}
+			case 1:
+				// Force the single allowed tool by name. Validate that it exists; otherwise return an error.
+				name := choice.AllowedTools[0]
+				exists := false
+				for _, t := range allTools {
+					if t.Name == name {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					return &Stream{err: fmt.Errorf("anthropic: required tool %q not found in toolbox", name)}
+				}
+				toolChoice = ToolChoice{Type: "tool", Name: name}
+				// Note: No need to filter here; forcing a specific tool is supported by Anthropic.
+			default:
+				// Multiple acceptable tools: filter tools list down to the allowed subset,
+				// then set tool_choice to any (must use one of provided).
+				allowed := map[string]bool{}
+				for _, name := range choice.AllowedTools {
+					allowed[name] = true
+				}
+				filtered := make([]Tool, 0, len(allTools))
+				for _, t := range allTools {
+					if allowed[t.Name] {
+						filtered = append(filtered, t)
+					}
+				}
+				if len(filtered) == 0 {
+					return &Stream{err: fmt.Errorf("anthropic: none of the required tools are present in toolbox")}
+				}
+				allTools = filtered
+				toolChoice = ToolChoice{Type: "any"}
+			}
+		default:
+			// ChoiceAny: let the model decide.
+			toolChoice = ToolChoice{Type: "auto"}
+		}
+
+		payload["tools"] = allTools
+		payload["tool_choice"] = toolChoice
 	}
 
 	// Note: Anthropic does not support thinking when forcing tool use (which we

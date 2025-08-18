@@ -215,6 +215,7 @@ func (m *Model) Generate(
 
 	if toolbox != nil {
 		allTools := toolbox.All()
+		// Build declarations from all tools (do not filter; we'll restrict via toolConfig for cacheability)
 		declarations := make([]tools.FunctionSchema, len(allTools))
 		for i, tool := range allTools {
 			// Google supports only function-style tools; JSON grammar is fine.
@@ -229,6 +230,49 @@ func (m *Model) Generate(
 		}
 		payload["tools"] = map[string]any{
 			"functionDeclarations": declarations,
+		}
+
+		// Map Choice to Google's tool configuration (allowedFunctionNames)
+		// We keep all functionDeclarations above for cacheability, and rely on
+		// toolConfig.functionCallingConfig.allowedFunctionNames to constrain use.
+		choice := toolbox.Choice
+		switch choice.Mode {
+		case tools.ChoiceAllowOnly:
+			if len(choice.AllowedTools) == 0 {
+				payload["toolConfig"] = map[string]any{
+					"functionCallingConfig": map[string]any{
+						"mode": "NONE",
+					},
+				}
+			} else {
+				payload["toolConfig"] = map[string]any{
+					"functionCallingConfig": map[string]any{
+						"mode":                 "AUTO",
+						"allowedFunctionNames": choice.AllowedTools,
+					},
+				}
+			}
+		case tools.ChoiceRequireOneOf:
+			if len(choice.AllowedTools) == 0 {
+				payload["toolConfig"] = map[string]any{
+					"functionCallingConfig": map[string]any{
+						"mode": "NONE",
+					},
+				}
+			} else {
+				payload["toolConfig"] = map[string]any{
+					"functionCallingConfig": map[string]any{
+						"mode":                 "ANY",
+						"allowedFunctionNames": choice.AllowedTools,
+					},
+				}
+			}
+		default:
+			payload["toolConfig"] = map[string]any{
+				"functionCallingConfig": map[string]any{
+					"mode": "AUTO",
+				},
+			}
 		}
 	}
 

@@ -12,6 +12,15 @@ type Tool struct {
 	InputSchema tools.ValueSchema `json:"input_schema"`
 }
 
+// ToolChoice strongly types Anthropic tool_choice per docs:
+// https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
+// - type: "auto" | "any" | "tool" | "none"
+// - name: required iff type == "tool"
+type ToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+}
+
 type message struct {
 	Role    string      `json:"role"`    // Either "user" or "assistant"
 	Content contentList `json:"content"` // The content of the message (text, images, tool_use blocks)

@@ -637,8 +637,43 @@ type TextResponseFormat struct {
 
 // Tool choice types
 
-// ToolChoice can be a string or an object
+// ToolChoice can be a string or an object (keep for backwards compatibility where needed)
 type ToolChoice any
+
+// ResponsesToolChoice is a strongly-typed struct for forcing tool use in the Responses API.
+// For function tools, the shape is: {"type":"function","name":"tool_name"}
+// For custom tools, the shape is: {"type":"custom","name":"tool_name"}
+// For hosted tools: {"type":"file_search"} etc.
+// For MCP tools: {"type":"mcp","server_label":"...","name":"..."}
+// When constraining to an allow-list, use AllowedToolsToolChoice below.
+
+// AllowedToolsToolChoice represents the object to constrain allowed tools.
+// Example:
+//
+//	{
+//	  "type": "allowed_tools",
+//	  "mode": "auto", // or "required"
+//	  "tools": [
+//	    {"type": "function", "name": "get_weather"},
+//	    {"type": "custom", "name": "my_custom"}
+//	  ]
+//	}
+type AllowedToolsToolChoice struct {
+	Type  string `json:"type"`  // "allowed_tools"
+	Mode  string `json:"mode"`  // "auto" | "required"
+	Tools []any  `json:"tools"` // entries like {type:function,name:...}, {type:custom,name:...}, hosted/mcp, etc.
+}
+
+// ResponsesToolChoice is a strongly-typed struct for forcing tool use in the Responses API.
+// For function tools, the shape is: {"type":"function","function":{"name":"tool_name"}}
+type ResponsesToolChoice struct {
+	Type     string                       `json:"type"`
+	Function *ResponsesToolChoiceFunction `json:"function,omitempty"`
+}
+
+type ResponsesToolChoiceFunction struct {
+	Name string `json:"name"`
+}
 
 // HostedToolChoice represents a hosted tool choice
 type HostedToolChoice struct {

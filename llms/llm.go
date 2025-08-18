@@ -172,6 +172,14 @@ func (l *LLM) AddTool(t tools.Tool) {
 	}
 }
 
+func (l *LLM) SetToolChoice(choice tools.Choice) *LLM {
+	if l.toolbox == nil {
+		l.toolbox = tools.Box()
+	}
+	l.toolbox.Choice = choice
+	return l
+}
+
 func (l *LLM) String() string {
 	return fmt.Sprintf("%s (%s)", l.provider.Model(), l.provider.Company())
 }
