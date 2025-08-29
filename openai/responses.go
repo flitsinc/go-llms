@@ -36,6 +36,8 @@ type ResponsesAPI struct {
 	metadata           map[string]string
 	previousResponseID string
 	promptCacheKey     string
+
+	specialTools []ResponseTool
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
@@ -77,6 +79,11 @@ func (m *ResponsesAPI) WithThinking(effort Effort) *ResponsesAPI {
 
 func (m *ResponsesAPI) WithTemperature(temperature float64) *ResponsesAPI {
 	m.temperature = temperature
+	return m
+}
+
+func (m *ResponsesAPI) WithTool(tool ResponseTool) *ResponsesAPI {
+	m.specialTools = append(m.specialTools, tool)
 	return m
 }
 
@@ -254,6 +261,9 @@ func (m *ResponsesAPI) Generate(
 	if toolbox != nil {
 		// Build tools for Responses API
 		var toolsArr []any
+		for _, t := range m.specialTools {
+			toolsArr = append(toolsArr, t)
+		}
 		for _, t := range toolbox.All() {
 			switch g := t.Grammar().(type) {
 			case tools.JSONGrammar:

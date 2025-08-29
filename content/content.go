@@ -29,6 +29,8 @@ func (t *Text) Type() Type {
 
 type ImageURL struct {
 	URL string `json:"image_url"`
+	// MimeType, if omitted, will be inferred from data URIs / URL path extensions.
+	MimeType string `json:"mime_type,omitempty"`
 }
 
 func (iu *ImageURL) Type() Type {

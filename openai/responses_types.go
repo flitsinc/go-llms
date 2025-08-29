@@ -357,8 +357,8 @@ type SafetyCheck struct {
 type ImageGenerationCall struct {
 	Type   string  `json:"type"` // "image_generation_call"
 	ID     string  `json:"id"`
-	Status string  `json:"status"`
-	Result *string `json:"result"` // base64 encoded image
+	Status string  `json:"status,omitempty"`
+	Result *string `json:"result,omitempty"` // base64 encoded image
 }
 
 func (ImageGenerationCall) responseItem() {}
