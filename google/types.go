@@ -3,9 +3,6 @@ package google
 import (
 	"encoding/json"
 	"fmt"
-	"mime"
-	"net/url"
-	"path"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -84,61 +81,6 @@ type part struct {
 
 type parts []part
 
-func guessMimeTypeFromURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	ext := strings.ToLower(path.Ext(u.Path))
-	if ext == "" {
-		return ""
-	}
-	if t := mime.TypeByExtension(ext); t != "" {
-		if i := strings.IndexByte(t, ';'); i >= 0 {
-			t = t[:i]
-		}
-		return t
-	}
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".bmp":
-		return "image/bmp"
-	case ".ico":
-		return "image/x-icon"
-	case ".tif", ".tiff":
-		return "image/tiff"
-	case ".heic":
-		return "image/heic"
-	case ".avif":
-		return "image/avif"
-	case ".mp4":
-		return "video/mp4"
-	case ".mov":
-		return "video/quicktime"
-	case ".m4v":
-		return "video/x-m4v"
-	case ".webm":
-		return "video/webm"
-	case ".mp3":
-		return "audio/mpeg"
-	case ".wav":
-		return "audio/wav"
-	case ".ogg":
-		return "audio/ogg"
-	default:
-		return ""
-	}
-}
-
 func convertContent(c content.Content) (p parts) {
 	for _, item := range c {
 		var pp part
@@ -156,7 +98,7 @@ func convertContent(c content.Content) (p parts) {
 			} else {
 				mimeType := v.MimeType
 				if mimeType == "" {
-					mimeType = guessMimeTypeFromURL(v.URL)
+					mimeType = content.GuessMIMETypeFromURL(v.URL)
 				}
 				pp.FileData = &fileData{MimeType: mimeType, FileURI: v.URL}
 			}

@@ -15,6 +15,7 @@ const (
 	UpdateTypeToolStatus   UpdateType = "tool_status"
 	UpdateTypeToolDone     UpdateType = "tool_done"
 	UpdateTypeText         UpdateType = "text"
+	UpdateTypeImage        UpdateType = "image"
 	UpdateTypeThinking     UpdateType = "thinking"
 	UpdateTypeThinkingDone UpdateType = "thinking_done"
 )
@@ -67,6 +68,15 @@ type TextUpdate struct {
 
 func (u TextUpdate) Type() UpdateType {
 	return UpdateTypeText
+}
+
+type ImageUpdate struct {
+	URL      string
+	MimeType string
+}
+
+func (u ImageUpdate) Type() UpdateType {
+	return UpdateTypeImage
 }
 
 type ThinkingUpdate struct {

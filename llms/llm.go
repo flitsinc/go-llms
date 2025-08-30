@@ -265,6 +265,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		case StreamStatusText:
 			updateChan <- TextUpdate{stream.Text()}
 
+		case StreamStatusImage:
+			url, mime := stream.Image()
+			updateChan <- ImageUpdate{URL: url, MimeType: mime}
+
 		case StreamStatusThinking:
 			updateChan <- ThinkingUpdate{stream.Thought()}
 

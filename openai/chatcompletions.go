@@ -295,6 +295,11 @@ func (s *ChatCompletionsStream) Text() string {
 	return s.lastText
 }
 
+func (s *ChatCompletionsStream) Image() (string, string) {
+	// OpenAI's Chat Completions API doesn't generate any images as of this writing.
+	return "", ""
+}
+
 func (s *ChatCompletionsStream) ToolCall() llms.ToolCall {
 	if len(s.message.ToolCalls) == 0 {
 		return llms.ToolCall{}

@@ -288,6 +288,11 @@ func (s *Stream) Text() string {
 	return s.lastText
 }
 
+func (s *Stream) Image() (string, string) {
+	// Anthropic doesn't generate any images as of this writing.
+	return "", ""
+}
+
 func (s *Stream) Thought() content.Thought {
 	return *s.lastThought
 }

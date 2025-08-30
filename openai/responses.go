@@ -478,6 +478,7 @@ type ResponsesStream struct {
 	err         error
 	message     llms.Message
 	lastText    string
+	lastImage   struct{ URL, MIME string }
 	usage       *responsesUsage
 	lastThought *content.Thought
 }
@@ -492,6 +493,10 @@ func (s *ResponsesStream) Message() llms.Message {
 
 func (s *ResponsesStream) Text() string {
 	return s.lastText
+}
+
+func (s *ResponsesStream) Image() (string, string) {
+	return s.lastImage.URL, s.lastImage.MIME
 }
 
 func (s *ResponsesStream) ToolCall() llms.ToolCall {
@@ -585,6 +590,7 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				s.message.Role = "assistant"
 
 			case "response.output_item.added":
+				// TODO: We may want to handle other types like "image_generation_call" here.
 				var item struct {
 					Type string `json:"type"`
 					ID   string `json:"id"`
@@ -776,6 +782,62 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				}
+
+			case "response.output_item.done":
+				// Images are finalized on output_item.done for image_generation_call
+				var itemHdr struct {
+					Type   string `json:"type"`
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
+					if itemHdr.Type == "image_generation_call" && itemHdr.Status == "completed" {
+						var img struct {
+							ID            string `json:"id"`
+							Background    string `json:"background"`
+							OutputFormat  string `json:"output_format"`
+							Quality       string `json:"quality"`
+							Result        string `json:"result"`
+							RevisedPrompt string `json:"revised_prompt"`
+							Size          string `json:"size"`
+						}
+						err := json.Unmarshal(event.Item, &img)
+						if err != nil {
+							s.err = fmt.Errorf("failed to parse image generation result: %w", s.err)
+							return
+						}
+						if img.Result == "" {
+							continue
+						}
+						mime := "image/png"
+						switch img.OutputFormat {
+						case "png":
+							mime = "image/png"
+						case "jpeg", "jpg":
+							mime = "image/jpeg"
+						case "webp":
+							mime = "image/webp"
+						case "gif":
+							mime = "image/gif"
+						}
+						dataURI := content.BuildDataURI(mime, img.Result)
+						s.lastImage.URL = dataURI
+						s.lastImage.MIME = mime
+						// Add to aggregated message content for history
+						s.message.Content = append(s.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
+						if !yield(llms.StreamStatusImage) {
+							return
+						}
+						if event.Usage != nil {
+							s.usage = event.Usage
+						}
+					}
+				}
+
+			case "response.image_generation_call.in_progress":
+			case "response.image_generation_call.generating":
+			case "response.image_generation_call.partial_image":
+				// TODO: Support streaming partial image frames during generation.
+				// For now, ignore partial frames; we'll only emit on completed.
 
 			case "response.completed":
 				if event.Response != nil {

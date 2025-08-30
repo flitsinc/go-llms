@@ -27,6 +27,7 @@ type ProviderStream interface {
 	Iter() func(yield func(StreamStatus) bool)
 	Message() Message
 	Text() string
+	Image() (string, string)
 	Thought() content.Thought
 	ToolCall() ToolCall
 	Usage() Usage

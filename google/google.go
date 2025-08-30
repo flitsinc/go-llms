@@ -332,6 +332,7 @@ type Stream struct {
 	lastThought *content.Thought
 	usage       *usageMetadata
 	debug       bool
+	lastImage   struct{ URL, MIME string }
 }
 
 func (s *Stream) Err() error {
@@ -344,6 +345,10 @@ func (s *Stream) Message() llms.Message {
 
 func (s *Stream) Text() string {
 	return s.lastText
+}
+
+func (s *Stream) Image() (string, string) {
+	return s.lastImage.URL, s.lastImage.MIME
 }
 
 func (s *Stream) ToolCall() llms.ToolCall {
@@ -455,6 +460,33 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						s.lastText = *p.Text
 						s.message.Content.Append(s.lastText)
 						if !yield(llms.StreamStatusText) {
+							return
+						}
+					}
+				}
+				// Emit images from inline/file data parts as discrete image events.
+				if p.InlineData != nil {
+					if p.InlineData.MimeType != "" && p.InlineData.Data != "" {
+						uri := content.BuildDataURI(p.InlineData.MimeType, p.InlineData.Data)
+						s.message.Content = append(s.message.Content, &content.ImageURL{URL: uri, MimeType: p.InlineData.MimeType})
+						s.lastImage.URL = uri
+						s.lastImage.MIME = p.InlineData.MimeType
+						if !yield(llms.StreamStatusImage) {
+							return
+						}
+					}
+				}
+				if p.FileData != nil {
+					url := p.FileData.FileURI
+					mime := p.FileData.MimeType
+					if mime == "" {
+						mime = content.ExtractMIMETypeFromURIOrURL(url)
+					}
+					if url != "" {
+						s.message.Content = append(s.message.Content, &content.ImageURL{URL: url, MimeType: mime})
+						s.lastImage.URL = url
+						s.lastImage.MIME = mime
+						if !yield(llms.StreamStatusImage) {
 							return
 						}
 					}
