@@ -168,6 +168,8 @@ func (s *mockStream) Message() Message {
 
 func (s *mockStream) Text() string { return s.textToGenerate }
 
+func (s *mockStream) Image() (string, string) { return "", "" }
+
 func (s *mockStream) Thought() content.Thought { return content.Thought{} }
 
 func (s *mockStream) ToolCall() ToolCall {
@@ -217,6 +219,7 @@ func (s *errorMockStream) Iter() func(func(StreamStatus) bool) {
 }
 func (s *errorMockStream) Message() Message         { return Message{} }
 func (s *errorMockStream) Text() string             { return "" }
+func (s *errorMockStream) Image() (string, string)  { return "", "" }
 func (s *errorMockStream) Thought() content.Thought { return content.Thought{} }
 func (s *errorMockStream) ToolCall() ToolCall       { return ToolCall{} }
 func (s *errorMockStream) Usage() Usage             { return Usage{} }
@@ -285,6 +288,8 @@ func (s *mockEmptyIDStream) Message() Message {
 }
 
 func (s *mockEmptyIDStream) Text() string { return "This is a test message." }
+
+func (s *mockEmptyIDStream) Image() (string, string) { return "", "" }
 
 func (s *mockEmptyIDStream) Thought() content.Thought { return content.Thought{} }
 
@@ -358,6 +363,7 @@ func (s *mockCancellingStream) Message() Message {
 }
 
 func (s *mockCancellingStream) Text() string             { return "This is a test message." }
+func (s *mockCancellingStream) Image() (string, string)  { return "", "" }
 func (s *mockCancellingStream) Thought() content.Thought { return content.Thought{} }
 func (s *mockCancellingStream) ToolCall() ToolCall       { return ToolCall{} }
 func (s *mockCancellingStream) Usage() Usage             { return Usage{} }
@@ -447,6 +453,8 @@ func (s *mockStreamToolNotFound) Message() Message {
 }
 
 func (s *mockStreamToolNotFound) Text() string { return "Trying a tool..." }
+
+func (s *mockStreamToolNotFound) Image() (string, string) { return "", "" }
 
 func (s *mockStreamToolNotFound) Thought() content.Thought { return content.Thought{} }
 
