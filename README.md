@@ -69,6 +69,32 @@ func main() {
 }
 ```
 
+## Generating images with Gemini 2.5 Flash Image (aka Nano Banana)
+
+You must specify modalities for this model to work (and you cannot use `WithThinking`):
+
+```go
+func main() {
+    provider := google.New("gemini-2.5-flash-image-preview").
+        WithGeminiAPI(os.Getenv("GEMINI_API_KEY")).
+        WithModalities("TEXT", "IMAGE")
+    llm := llms.New(provider)
+    for update := range llm.Chat("Draw a sketch of a happy banana") {
+        switch update := update.(type) {
+        case llms.TextUpdate:
+            fmt.Print(update.Text)
+        case llms.ImageUpdate:
+            path := fmt.Sprintf("image-%d.png", time.Now().Unix())
+            // We assume we always get a base64-encoded PNG image -- don't do this in prod!
+            b64, _ := strings.CutPrefix(update.URL, "data:image/png;base64,")
+            data, _ := base64.StdEncoding.DecodeString(b64)
+            os.WriteFile(path, data, 0644)
+            fmt.Printf("\nImage written to: %s\n", path)
+        }
+    }
+}
+```
+
 ## Advanced Usage with Tools
 
 Here’s an example showing how to use tools (function calling):
@@ -355,7 +381,7 @@ Each provider can be initialized with their respective configuration:
 llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
 
 // Google Gemini
-llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GOOGLE_API_KEY")))
+llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")))
 
 // Google Vertex AI
 ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
@@ -397,6 +423,7 @@ type ProviderStream interface {
     Iter() func(yield func(StreamStatus) bool)
     Message() Message
     Text() string
+    Image() (string, string)
     Thought() content.Thought
     ToolCall() ToolCall
     Usage() Usage
@@ -409,8 +436,8 @@ Track the usage of your LLM interactions:
 
 ```go
 usage := llm.TotalUsage
-fmt.Printf("Cached Input Tokens: %d, Input Tokens: %d, Output Tokens: %d\n",
-    usage.CachedInputTokens, usage.InputTokens, usage.OutputTokens)
+fmt.Printf("Cached Input Tokens: %d, Tokens Written to Input Cache: %d, Input Tokens: %d, Output Tokens: %d\n",
+    usage.CachedInputTokens, usage.CacheCreationInputTokens, usage.InputTokens, usage.OutputTokens)
 ```
 
 As patterns emerge between providers with regards to cache tokens, speculative tokens, etc. these will be added too.
