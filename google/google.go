@@ -53,6 +53,7 @@ type Model struct {
 	includeThoughts bool
 	thinkingBudget  int
 	debug           bool
+	modalities      []string
 }
 
 func New(model string) *Model {
@@ -120,6 +121,15 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 
 func (m *Model) WithDebug() *Model {
 	m.debug = true
+	return m
+}
+
+// WithModalities configures the model to use specific modalities for the
+// response. Usually not necessary.
+//
+// Some valid values are: "TEXT", "IMAGE", "AUDIO"
+func (m *Model) WithModalities(modalities ...string) *Model {
+	m.modalities = modalities
 	return m
 }
 
@@ -201,6 +211,10 @@ func (m *Model) Generate(
 			thinkingConfig["thinkingBudget"] = m.thinkingBudget
 		}
 		generationConfig["thinkingConfig"] = thinkingConfig
+	}
+
+	if len(m.modalities) > 0 {
+		generationConfig["responseModalities"] = m.modalities
 	}
 
 	if len(generationConfig) > 0 {
