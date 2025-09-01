@@ -113,7 +113,7 @@ func (m *Model) WithTopP(topP float64) *Model {
 }
 
 func (m *Model) WithThinking(budgetTokens int) *Model {
-	m.includeThoughts = true
+	m.includeThoughts = budgetTokens > 0
 	m.thinkingBudget = budgetTokens
 	return m
 }
