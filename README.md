@@ -11,14 +11,13 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 - Structured output (JSON schema based) for model response
 - OpenAI only: Custom grammars like Lark / Regex for structured output
 - Prompt cache hints
-- Image inputs
+- Image inputs and image generation / editing
 - Usage tracking
 
 ### On the roadmap
 
 - [ ] Text diffusion model support (Inception, Google)
 - [ ] Realtime streaming (WebRTC)
-- [ ] Image output
 
 ## Installation
 
