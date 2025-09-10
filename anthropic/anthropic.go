@@ -25,7 +25,7 @@ type Model struct {
 	model             string
 	endpoint          string
 	company           string
-	debug             bool
+	debugger          llms.Debugger
 	maxTokens         int
 	maxThinkingTokens int
 	betaFeatures      []string
@@ -39,11 +39,6 @@ func New(apiKey, model string) *Model {
 		company:   "Anthropic",
 		maxTokens: 1024,
 	}
-}
-
-func (m *Model) WithDebug() *Model {
-	m.debug = true
-	return m
 }
 
 // WithBeta adds an Anthropic beta feature flag to the request.
@@ -77,6 +72,10 @@ func (m *Model) Company() string {
 
 func (m *Model) Model() string {
 	return m.model
+}
+
+func (m *Model) SetDebugger(d llms.Debugger) {
+	m.debugger = d
 }
 
 func (m *Model) Generate(
@@ -215,9 +214,8 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debug {
-		fmt.Printf("\033[1;90m%s\033[0m\n", m.endpoint)
-		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	if m.debugger != nil {
+		m.debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -259,7 +257,7 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode, debug: m.debug}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode, debugger: m.debugger}
 }
 
 type Stream struct {
@@ -271,7 +269,7 @@ type Stream struct {
 	lastText    string
 	lastThought *content.Thought
 	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
-	debug       bool
+	debugger    llms.Debugger
 
 	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
 }
@@ -349,8 +347,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				return
 			}
 
-			if s.debug && strings.TrimSpace(scanner.Text()) != "" {
-				fmt.Printf("<- \033[2;32m%s\033[0m\n", scanner.Text())
+			if s.debugger != nil && strings.TrimSpace(scanner.Text()) != "" {
+				s.debugger.RawEvent([]byte(scanner.Text()))
 			}
 
 			line, ok := strings.CutPrefix(scanner.Text(), "data: ")

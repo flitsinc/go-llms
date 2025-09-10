@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -52,7 +51,7 @@ type Model struct {
 	topP            float64
 	includeThoughts bool
 	thinkingBudget  int
-	debug           bool
+	debugger        llms.Debugger
 	modalities      []string
 }
 
@@ -119,11 +118,6 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 	return m
 }
 
-func (m *Model) WithDebug() *Model {
-	m.debug = true
-	return m
-}
-
 // WithModalities configures the model to use specific modalities for the
 // response. Usually not necessary.
 //
@@ -139,6 +133,10 @@ func (m *Model) Company() string {
 
 func (m *Model) Model() string {
 	return m.model
+}
+
+func (m *Model) SetDebugger(d llms.Debugger) {
+	m.debugger = d
 }
 
 func (m *Model) Generate(
@@ -295,9 +293,8 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debug {
-		fmt.Printf("\033[1;90m%s\033[0m\n", regexp.MustCompile(`([&?]key)=[^&]*`).ReplaceAllString(m.endpoint, "$1=…"))
-		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	if m.debugger != nil {
+		m.debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -333,7 +330,7 @@ func (m *Model) Generate(
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debug: m.debug}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
 }
 
 type Stream struct {
@@ -345,7 +342,7 @@ type Stream struct {
 	lastText    string
 	lastThought *content.Thought
 	usage       *usageMetadata
-	debug       bool
+	debugger    llms.Debugger
 	lastImage   struct{ URL, MIME string }
 }
 
@@ -425,8 +422,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 
 			rawLine := lineBuilder.String()
 
-			if s.debug && strings.TrimSpace(rawLine) != "" {
-				fmt.Printf("<- \033[2;32m%s\033[0m\n", rawLine)
+			if s.debugger != nil && strings.TrimSpace(rawLine) != "" {
+				s.debugger.RawEvent([]byte(rawLine))
 			}
 
 			line, ok := strings.CutPrefix(rawLine, "data: ")

@@ -2,6 +2,8 @@ package llms
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/tools"
@@ -33,9 +35,30 @@ type ProviderStream interface {
 	Usage() Usage
 }
 
+// Debugger is used to debug communication with the LLM.
+type Debugger interface {
+	RawRequest(endpoint string, data []byte)
+	RawEvent([]byte)
+}
+
+type stdOutDebugger struct{}
+
+func (d *stdOutDebugger) RawRequest(endpoint string, data []byte) {
+	// Remove Google API keys from the URL before logging it.
+	fmt.Printf("\033[1;90m%s\033[0m\n", regexp.MustCompile(`([&?]key)=[^&]*`).ReplaceAllString(endpoint, "$1=…"))
+	fmt.Printf("-> \033[2;34m%s\033[0m\n", string(data))
+}
+
+func (d *stdOutDebugger) RawEvent(data []byte) {
+	fmt.Printf("<- \033[2;32m%s\033[0m\n", string(data))
+}
+
+var StdOutDebugger = &stdOutDebugger{}
+
 type Provider interface {
 	Company() string
 	Model() string
+	SetDebugger(d Debugger)
 	// Generate takes a system prompt, message history, and optional toolbox,
 	// returning a stream for the LLM's response. The provided context should
 	// be respected for cancellation.

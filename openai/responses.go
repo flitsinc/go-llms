@@ -20,7 +20,7 @@ type ResponsesAPI struct {
 	model       string
 	endpoint    string
 	company     string
-	debug       bool
+	debugger    llms.Debugger
 
 	maxOutputTokens    int
 	reasoningEffort    Effort
@@ -52,11 +52,6 @@ func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
 		store:             true,
 		truncation:        "disabled",
 	}
-}
-
-func (m *ResponsesAPI) WithDebug() *ResponsesAPI {
-	m.debug = true
-	return m
 }
 
 // WithEndpoint sets the endpoint (and company name) so OpenAI-compatible API
@@ -148,6 +143,10 @@ func (m *ResponsesAPI) Company() string {
 
 func (m *ResponsesAPI) Model() string {
 	return m.model
+}
+
+func (m *ResponsesAPI) SetDebugger(d llms.Debugger) {
+	m.debugger = d
 }
 
 func (m *ResponsesAPI) Generate(
@@ -426,9 +425,8 @@ func (m *ResponsesAPI) Generate(
 		return &ResponsesStream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debug {
-		fmt.Printf("\033[1;90m%s\033[0m\n", m.endpoint)
-		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	if m.debugger != nil {
+		m.debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -467,14 +465,14 @@ func (m *ResponsesAPI) Generate(
 		return &ResponsesStream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debug: m.debug, lastThought: &content.Thought{}}
+	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger, lastThought: &content.Thought{}}
 }
 
 type ResponsesStream struct {
 	ctx         context.Context
 	model       string
 	stream      io.Reader
-	debug       bool
+	debugger    llms.Debugger
 	err         error
 	message     llms.Message
 	lastText    string
@@ -574,8 +572,8 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				continue
 			}
 
-			if s.debug && strings.TrimSpace(line) != "" {
-				fmt.Printf("<- \033[2;32m%s\033[0m\n", line)
+			if s.debugger != nil && strings.TrimSpace(line) != "" {
+				s.debugger.RawEvent([]byte(line))
 			}
 
 			var event ResponseStreamEvent

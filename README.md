@@ -406,8 +406,10 @@ You can easily implement new providers by implementing the `Provider` interface:
 type Provider interface {
     Company() string
     Model() string
-    // Generate takes a system prompt, message history, optional toolbox, and an optional JSON output schema.
-    // The provider should respect the context for cancellation during its operations.
+    SetDebugger(d Debugger)
+    // Generate takes a system prompt, message history, and optional toolbox,
+    // returning a stream for the LLM's response. The provided context should
+    // be respected for cancellation.
     Generate(
         ctx context.Context,
         systemPrompt content.Content,

@@ -20,7 +20,7 @@ type ChatCompletionsAPI struct {
 	model       string
 	endpoint    string
 	company     string
-	debug       bool
+	debugger    llms.Debugger
 
 	maxCompletionTokens int
 	reasoningEffort     Effort
@@ -34,11 +34,6 @@ func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 		endpoint:    "https://api.openai.com/v1/chat/completions",
 		company:     "OpenAI",
 	}
-}
-
-func (m *ChatCompletionsAPI) WithDebug() *ChatCompletionsAPI {
-	m.debug = true
-	return m
 }
 
 // WithEndpoint sets the endpoint (and company name) so OpenAI-compatible API
@@ -70,6 +65,10 @@ func (m *ChatCompletionsAPI) Company() string {
 
 func (m *ChatCompletionsAPI) Model() string {
 	return m.model
+}
+
+func (m *ChatCompletionsAPI) SetDebugger(d llms.Debugger) {
+	m.debugger = d
 }
 
 func (m *ChatCompletionsAPI) Generate(
@@ -228,9 +227,8 @@ func (m *ChatCompletionsAPI) Generate(
 		return &ChatCompletionsStream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debug {
-		fmt.Printf("\033[1;90m%s\033[0m\n", m.endpoint)
-		fmt.Printf("-> \033[2;34m%s\033[0m\n", string(jsonData))
+	if m.debugger != nil {
+		m.debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -269,14 +267,14 @@ func (m *ChatCompletionsAPI) Generate(
 		return &ChatCompletionsStream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debug: m.debug}
+	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
 }
 
 type ChatCompletionsStream struct {
 	ctx      context.Context
 	model    string
 	stream   io.Reader
-	debug    bool
+	debugger llms.Debugger
 	err      error
 	message  llms.Message
 	lastText string
@@ -348,8 +346,8 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				return // Exit loop on scan failure or EOF
 			}
 
-			if s.debug && strings.TrimSpace(scanner.Text()) != "" {
-				fmt.Printf("<- \033[2;32m%s\033[0m\n", scanner.Text())
+			if s.debugger != nil && strings.TrimSpace(scanner.Text()) != "" {
+				s.debugger.RawEvent([]byte(scanner.Text()))
 			}
 
 			// Process the scanned line.
