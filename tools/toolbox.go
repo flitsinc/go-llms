@@ -6,7 +6,8 @@ import (
 )
 
 type Toolbox struct {
-	tools map[string]Tool
+	// Tools preserves insertion order of tool names.
+	tools []Tool
 	// Choice controls tool selection policy for providers.
 	Choice Choice
 }
@@ -14,7 +15,7 @@ type Toolbox struct {
 // Box returns a new Toolbox containing the given tools.
 func Box(tools ...Tool) *Toolbox {
 	t := &Toolbox{
-		tools: make(map[string]Tool),
+		tools: make([]Tool, 0, len(tools)),
 	}
 	for _, tool := range tools {
 		t.Add(tool)
@@ -25,10 +26,12 @@ func Box(tools ...Tool) *Toolbox {
 // Add adds a tool to the toolbox.
 func (t *Toolbox) Add(tool Tool) {
 	funcName := tool.FuncName()
-	if _, ok := t.tools[funcName]; ok {
-		panic(fmt.Sprintf("tool %q already exists", funcName))
+	for _, existing := range t.tools {
+		if existing.FuncName() == funcName {
+			panic(fmt.Sprintf("tool %q already exists", funcName))
+		}
 	}
-	t.tools[funcName] = tool
+	t.tools = append(t.tools, tool)
 }
 
 func (t *Toolbox) All() []Tool {
@@ -37,10 +40,7 @@ func (t *Toolbox) All() []Tool {
 	if t == nil {
 		return tools
 	}
-	for _, tool := range t.tools {
-		tools = append(tools, tool)
-	}
-	return tools
+	return append(tools, t.tools...)
 }
 
 // Get returns the tool with the given function name.
@@ -49,7 +49,12 @@ func (t *Toolbox) Get(funcName string) Tool {
 	if t == nil {
 		return nil
 	}
-	return t.tools[funcName]
+	for _, tool := range t.tools {
+		if tool.FuncName() == funcName {
+			return tool
+		}
+	}
+	return nil
 }
 
 // Run runs the tool with the given name and parameters, which should be provided as a JSON string.
