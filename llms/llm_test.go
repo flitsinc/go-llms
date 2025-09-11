@@ -49,6 +49,7 @@ type mockProvider struct {
 	toolboxToolsCount      int
 	toolCallsToMake        []string // Names of tools to simulate calls for on the *first* Generate call
 	processedToolResponses bool     // Tracks if we've seen tool responses in messages
+	debugger               Debugger
 }
 
 func (m *mockProvider) Company() string {
@@ -57,6 +58,10 @@ func (m *mockProvider) Company() string {
 
 func (m *mockProvider) Model() string {
 	return "test-model"
+}
+
+func (m *mockProvider) SetDebugger(d Debugger) {
+	m.debugger = d
 }
 
 func (m *mockProvider) Generate(
@@ -196,6 +201,8 @@ func (m *errorMockProvider) Model() string {
 	return "test-model"
 }
 
+func (m *errorMockProvider) SetDebugger(d Debugger) {}
+
 // Updated signature
 func (m *errorMockProvider) Generate(
 	ctx context.Context,
@@ -234,6 +241,8 @@ func (m *mockEmptyIDProvider) Company() string {
 func (m *mockEmptyIDProvider) Model() string {
 	return "test-model"
 }
+
+func (m *mockEmptyIDProvider) SetDebugger(d Debugger) {}
 
 // Updated signature
 func (m *mockEmptyIDProvider) Generate(
@@ -312,6 +321,8 @@ func (m *mockCancellingProvider) Company() string { return "Mock Cancelling Prov
 func (m *mockCancellingProvider) Model() string {
 	return "test-model"
 }
+
+func (m *mockCancellingProvider) SetDebugger(d Debugger) {}
 
 // Updated signature
 func (m *mockCancellingProvider) Generate(

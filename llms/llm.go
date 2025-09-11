@@ -184,6 +184,11 @@ func (l *LLM) String() string {
 	return fmt.Sprintf("%s (%s)", l.provider.Model(), l.provider.Company())
 }
 
+func (l *LLM) WithDebugger(d Debugger) *LLM {
+	l.provider.SetDebugger(d)
+	return l
+}
+
 // WithMaxTurns sets the maximum number of turns the LLM will make. This is
 // useful to prevent infinite loops or excessive usage. A value of 0 means no
 // limit. A value of 1 means the LLM will only ever do one API call, and so on.
