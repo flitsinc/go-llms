@@ -7,6 +7,7 @@ import (
 
 type Toolbox struct {
 	tools map[string]Tool
+	order []string // preserves insertion order of tool names
 	// Choice controls tool selection policy for providers.
 	Choice Choice
 }
@@ -15,6 +16,7 @@ type Toolbox struct {
 func Box(tools ...Tool) *Toolbox {
 	t := &Toolbox{
 		tools: make(map[string]Tool),
+		order: make([]string, 0, len(tools)),
 	}
 	for _, tool := range tools {
 		t.Add(tool)
@@ -29,6 +31,7 @@ func (t *Toolbox) Add(tool Tool) {
 		panic(fmt.Sprintf("tool %q already exists", funcName))
 	}
 	t.tools[funcName] = tool
+	t.order = append(t.order, funcName)
 }
 
 func (t *Toolbox) All() []Tool {
@@ -37,8 +40,10 @@ func (t *Toolbox) All() []Tool {
 	if t == nil {
 		return tools
 	}
-	for _, tool := range t.tools {
-		tools = append(tools, tool)
+	for _, name := range t.order {
+		if tool, ok := t.tools[name]; ok {
+			tools = append(tools, tool)
+		}
 	}
 	return tools
 }
