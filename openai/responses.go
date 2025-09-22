@@ -892,8 +892,9 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 		// Replaying assistant messages into Responses API must use output item types,
 		// not input content types. Build an output message with output_text parts.
 		var outParts []OutputContent
-		// Collect all reasoning items (by ID) to replay before tool calls
-		var reasoningItems []Reasoning
+		// Only emit at most one reasoning item immediately before its following item
+		// (message or tool call) to satisfy Responses API adjacency rules.
+		var reasoningToEmit *Reasoning
 		seenReasoningIDs := map[string]bool{}
 
 		for _, item := range msg.Content {
@@ -903,25 +904,38 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			case *content.JSON:
 				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
 			case *content.Thought:
-				// Replay ALL reasoning items with IDs in the order they appear.
+				// Track the last unique reasoning item so we can place it directly
+				// before its following output item.
 				if v.ID != "" && !seenReasoningIDs[v.ID] {
 					seenReasoningIDs[v.ID] = true
-					// Always initialize Summary to an empty slice to avoid null in JSON.
 					r := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
 					if v.Text != "" {
 						r.Summary = append(r.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
 					}
-					reasoningItems = append(reasoningItems, r)
+					reasoningToEmit = &r
 				}
 			}
 		}
 
-		// Append all reasoning items before the assistant message and any tool calls
-		for _, r := range reasoningItems {
-			items = append(items, r)
+		hasOutMessage := len(outParts) > 0
+		hasToolCalls := len(msg.ToolCalls) > 0
+
+		// Emit reasoning immediately before its following item when possible.
+		outputMessageAppended := false
+		if reasoningToEmit != nil {
+			if hasOutMessage {
+				items = append(items, *reasoningToEmit)
+				items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
+				outputMessageAppended = true
+			} else if hasToolCalls {
+				// Place reasoning before the first tool call by appending it now; the
+				// following item (first tool call) will come next in the loop below.
+				items = append(items, *reasoningToEmit)
+			}
 		}
 
-		if len(outParts) > 0 {
+		// If we didn't already add the assistant message, and it exists, add it now.
+		if hasOutMessage && !outputMessageAppended {
 			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
 		}
 
