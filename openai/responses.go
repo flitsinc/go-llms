@@ -892,9 +892,9 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 		// Replaying assistant messages into Responses API must use output item types,
 		// not input content types. Build an output message with output_text parts.
 		var outParts []OutputContent
-		var hasReasoningWithID bool
-		var reasoningID string
-		reasoningSummary := []ReasoningSummary{}
+		// Collect all reasoning items (by ID) to replay before tool calls
+		var reasoningItems []Reasoning
+		seenReasoningIDs := map[string]bool{}
 
 		for _, item := range msg.Content {
 			switch v := item.(type) {
@@ -903,28 +903,26 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			case *content.JSON:
 				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
 			case *content.Thought:
-				// Only include the first reasoning item for now.
-				// The Responses API requires the prior turn's reasoning item to precede
-				// the replayed tool call, and that association typically refers to the
-				// first reasoning item (output_index 0). We don't yet track mappings
-				// between multiple reasoning IDs and specific tool calls; if we add that,
-				// we should replay all reasoning items in order or map them per call.
-				if !hasReasoningWithID && v.ID != "" {
-					hasReasoningWithID = true
-					reasoningID = v.ID
+				// Replay ALL reasoning items with IDs in the order they appear.
+				if v.ID != "" && !seenReasoningIDs[v.ID] {
+					seenReasoningIDs[v.ID] = true
+					// Always initialize Summary to an empty slice to avoid null in JSON.
+					r := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
 					if v.Text != "" {
-						reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+						r.Summary = append(r.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
 					}
+					reasoningItems = append(reasoningItems, r)
 				}
 			}
 		}
 
-		if len(outParts) > 0 {
-			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
+		// Append all reasoning items before the assistant message and any tool calls
+		for _, r := range reasoningItems {
+			items = append(items, r)
 		}
 
-		if hasReasoningWithID {
-			items = append(items, Reasoning{Type: "reasoning", ID: reasoningID, Summary: reasoningSummary})
+		if len(outParts) > 0 {
+			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
 		}
 
 		// Then add any tool calls. The item id is stored as an extra ID on the tool call.

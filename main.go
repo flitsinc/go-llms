@@ -41,6 +41,7 @@ func main() {
 		}
 		if provider == "openai-responses" {
 			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
+				WithParallelToolCalls(true).
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		} else {
@@ -74,7 +75,7 @@ func main() {
 		return
 	}
 
-	llm := llms.New(llmProvider, RunShellCmd)
+	llm := llms.New(llmProvider, RunShellCmd, DoMath)
 
 	// System prompt is dynamic so it can always be up-to-date.
 	llm.SystemPrompt = func() content.Content {
@@ -88,7 +89,7 @@ func main() {
 	var prevUpdate llms.UpdateType
 
 	// llm.Chat returns a channel of updates.
-	for update := range llm.Chat("List the files in the current directory. Then tell me a poem trying to rhyme with the most interesting file names.") {
+	for update := range llm.Chat("List the files in the current directory using a shell command. Then tell me a poem trying to rhyme with the most interesting file names.") {
 		// Output formatting: Add two newlines before new update types.
 		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
 			fmt.Println()
@@ -120,6 +121,72 @@ func main() {
 	}
 
 	// Check for errors at the end of the chat
+	if err := llm.Err(); err != nil {
+		panic(err)
+	}
+
+	// Parallel tools exercise: ask for multiple separate tool calls in one turn
+	fmt.Println()
+	fmt.Println()
+	fmt.Println("--- Parallel tools turn ---")
+	prevUpdate = ""
+	for update := range llm.Chat("Now perform the following as separate tool calls (do not combine arguments): 1) run 'ls -1 | wc -l' to count files; 2) run 'du -sh .' to get directory size; 3) compute 12345*6789 using the 'do_math' tool. Return the count, size, and product.") {
+		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
+			fmt.Println()
+			fmt.Println()
+		}
+
+		switch update := update.(type) {
+		case llms.ThinkingUpdate:
+			if prevUpdate != llms.UpdateTypeThinking {
+				fmt.Print("\033[2m💭 ")
+			}
+			fmt.Print(update.Text)
+		case llms.ThinkingDoneUpdate:
+			fmt.Print("\033[0m")
+		case llms.TextUpdate:
+			fmt.Print(update.Text)
+		case llms.ToolStartUpdate:
+			fmt.Printf("(%s: ", update.Tool.Label())
+		case llms.ToolDoneUpdate:
+			fmt.Printf("%s)", update.Result.Label())
+		}
+		prevUpdate = update.Type()
+	}
+
+	if err := llm.Err(); err != nil {
+		panic(err)
+	}
+
+	// Follow-up turn to exercise reasoning replay across turns (especially relevant for OpenAI Responses API)
+	fmt.Println()
+	fmt.Println()
+	fmt.Println("--- Follow-up turn ---")
+	prevUpdate = ""
+	for update := range llm.Chat("As a follow-up, count how many files are in the current directory (using a shell command) and then respond with just the number on its own line, followed by a short comment.") {
+		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
+			fmt.Println()
+			fmt.Println()
+		}
+
+		switch update := update.(type) {
+		case llms.ThinkingUpdate:
+			if prevUpdate != llms.UpdateTypeThinking {
+				fmt.Print("\033[2m💭 ")
+			}
+			fmt.Print(update.Text)
+		case llms.ThinkingDoneUpdate:
+			fmt.Print("\033[0m")
+		case llms.TextUpdate:
+			fmt.Print(update.Text)
+		case llms.ToolStartUpdate:
+			fmt.Printf("(%s: ", update.Tool.Label())
+		case llms.ToolDoneUpdate:
+			fmt.Printf("%s)", update.Result.Label())
+		}
+		prevUpdate = update.Type()
+	}
+
 	if err := llm.Err(); err != nil {
 		panic(err)
 	}
