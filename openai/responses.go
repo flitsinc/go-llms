@@ -979,9 +979,6 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			}
 			// Require a concrete output item ID to safely replay this call.
 			if strings.HasPrefix(tc.ExtraID, "ctc_") {
-				if tc.ExtraID == "" {
-					continue
-				}
 				items = append(items, CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID})
 				continue
 			}
