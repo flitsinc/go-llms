@@ -290,7 +290,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				return false, fmt.Errorf("tool %q not found", toolCall.Name)
 			}
 			toolCallDeltaSentBytes = 0
-			updateChan <- ToolStartUpdate{toolCall.ID, tool}
+			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool, ExtraID: toolCall.ExtraID}
 
 		case StreamStatusToolCallDelta:
 			toolCall := stream.ToolCall()
@@ -371,7 +371,7 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	select {
 	case <-ctx.Done(): // Don't send if already cancelled
 	default:
-		updateChan <- ToolDoneUpdate{toolCall.ID, result, t}
+		updateChan <- ToolDoneUpdate{ToolCallID: toolCall.ID, Result: result, Tool: t, ExtraID: toolCall.ExtraID}
 	}
 
 	return Message{

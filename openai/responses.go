@@ -185,6 +185,9 @@ func (m *ResponsesAPI) Generate(
 		input = append(input, convertMessageToInput(msg)...)
 	}
 
+	// Sanitize input to ensure no standalone reasoning items remain without a valid following item
+	input = sanitizeResponsesInput(input)
+
 	payload := map[string]any{
 		"model":               m.model,
 		"input":               input,
@@ -478,17 +481,51 @@ func (m *ResponsesAPI) Generate(
 	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger, lastThought: &content.Thought{}}
 }
 
+// sanitizeResponsesInput removes any 'reasoning' items that are not immediately followed
+// by a valid output item (message or tool call), to satisfy Responses API adjacency rules.
+func sanitizeResponsesInput(in []ResponseInput) []ResponseInput {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]ResponseInput, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		if _, isReasoning := in[i].(Reasoning); isReasoning {
+			if i+1 < len(in) {
+				if _, ok := in[i+1].(OutputMessage); ok {
+					out = append(out, in[i])
+					continue
+				}
+				if _, ok := in[i+1].(FunctionCall); ok {
+					out = append(out, in[i])
+					continue
+				}
+				if _, ok := in[i+1].(CustomToolCall); ok {
+					out = append(out, in[i])
+					continue
+				}
+				// Not followed by a valid output item; drop the reasoning
+				continue
+			}
+			// Trailing reasoning without follower; drop it
+			continue
+		}
+		out = append(out, in[i])
+	}
+	return out
+}
+
 type ResponsesStream struct {
-	ctx         context.Context
-	model       string
-	stream      io.Reader
-	debugger    llms.Debugger
-	err         error
-	message     llms.Message
-	lastText    string
-	lastImage   struct{ URL, MIME string }
-	usage       *responsesUsage
-	lastThought *content.Thought
+	ctx             context.Context
+	model           string
+	stream          io.Reader
+	debugger        llms.Debugger
+	err             error
+	message         llms.Message
+	lastText        string
+	lastImage       struct{ URL, MIME string }
+	usage           *responsesUsage
+	lastThought     *content.Thought
+	lastReasoningID string
 }
 
 func (s *ResponsesStream) Err() error {
@@ -666,6 +703,7 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 						// Initialize an aggregated thought in message content; lastThought will carry only deltas
 						s.message.Content.AppendThoughtWithID(item.ID, "", true)
 						s.lastThought = &content.Thought{ID: item.ID, Summary: true}
+						s.lastReasoningID = item.ID
 					}
 				}
 
@@ -701,6 +739,8 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
 					}
+					// Clear lastReasoningID after pairing this tool call with the last reasoning
+					s.lastReasoningID = ""
 					activeToolCall = nil
 				}
 
@@ -889,12 +929,9 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 		})
 
 	case "assistant":
-		// Replaying assistant messages into Responses API must use output item types,
-		// not input content types. Build an output message with output_text parts.
+		// Build output_text parts and collect reasoning items to pair with following outputs.
 		var outParts []OutputContent
-		// Only emit at most one reasoning item immediately before its following item
-		// (message or tool call) to satisfy Responses API adjacency rules.
-		var reasoningToEmit *Reasoning
+		var reasoningQueue []Reasoning
 		seenReasoningIDs := map[string]bool{}
 
 		for _, item := range msg.Content {
@@ -904,49 +941,54 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			case *content.JSON:
 				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
 			case *content.Thought:
-				// Track the last unique reasoning item so we can place it directly
-				// before its following output item.
 				if v.ID != "" && !seenReasoningIDs[v.ID] {
 					seenReasoningIDs[v.ID] = true
 					r := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
 					if v.Text != "" {
 						r.Summary = append(r.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
 					}
-					reasoningToEmit = &r
+					reasoningQueue = append(reasoningQueue, r)
 				}
 			}
 		}
 
-		hasOutMessage := len(outParts) > 0
-		hasToolCalls := len(msg.ToolCalls) > 0
-
-		// Emit reasoning immediately before its following item when possible.
-		outputMessageAppended := false
-		if reasoningToEmit != nil {
-			if hasOutMessage {
-				items = append(items, *reasoningToEmit)
-				items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
-				outputMessageAppended = true
-			} else if hasToolCalls {
-				// Place reasoning before the first tool call by appending it now; the
-				// following item (first tool call) will come next in the loop below.
-				items = append(items, *reasoningToEmit)
+		// Helper to pop next reasoning for pairing, return id.
+		popReasoning := func() (Reasoning, bool) {
+			if len(reasoningQueue) == 0 {
+				return Reasoning{}, false
 			}
+			r := reasoningQueue[0]
+			reasoningQueue = reasoningQueue[1:]
+			return r, true
 		}
 
-		// If we didn't already add the assistant message, and it exists, add it now.
-		if hasOutMessage && !outputMessageAppended {
+		// Pair reasoning -> assistant message if text was produced.
+		if len(outParts) > 0 {
+			if r, ok := popReasoning(); ok {
+				items = append(items, r)
+			}
 			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
 		}
 
-		// Then add any tool calls. The item id is stored as an extra ID on the tool call.
+		// Then tool calls. Ensure the first call is immediately preceded by a reasoning
+		// if the model emitted one (to satisfy adjacency when no assistant text).
 		for _, tc := range msg.ToolCalls {
-			// If ExtraID looks like a custom tool call id (ctc_), send as custom_tool_call.
+			// Pair a reasoning before each tool call when available to satisfy adjacency.
+			if r, ok := popReasoning(); ok {
+				items = append(items, r)
+			}
+			// Require a concrete output item ID to safely replay this call.
 			if strings.HasPrefix(tc.ExtraID, "ctc_") {
+				if tc.ExtraID == "" {
+					continue
+				}
 				items = append(items, CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID})
 				continue
 			}
-			// Otherwise, treat as a JSON function_call.
+			// Function calls: skip if we don't have the original item id.
+			if tc.ExtraID == "" {
+				continue
+			}
 			items = append(items, FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID})
 		}
 
