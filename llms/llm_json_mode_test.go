@@ -3,6 +3,7 @@ package llms
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -25,6 +26,8 @@ func (m *mockJSONProvider) Model() string   { return "json-model" }
 func (m *mockJSONProvider) SetDebugger(d Debugger) {
 	m.debugger = d
 }
+
+func (m *mockJSONProvider) SetHTTPClient(_ *http.Client) {}
 func (m *mockJSONProvider) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -63,9 +66,10 @@ func (s *mockJSONStream) Usage() Usage {
 // Error provider and stream for error propagation test
 type errorProvider struct{}
 
-func (e *errorProvider) Company() string        { return "err" }
-func (e *errorProvider) Model() string          { return "err-model" }
-func (e *errorProvider) SetDebugger(d Debugger) {}
+func (e *errorProvider) Company() string              { return "err" }
+func (e *errorProvider) Model() string                { return "err-model" }
+func (e *errorProvider) SetDebugger(d Debugger)       {}
+func (e *errorProvider) SetHTTPClient(_ *http.Client) {}
 func (e *errorProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox, jsonOutputSchema *tools.ValueSchema) ProviderStream {
 	return &mockJSONStreamWithError{}
 }

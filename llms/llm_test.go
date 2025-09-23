@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -63,6 +64,8 @@ func (m *mockProvider) Model() string {
 func (m *mockProvider) SetDebugger(d Debugger) {
 	m.debugger = d
 }
+
+func (m *mockProvider) SetHTTPClient(_ *http.Client) {}
 
 func (m *mockProvider) Generate(
 	ctx context.Context,
@@ -203,6 +206,8 @@ func (m *errorMockProvider) Model() string {
 
 func (m *errorMockProvider) SetDebugger(d Debugger) {}
 
+func (m *errorMockProvider) SetHTTPClient(_ *http.Client) {}
+
 // Updated signature
 func (m *errorMockProvider) Generate(
 	ctx context.Context,
@@ -243,6 +248,8 @@ func (m *mockEmptyIDProvider) Model() string {
 }
 
 func (m *mockEmptyIDProvider) SetDebugger(d Debugger) {}
+
+func (m *mockEmptyIDProvider) SetHTTPClient(_ *http.Client) {}
 
 // Updated signature
 func (m *mockEmptyIDProvider) Generate(
@@ -323,6 +330,8 @@ func (m *mockCancellingProvider) Model() string {
 }
 
 func (m *mockCancellingProvider) SetDebugger(d Debugger) {}
+
+func (m *mockCancellingProvider) SetHTTPClient(_ *http.Client) {}
 
 // Updated signature
 func (m *mockCancellingProvider) Generate(

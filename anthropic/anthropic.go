@@ -29,6 +29,7 @@ type Model struct {
 	maxTokens         int
 	maxThinkingTokens int
 	betaFeatures      []string
+	httpClient        *http.Client
 }
 
 func New(apiKey, model string) *Model {
@@ -76,6 +77,10 @@ func (m *Model) Model() string {
 
 func (m *Model) SetDebugger(d llms.Debugger) {
 	m.debugger = d
+}
+
+func (m *Model) SetHTTPClient(client *http.Client) {
+	m.httpClient = client
 }
 
 func (m *Model) Generate(
@@ -231,7 +236,12 @@ func (m *Model) Generate(
 		req.Header.Add("anthropic-beta", beta)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := m.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error making request: %w", err)}
 	}

@@ -53,6 +53,7 @@ type Model struct {
 	thinkingBudget  int
 	debugger        llms.Debugger
 	modalities      []string
+	httpClient      *http.Client
 }
 
 func New(model string) *Model {
@@ -125,6 +126,10 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 func (m *Model) WithModalities(modalities ...string) *Model {
 	m.modalities = modalities
 	return m
+}
+
+func (m *Model) SetHTTPClient(client *http.Client) {
+	m.httpClient = client
 }
 
 func (m *Model) Company() string {
@@ -310,7 +315,12 @@ func (m *Model) Generate(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := m.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error making request: %w", err)}
 	}

@@ -21,6 +21,7 @@ type ChatCompletionsAPI struct {
 	endpoint    string
 	company     string
 	debugger    llms.Debugger
+	httpClient  *http.Client
 
 	maxCompletionTokens int
 	reasoningEffort     Effort
@@ -57,6 +58,10 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
 	return m
+}
+
+func (m *ChatCompletionsAPI) SetHTTPClient(client *http.Client) {
+	m.httpClient = client
 }
 
 func (m *ChatCompletionsAPI) Company() string {
@@ -240,7 +245,12 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := m.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return &ChatCompletionsStream{err: fmt.Errorf("error making request: %w", err)}
 	}

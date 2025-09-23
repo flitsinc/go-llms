@@ -21,6 +21,7 @@ type ResponsesAPI struct {
 	endpoint    string
 	company     string
 	debugger    llms.Debugger
+	httpClient  *http.Client
 
 	maxOutputTokens    int
 	reasoningEffort    Effort
@@ -135,6 +136,10 @@ func (m *ResponsesAPI) WithPromptCacheKey(key string) *ResponsesAPI {
 func (m *ResponsesAPI) WithVerbosity(verbosity Verbosity) *ResponsesAPI {
 	m.verbosity = verbosity
 	return m
+}
+
+func (m *ResponsesAPI) SetHTTPClient(client *http.Client) {
+	m.httpClient = client
 }
 
 func (m *ResponsesAPI) Company() string {
@@ -438,7 +443,12 @@ func (m *ResponsesAPI) Generate(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := m.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return &ResponsesStream{err: fmt.Errorf("error making request: %w", err)}
 	}
