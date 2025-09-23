@@ -23,9 +23,6 @@ type ToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 	// Some providers require passing a second id for tool calls.
 	ExtraID string `json:"extra_id,omitempty"`
-	// ReasoningID links this tool call to the immediately preceding reasoning item
-	// (provider-specific), used to maintain conversation-state replay adjacency.
-	ReasoningID string `json:"reasoning_id,omitempty"`
 }
 
 // GetToolCall retrieves the ToolCall associated with the context, if present.

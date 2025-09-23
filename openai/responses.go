@@ -177,16 +177,21 @@ func (m *ResponsesAPI) Generate(
 			Role:    "system",
 			Content: systemPrompt,
 		}
-		input = append(input, convertMessageToInput(systemMsg)...)
+		systemInputs, err := convertMessageToInput(systemMsg)
+		if err != nil {
+			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert system message: %w", err)}
+		}
+		input = append(input, systemInputs...)
 	}
 
 	// Convert messages to input items
 	for _, msg := range messages {
-		input = append(input, convertMessageToInput(msg)...)
+		msgInputs, err := convertMessageToInput(msg)
+		if err != nil {
+			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err)}
+		}
+		input = append(input, msgInputs...)
 	}
-
-	// Sanitize input to ensure no standalone reasoning items remain without a valid following item
-	input = sanitizeResponsesInput(input)
 
 	payload := map[string]any{
 		"model":               m.model,
@@ -479,39 +484,6 @@ func (m *ResponsesAPI) Generate(
 	}
 
 	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger, lastThought: &content.Thought{}}
-}
-
-// sanitizeResponsesInput removes any 'reasoning' items that are not immediately followed
-// by a valid output item (message or tool call), to satisfy Responses API adjacency rules.
-func sanitizeResponsesInput(in []ResponseInput) []ResponseInput {
-	if len(in) == 0 {
-		return in
-	}
-	out := make([]ResponseInput, 0, len(in))
-	for i := 0; i < len(in); i++ {
-		if _, isReasoning := in[i].(Reasoning); isReasoning {
-			if i+1 < len(in) {
-				if _, ok := in[i+1].(OutputMessage); ok {
-					out = append(out, in[i])
-					continue
-				}
-				if _, ok := in[i+1].(FunctionCall); ok {
-					out = append(out, in[i])
-					continue
-				}
-				if _, ok := in[i+1].(CustomToolCall); ok {
-					out = append(out, in[i])
-					continue
-				}
-				// Not followed by a valid output item; drop the reasoning
-				continue
-			}
-			// Trailing reasoning without follower; drop it
-			continue
-		}
-		out = append(out, in[i])
-	}
-	return out
 }
 
 type ResponsesStream struct {
@@ -916,7 +888,7 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 }
 
 // convertMessageToInput converts an llms.Message to ResponseInput items
-func convertMessageToInput(msg llms.Message) []ResponseInput {
+func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 	var items []ResponseInput
 
 	switch msg.Role {
@@ -927,6 +899,7 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			Role:    msg.Role,
 			Content: content, // can be empty slice
 		})
+		return items, nil
 
 	case "assistant":
 		// Build output_text parts and collect reasoning items to pair with following outputs.
@@ -952,8 +925,9 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			}
 		}
 
-		// Helper to pop next reasoning for pairing, return id.
-		popReasoning := func() (Reasoning, bool) {
+		// ConsumeReasoning pops the next reasoning so it can be emitted immediately
+		// before the paired output item.
+		consumeReasoning := func() (Reasoning, bool) {
 			if len(reasoningQueue) == 0 {
 				return Reasoning{}, false
 			}
@@ -962,32 +936,34 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			return r, true
 		}
 
-		// Pair reasoning -> assistant message if text was produced.
 		if len(outParts) > 0 {
-			if r, ok := popReasoning(); ok {
+			if r, ok := consumeReasoning(); ok {
 				items = append(items, r)
 			}
 			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
 		}
 
-		// Then tool calls. Ensure the first call is immediately preceded by a reasoning
-		// if the model emitted one (to satisfy adjacency when no assistant text).
 		for _, tc := range msg.ToolCalls {
-			// Pair a reasoning before each tool call when available to satisfy adjacency.
-			if r, ok := popReasoning(); ok {
+			var toolItem ResponseInput
+			if strings.HasPrefix(tc.ExtraID, "ctc_") {
+				toolItem = CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
+			} else {
+				if tc.ExtraID == "" {
+					return nil, fmt.Errorf("tool call %q is missing output item id for replay", tc.ID)
+				}
+				toolItem = FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
+			}
+			if r, ok := consumeReasoning(); ok {
 				items = append(items, r)
 			}
-			// Require a concrete output item ID to safely replay this call.
-			if strings.HasPrefix(tc.ExtraID, "ctc_") {
-				items = append(items, CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID})
-				continue
-			}
-			// Function calls: skip if we don't have the original item id.
-			if tc.ExtraID == "" {
-				continue
-			}
-			items = append(items, FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID})
+			items = append(items, toolItem)
 		}
+
+		if len(reasoningQueue) > 0 {
+			return nil, fmt.Errorf("assistant message %q has %d unpaired reasoning items", msg.ID, len(reasoningQueue))
+		}
+
+		return items, nil
 
 	case "tool":
 		// A tool result message.
@@ -1001,8 +977,6 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			}
 		}
 
-		// Tool results can also have auxiliary content that should be sent
-		// from the user role.
 		if len(msg.Content) > 1 {
 			secondaryContent := convertContentToInputContent(msg.Content[1:])
 			if len(secondaryContent) > 0 {
@@ -1019,8 +993,10 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			CallID: msg.ToolCallID,
 			Output: outputStr,
 		})
+		return items, nil
 	}
-	return items
+
+	return nil, fmt.Errorf("unsupported role %q", msg.Role)
 }
 
 // convertContentToInputContent converts content.Content to InputContent array

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -75,7 +76,10 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 		},
 	}
 
-	inputs := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
 	if len(inputs) == 0 {
 		t.Fatalf("expected non-empty inputs")
 	}
@@ -142,5 +146,67 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 	}
 	if usage.CachedInputTokens != 25 {
 		t.Errorf("expected CachedInputTokens=25, got %d", usage.CachedInputTokens)
+	}
+}
+
+func TestConvertMessageToInput_MissingToolExtraIDReturnsError(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_missing", Text: "Planning..."},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_missing",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+			},
+		},
+	}
+
+	_, err := convertMessageToInput(msg)
+	if err == nil {
+		t.Fatalf("expected error for tool call missing ExtraID, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing output item id") {
+		t.Fatalf("expected missing output item id error, got %v", err)
+	}
+}
+
+func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_pair", Text: "Need to inspect files"},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call1",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+				ExtraID:   "fc_123",
+			},
+		},
+	}
+
+	items, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (reasoning + tool), got %d", len(items))
+	}
+	if _, ok := items[0].(Reasoning); !ok {
+		t.Fatalf("expected first item to be Reasoning, got %T", items[0])
+	}
+	fc, ok := items[1].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected second item to be FunctionCall, got %T", items[1])
+	}
+	if fc.ID != "fc_123" {
+		t.Fatalf("expected FunctionCall ID 'fc_123', got %q", fc.ID)
+	}
+	if fc.CallID != "call1" {
+		t.Fatalf("expected FunctionCall CallID 'call1', got %q", fc.CallID)
 	}
 }
