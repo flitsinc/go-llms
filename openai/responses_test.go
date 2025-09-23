@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -70,12 +71,15 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",
 		Content: content.Content{
-			&content.Text{Text: "Final answer."},
 			&content.Thought{ID: "r_99", Text: "Concise internal reasoning summary.", Summary: true},
+			&content.Text{Text: "Final answer."},
 		},
 	}
 
-	inputs := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
 	if len(inputs) == 0 {
 		t.Fatalf("expected non-empty inputs")
 	}
@@ -142,5 +146,183 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 	}
 	if usage.CachedInputTokens != 25 {
 		t.Errorf("expected CachedInputTokens=25, got %d", usage.CachedInputTokens)
+	}
+}
+
+func TestConvertMessageToInput_MissingToolExtraIDReturnsError(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_missing", Text: "Planning..."},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_missing",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+			},
+		},
+	}
+
+	_, err := convertMessageToInput(msg)
+	if err == nil {
+		t.Fatalf("expected error for tool call missing ExtraID, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing output item id") {
+		t.Fatalf("expected missing output item id error, got %v", err)
+	}
+}
+
+func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_pair", Text: "Need to inspect files"},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call1",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+				ExtraID:   "fc_123",
+			},
+		},
+	}
+	items, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (reasoning + tool), got %d", len(items))
+	}
+	if _, ok := items[0].(Reasoning); !ok {
+		t.Fatalf("expected first item to be Reasoning, got %T", items[0])
+	}
+	fc, ok := items[1].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected second item to be FunctionCall, got %T", items[1])
+	}
+	if fc.ID != "fc_123" {
+		t.Fatalf("expected FunctionCall ID 'fc_123', got %q", fc.ID)
+	}
+	if fc.CallID != "call1" {
+		t.Fatalf("expected FunctionCall CallID 'call1', got %q", fc.CallID)
+	}
+}
+
+func TestConvertMessageToInput_PreservesReasoningOrderAcrossToolCalls(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_tool", Text: "Need a tool call", Summary: true},
+			&content.Text{Text: "Working..."},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call1",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+				ExtraID:   "fc_999",
+			},
+			{
+				ID:        "call2",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"pwd"}`),
+				ExtraID:   "fc_1000",
+			},
+		},
+	}
+
+	items, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items, got %d (%#v)", len(items), items)
+	}
+
+	if r, ok := items[0].(Reasoning); !ok || r.ID != "rs_tool" {
+		t.Fatalf("expected first item to be reasoning rs_tool, got %#v", items[0])
+	}
+	if _, ok := items[1].(OutputMessage); !ok {
+		t.Fatalf("expected second item to be OutputMessage, got %T", items[1])
+	}
+	if fc, ok := items[2].(FunctionCall); !ok || fc.ID != "fc_999" {
+		t.Fatalf("expected third item to be FunctionCall fc_999, got %#v", items[2])
+	}
+	if fc, ok := items[3].(FunctionCall); !ok || fc.ID != "fc_1000" {
+		t.Fatalf("expected fourth item to be FunctionCall fc_1000, got %#v", items[3])
+	}
+}
+
+func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.T) {
+	messages := []llms.Message{
+		{
+			Role: "assistant",
+			Content: content.Content{
+				&content.Thought{ID: "rs_tool", Text: "Need tool output", Summary: true},
+				&content.Text{Text: "I'll run pwd and ls before summarizing."},
+			},
+			ToolCalls: []llms.ToolCall{
+				{
+					ID:        "tool_call_1",
+					Name:      "run_shell_cmd",
+					Arguments: json.RawMessage(`{"command":"ls"}`),
+					ExtraID:   "fc_111",
+				},
+			},
+		},
+		{
+			Role:    "user",
+			Content: content.FromText("Here are the tool results."),
+		},
+		{
+			Role:       "tool",
+			ToolCallID: "tool_call_1",
+			Content:    content.FromText("file_a\nfile_b"),
+		},
+		{
+			Role: "assistant",
+			Content: content.Content{
+				&content.Thought{ID: "rs_final", Text: "Summarize results", Summary: true},
+				&content.Text{Text: "Listed files successfully."},
+			},
+		},
+	}
+
+	var sequence []ResponseInput
+	for i, msg := range messages {
+		items, err := convertMessageToInput(msg)
+		if err != nil {
+			t.Fatalf("message %d conversion failed: %v", i+1, err)
+		}
+		sequence = append(sequence, items...)
+	}
+
+	if len(sequence) != 7 {
+		t.Fatalf("expected 7 replay items, got %d (%#v)", len(sequence), sequence)
+	}
+
+	if r, ok := sequence[0].(Reasoning); !ok || r.ID != "rs_tool" {
+		t.Fatalf("expected first item reasoning rs_tool, got %#v", sequence[0])
+	}
+	if _, ok := sequence[1].(OutputMessage); !ok {
+		t.Fatalf("expected second item assistant OutputMessage announcing plan, got %#v", sequence[1])
+	}
+	if fc, ok := sequence[2].(FunctionCall); !ok || fc.ID != "fc_111" {
+		t.Fatalf("expected third item function call fc_111, got %#v", sequence[2])
+	}
+	if inMsg, ok := sequence[3].(InputMessage); !ok || inMsg.Role != "user" {
+		t.Fatalf("expected fourth item user InputMessage, got %#v", sequence[3])
+	}
+	if out, ok := sequence[4].(FunctionCallOutput); !ok || out.CallID != "tool_call_1" {
+		t.Fatalf("expected fifth item FunctionCallOutput for tool_call_1, got %#v", sequence[4])
+	}
+	if r, ok := sequence[5].(Reasoning); !ok || r.ID != "rs_final" {
+		t.Fatalf("expected sixth item reasoning rs_final, got %#v", sequence[5])
+	}
+	if outMsg, ok := sequence[6].(OutputMessage); !ok || len(outMsg.Content) == 0 {
+		t.Fatalf("expected seventh item assistant OutputMessage, got %#v", sequence[6])
 	}
 }

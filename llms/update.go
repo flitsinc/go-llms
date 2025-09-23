@@ -27,6 +27,9 @@ type Update interface {
 type ToolStartUpdate struct {
 	ToolCallID string
 	Tool       tools.Tool
+	// ExtraID carries the provider-specific output item id for this tool call.
+	// For OpenAI Responses API, this will be the fc_... or ctc_... item id.
+	ExtraID string
 }
 
 func (u ToolStartUpdate) Type() UpdateType {
@@ -56,6 +59,9 @@ type ToolDoneUpdate struct {
 	ToolCallID string
 	Result     tools.Result
 	Tool       tools.Tool
+	// ExtraID carries the provider-specific output item id for this tool call.
+	// For OpenAI Responses API, this will be the fc_... or ctc_... item id.
+	ExtraID string
 }
 
 func (u ToolDoneUpdate) Type() UpdateType {

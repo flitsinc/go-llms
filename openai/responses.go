@@ -177,12 +177,20 @@ func (m *ResponsesAPI) Generate(
 			Role:    "system",
 			Content: systemPrompt,
 		}
-		input = append(input, convertMessageToInput(systemMsg)...)
+		systemInputs, err := convertMessageToInput(systemMsg)
+		if err != nil {
+			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert system message: %w", err)}
+		}
+		input = append(input, systemInputs...)
 	}
 
 	// Convert messages to input items
 	for _, msg := range messages {
-		input = append(input, convertMessageToInput(msg)...)
+		msgInputs, err := convertMessageToInput(msg)
+		if err != nil {
+			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err)}
+		}
+		input = append(input, msgInputs...)
 	}
 
 	payload := map[string]any{
@@ -876,7 +884,7 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 }
 
 // convertMessageToInput converts an llms.Message to ResponseInput items
-func convertMessageToInput(msg llms.Message) []ResponseInput {
+func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 	var items []ResponseInput
 
 	switch msg.Role {
@@ -887,56 +895,62 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			Role:    msg.Role,
 			Content: content, // can be empty slice
 		})
+		return items, nil
 
 	case "assistant":
-		// Replaying assistant messages into Responses API must use output item types,
-		// not input content types. Build an output message with output_text parts.
-		var outParts []OutputContent
-		var hasReasoningWithID bool
-		var reasoningID string
-		reasoningSummary := []ReasoningSummary{}
+		seenReasoningIDs := map[string]bool{}
+		var pendingOutParts []OutputContent
+		firstOutputMessage := true
+
+		flushOutput := func() {
+			if len(pendingOutParts) == 0 {
+				return
+			}
+			msgID := ""
+			if firstOutputMessage {
+				msgID = msg.ID
+				firstOutputMessage = false
+			}
+			items = append(items, OutputMessage{Type: "message", ID: msgID, Role: "assistant", Content: pendingOutParts})
+			pendingOutParts = nil
+		}
 
 		for _, item := range msg.Content {
 			switch v := item.(type) {
 			case *content.Text:
-				outParts = append(outParts, OutputText{Type: "output_text", Text: v.Text})
+				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: v.Text})
 			case *content.JSON:
-				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
+				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: string(v.Data)})
 			case *content.Thought:
-				// Only include the first reasoning item for now.
-				// The Responses API requires the prior turn's reasoning item to precede
-				// the replayed tool call, and that association typically refers to the
-				// first reasoning item (output_index 0). We don't yet track mappings
-				// between multiple reasoning IDs and specific tool calls; if we add that,
-				// we should replay all reasoning items in order or map them per call.
-				if !hasReasoningWithID && v.ID != "" {
-					hasReasoningWithID = true
-					reasoningID = v.ID
-					if v.Text != "" {
-						reasoningSummary = append(reasoningSummary, ReasoningSummary{Type: "summary_text", Text: v.Text})
-					}
+				if v.ID == "" || seenReasoningIDs[v.ID] {
+					continue
 				}
+				flushOutput()
+				reasoning := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
+				if v.Text != "" {
+					reasoning.Summary = append(reasoning.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+				}
+				items = append(items, reasoning)
+				seenReasoningIDs[v.ID] = true
 			}
 		}
 
-		if len(outParts) > 0 {
-			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
-		}
+		flushOutput()
 
-		if hasReasoningWithID {
-			items = append(items, Reasoning{Type: "reasoning", ID: reasoningID, Summary: reasoningSummary})
-		}
-
-		// Then add any tool calls. The item id is stored as an extra ID on the tool call.
 		for _, tc := range msg.ToolCalls {
-			// If ExtraID looks like a custom tool call id (ctc_), send as custom_tool_call.
+			var toolItem ResponseInput
 			if strings.HasPrefix(tc.ExtraID, "ctc_") {
-				items = append(items, CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID})
-				continue
+				toolItem = CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
+			} else {
+				if tc.ExtraID == "" {
+					return nil, fmt.Errorf("tool call %q is missing output item id for replay", tc.ID)
+				}
+				toolItem = FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
 			}
-			// Otherwise, treat as a JSON function_call.
-			items = append(items, FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID})
+			items = append(items, toolItem)
 		}
+
+		return items, nil
 
 	case "tool":
 		// A tool result message.
@@ -950,8 +964,6 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			}
 		}
 
-		// Tool results can also have auxiliary content that should be sent
-		// from the user role.
 		if len(msg.Content) > 1 {
 			secondaryContent := convertContentToInputContent(msg.Content[1:])
 			if len(secondaryContent) > 0 {
@@ -968,8 +980,10 @@ func convertMessageToInput(msg llms.Message) []ResponseInput {
 			CallID: msg.ToolCallID,
 			Output: outputStr,
 		})
+		return items, nil
 	}
-	return items
+
+	return nil, fmt.Errorf("unsupported role %q", msg.Role)
 }
 
 // convertContentToInputContent converts content.Content to InputContent array

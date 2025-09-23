@@ -74,9 +74,9 @@ func (InputFile) inputContent() {}
 // OutputMessage implements ResponseItem for output messages
 type OutputMessage struct {
 	Type    string          `json:"type"` // "message"
-	ID      string          `json:"id"`
-	Role    string          `json:"role"`   // "assistant"
-	Status  string          `json:"status"` // "in_progress", "completed", "incomplete"
+	ID      string          `json:"id,omitempty"`
+	Role    string          `json:"role"`             // "assistant"
+	Status  string          `json:"status,omitempty"` // "in_progress", "completed", "incomplete"
 	Content []OutputContent `json:"content"`
 }
 
@@ -93,7 +93,7 @@ type OutputContent interface {
 type OutputText struct {
 	Type        string       `json:"type"` // "output_text"
 	Text        string       `json:"text"`
-	Annotations []Annotation `json:"annotations"`
+	Annotations []Annotation `json:"annotations,omitempty"`
 	Logprobs    []Logprob    `json:"logprobs,omitempty"`
 }
 
