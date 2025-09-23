@@ -487,17 +487,16 @@ func (m *ResponsesAPI) Generate(
 }
 
 type ResponsesStream struct {
-	ctx             context.Context
-	model           string
-	stream          io.Reader
-	debugger        llms.Debugger
-	err             error
-	message         llms.Message
-	lastText        string
-	lastImage       struct{ URL, MIME string }
-	usage           *responsesUsage
-	lastThought     *content.Thought
-	lastReasoningID string
+	ctx         context.Context
+	model       string
+	stream      io.Reader
+	debugger    llms.Debugger
+	err         error
+	message     llms.Message
+	lastText    string
+	lastImage   struct{ URL, MIME string }
+	usage       *responsesUsage
+	lastThought *content.Thought
 }
 
 func (s *ResponsesStream) Err() error {
@@ -675,7 +674,6 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 						// Initialize an aggregated thought in message content; lastThought will carry only deltas
 						s.message.Content.AppendThoughtWithID(item.ID, "", true)
 						s.lastThought = &content.Thought{ID: item.ID, Summary: true}
-						s.lastReasoningID = item.ID
 					}
 				}
 
@@ -711,8 +709,6 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
 					}
-					// Clear lastReasoningID after pairing this tool call with the last reasoning
-					s.lastReasoningID = ""
 					activeToolCall = nil
 				}
 
@@ -902,46 +898,44 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		return items, nil
 
 	case "assistant":
-		// Build output_text parts and collect reasoning items to pair with following outputs.
-		var outParts []OutputContent
-		var reasoningQueue []Reasoning
 		seenReasoningIDs := map[string]bool{}
+		var pendingOutParts []OutputContent
+		firstOutputMessage := true
+
+		flushOutput := func() {
+			if len(pendingOutParts) == 0 {
+				return
+			}
+			msgID := ""
+			if firstOutputMessage {
+				msgID = msg.ID
+				firstOutputMessage = false
+			}
+			items = append(items, OutputMessage{Type: "message", ID: msgID, Role: "assistant", Content: pendingOutParts})
+			pendingOutParts = nil
+		}
 
 		for _, item := range msg.Content {
 			switch v := item.(type) {
 			case *content.Text:
-				outParts = append(outParts, OutputText{Type: "output_text", Text: v.Text})
+				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: v.Text})
 			case *content.JSON:
-				outParts = append(outParts, OutputText{Type: "output_text", Text: string(v.Data)})
+				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: string(v.Data)})
 			case *content.Thought:
-				if v.ID != "" && !seenReasoningIDs[v.ID] {
-					seenReasoningIDs[v.ID] = true
-					r := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
-					if v.Text != "" {
-						r.Summary = append(r.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
-					}
-					reasoningQueue = append(reasoningQueue, r)
+				if v.ID == "" || seenReasoningIDs[v.ID] {
+					continue
 				}
+				flushOutput()
+				reasoning := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
+				if v.Text != "" {
+					reasoning.Summary = append(reasoning.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
+				}
+				items = append(items, reasoning)
+				seenReasoningIDs[v.ID] = true
 			}
 		}
 
-		// ConsumeReasoning pops the next reasoning so it can be emitted immediately
-		// before the paired output item.
-		consumeReasoning := func() (Reasoning, bool) {
-			if len(reasoningQueue) == 0 {
-				return Reasoning{}, false
-			}
-			r := reasoningQueue[0]
-			reasoningQueue = reasoningQueue[1:]
-			return r, true
-		}
-
-		if len(outParts) > 0 {
-			if r, ok := consumeReasoning(); ok {
-				items = append(items, r)
-			}
-			items = append(items, OutputMessage{Type: "message", ID: msg.ID, Role: "assistant", Content: outParts})
-		}
+		flushOutput()
 
 		for _, tc := range msg.ToolCalls {
 			var toolItem ResponseInput
@@ -953,14 +947,7 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 				}
 				toolItem = FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
 			}
-			if r, ok := consumeReasoning(); ok {
-				items = append(items, r)
-			}
 			items = append(items, toolItem)
-		}
-
-		if len(reasoningQueue) > 0 {
-			return nil, fmt.Errorf("assistant message %q has %d unpaired reasoning items", msg.ID, len(reasoningQueue))
 		}
 
 		return items, nil
