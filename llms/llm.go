@@ -17,6 +17,17 @@ var (
 	ErrToolsAndJSONOutputConflict = errors.New("cannot specify both tools and a JSON output schema")
 )
 
+func cloneMetadata(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(src))
+	for k, v := range src {
+		clone[k] = v
+	}
+	return clone
+}
+
 // LLM represents the interface to an LLM provider, maintaining state between
 // individual calls, for example when tool calling is being performed. Note that
 // this is NOT thread safe for this reason.
@@ -290,7 +301,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				return false, fmt.Errorf("tool %q not found", toolCall.Name)
 			}
 			toolCallDeltaSentBytes = 0
-			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool, ExtraID: toolCall.ExtraID}
+			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool, Metadata: cloneMetadata(toolCall.Metadata)}
 
 		case StreamStatusToolCallDelta:
 			toolCall := stream.ToolCall()
@@ -371,7 +382,7 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	select {
 	case <-ctx.Done(): // Don't send if already cancelled
 	default:
-		updateChan <- ToolDoneUpdate{ToolCallID: toolCall.ID, Result: result, Tool: t, ExtraID: toolCall.ExtraID}
+		updateChan <- ToolDoneUpdate{ToolCallID: toolCall.ID, Result: result, Tool: t, Metadata: cloneMetadata(toolCall.Metadata)}
 	}
 
 	return Message{

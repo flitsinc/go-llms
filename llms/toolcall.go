@@ -21,8 +21,9 @@ type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
-	// Some providers require passing a second id for tool calls.
-	ExtraID string `json:"extra_id,omitempty"`
+	// Metadata holds provider-specific metadata that should be forwarded unchanged.
+	// Keys are prefixed with the provider name, e.g. "openai:item_id".
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // GetToolCall retrieves the ToolCall associated with the context, if present.

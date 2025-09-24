@@ -624,15 +624,15 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 						var fc FunctionCall
 						if err := json.Unmarshal(event.Item, &fc); err == nil {
-							// The ID -> CallID, ExtraID -> ID mapping might
-							// look weird, but it's because for most providers
-							// the call ID is the main ID, but the Responses API
-							// gives each item a unique ID too.
+							metadata := map[string]string{
+								"openai:item_id":   fc.ID,
+								"openai:item_type": item.Type,
+							}
 							llmToolCall := llms.ToolCall{
 								ID:        fc.CallID,
 								Name:      fc.Name,
 								Arguments: json.RawMessage{},
-								ExtraID:   fc.ID,
+								Metadata:  metadata,
 							}
 							s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
 							activeToolCall = &s.message.ToolCalls[len(s.message.ToolCalls)-1]
@@ -659,11 +659,15 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 							ctc.ID = item.ID
 							ctc.Name = "custom"
 						}
+						metadata := map[string]string{
+							"openai:item_id":   ctc.ID,
+							"openai:item_type": item.Type,
+						}
 						llmToolCall := llms.ToolCall{
 							ID:        ctc.CallID,
 							Name:      ctc.Name,
 							Arguments: json.RawMessage(ctc.Input),
-							ExtraID:   ctc.ID,
+							Metadata:  metadata,
 						}
 						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
 						activeToolCall = &s.message.ToolCalls[len(s.message.ToolCalls)-1]
@@ -938,14 +942,17 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		flushOutput()
 
 		for _, tc := range msg.ToolCalls {
+			itemID := tc.Metadata["openai:item_id"]
+			if itemID == "" {
+				return nil, fmt.Errorf("tool call %q is missing openai:item_id metadata for replay", tc.ID)
+			}
+			itemType := tc.Metadata["openai:item_type"]
 			var toolItem ResponseInput
-			if strings.HasPrefix(tc.ExtraID, "ctc_") {
-				toolItem = CustomToolCall{Type: "custom_tool_call", ID: tc.ExtraID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
-			} else {
-				if tc.ExtraID == "" {
-					return nil, fmt.Errorf("tool call %q is missing output item id for replay", tc.ID)
-				}
-				toolItem = FunctionCall{Type: "function_call", ID: tc.ExtraID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
+			switch itemType {
+			case "custom_tool_call":
+				toolItem = CustomToolCall{Type: "custom_tool_call", ID: itemID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
+			default:
+				toolItem = FunctionCall{Type: "function_call", ID: itemID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
 			}
 			items = append(items, toolItem)
 		}

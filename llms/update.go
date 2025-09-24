@@ -27,9 +27,8 @@ type Update interface {
 type ToolStartUpdate struct {
 	ToolCallID string
 	Tool       tools.Tool
-	// ExtraID carries the provider-specific output item id for this tool call.
-	// For OpenAI Responses API, this will be the fc_... or ctc_... item id.
-	ExtraID string
+	// Metadata carries provider-specific fields that should be forwarded unchanged.
+	Metadata map[string]string
 }
 
 func (u ToolStartUpdate) Type() UpdateType {
@@ -59,9 +58,8 @@ type ToolDoneUpdate struct {
 	ToolCallID string
 	Result     tools.Result
 	Tool       tools.Tool
-	// ExtraID carries the provider-specific output item id for this tool call.
-	// For OpenAI Responses API, this will be the fc_... or ctc_... item id.
-	ExtraID string
+	// Metadata carries provider-specific fields that should be forwarded unchanged.
+	Metadata map[string]string
 }
 
 func (u ToolDoneUpdate) Type() UpdateType {

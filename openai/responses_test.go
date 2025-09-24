@@ -149,7 +149,7 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 	}
 }
 
-func TestConvertMessageToInput_MissingToolExtraIDReturnsError(t *testing.T) {
+func TestConvertMessageToInput_MissingOpenAIItemIDReturnsError(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",
 		Content: content.Content{
@@ -166,10 +166,10 @@ func TestConvertMessageToInput_MissingToolExtraIDReturnsError(t *testing.T) {
 
 	_, err := convertMessageToInput(msg)
 	if err == nil {
-		t.Fatalf("expected error for tool call missing ExtraID, got nil")
+		t.Fatalf("expected error for tool call missing openai:item_id metadata, got nil")
 	}
-	if !strings.Contains(err.Error(), "missing output item id") {
-		t.Fatalf("expected missing output item id error, got %v", err)
+	if !strings.Contains(err.Error(), "missing openai:item_id metadata") {
+		t.Fatalf("expected missing openai:item_id metadata error, got %v", err)
 	}
 }
 
@@ -184,7 +184,10 @@ func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 				ID:        "call1",
 				Name:      "run_shell_cmd",
 				Arguments: json.RawMessage(`{"command":"ls"}`),
-				ExtraID:   "fc_123",
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_123",
+					"openai:item_type": "function_call",
+				},
 			},
 		},
 	}
@@ -222,13 +225,19 @@ func TestConvertMessageToInput_PreservesReasoningOrderAcrossToolCalls(t *testing
 				ID:        "call1",
 				Name:      "run_shell_cmd",
 				Arguments: json.RawMessage(`{"command":"ls"}`),
-				ExtraID:   "fc_999",
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_999",
+					"openai:item_type": "function_call",
+				},
 			},
 			{
 				ID:        "call2",
 				Name:      "run_shell_cmd",
 				Arguments: json.RawMessage(`{"command":"pwd"}`),
-				ExtraID:   "fc_1000",
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_1000",
+					"openai:item_type": "function_call",
+				},
 			},
 		},
 	}
@@ -269,7 +278,10 @@ func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.
 					ID:        "tool_call_1",
 					Name:      "run_shell_cmd",
 					Arguments: json.RawMessage(`{"command":"ls"}`),
-					ExtraID:   "fc_111",
+					Metadata: map[string]string{
+						"openai:item_id":   "fc_111",
+						"openai:item_type": "function_call",
+					},
 				},
 			},
 		},
