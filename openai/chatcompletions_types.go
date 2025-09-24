@@ -159,22 +159,54 @@ func messagesFromLLM(m llms.Message) []message {
 	if m.Role == "assistant" && len(m.ToolCalls) > 0 {
 		msg.ToolCalls = make([]toolCall, len(m.ToolCalls))
 		for i, tc := range m.ToolCalls {
-			args := string(tc.Arguments)
-			if !json.Valid([]byte(args)) {
-				args = "{}"
-			}
-			msg.ToolCalls[i] = toolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: &toolCallFunction{
-					Name:      tc.Name,
-					Arguments: args,
-				},
+			typeHint := normalizeOpenAIToolType(tc.Metadata["openai:item_type"])
+			switch typeHint {
+			case "custom":
+				input := string(tc.Arguments)
+				msg.ToolCalls[i] = toolCall{
+					ID:   tc.ID,
+					Type: typeHint,
+					Custom: &customToolCall{
+						Name:  tc.Name,
+						Input: optionalStringPointer(input),
+					},
+				}
+			default:
+				args := string(tc.Arguments)
+				if !json.Valid([]byte(args)) {
+					args = "{}"
+				}
+				msg.ToolCalls[i] = toolCall{
+					ID:   tc.ID,
+					Type: typeHint,
+					Function: &toolCallFunction{
+						Name:      tc.Name,
+						Arguments: args,
+					},
+				}
 			}
 		}
 	}
 
 	return []message{msg}
+}
+
+func normalizeOpenAIToolType(metaType string) string {
+	switch metaType {
+	case "", "function", "function_call":
+		return "function"
+	case "custom", "custom_tool_call":
+		return "custom"
+	default:
+		return metaType
+	}
+}
+
+func optionalStringPointer(val string) *string {
+	if val == "" {
+		return nil
+	}
+	return &val
 }
 
 type toolCallFunction struct {
@@ -204,18 +236,30 @@ type toolCallDelta struct {
 }
 
 func (t toolCallDelta) ToLLM() llms.ToolCall {
+	metadata := make(map[string]string)
+	if t.Type != "" {
+		metadata["openai:item_type"] = t.Type
+	}
 	if t.Function != nil {
+		if len(metadata) == 0 {
+			metadata["openai:item_type"] = "function"
+		}
 		return llms.ToolCall{
 			ID:        t.ID,
 			Name:      t.Function.Name,
 			Arguments: json.RawMessage(t.Function.Arguments),
+			Metadata:  metadata,
 		}
 	}
 	if t.Custom != nil && t.Custom.Input != nil {
+		if len(metadata) == 0 {
+			metadata["openai:item_type"] = "custom"
+		}
 		return llms.ToolCall{
 			ID:        t.ID,
 			Name:      t.Custom.Name,
 			Arguments: json.RawMessage([]byte(*t.Custom.Input)),
+			Metadata:  metadata,
 		}
 	}
 	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))

@@ -424,6 +424,20 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 					} else {
 						// This is appending arguments to an existing tool call
+						existing := &s.message.ToolCalls[toolDelta.Index]
+						if toolDelta.Type != "" {
+							if existing.Metadata == nil {
+								existing.Metadata = make(map[string]string)
+							}
+							existing.Metadata["openai:item_type"] = toolDelta.Type
+						} else if existing.Metadata == nil {
+							switch {
+							case toolDelta.Custom != nil && toolDelta.Custom.Input != nil:
+								existing.Metadata = map[string]string{"openai:item_type": "custom"}
+							case toolDelta.Function != nil:
+								existing.Metadata = map[string]string{"openai:item_type": "function"}
+							}
+						}
 						var deltaData []byte
 						if toolDelta.Function != nil && toolDelta.Function.Arguments != "" {
 							deltaData = []byte(toolDelta.Function.Arguments)
@@ -433,7 +447,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 
 						if len(deltaData) > 0 {
-							s.message.ToolCalls[toolDelta.Index].Arguments = append(s.message.ToolCalls[toolDelta.Index].Arguments, deltaData...)
+							existing.Arguments = append(existing.Arguments, deltaData...)
 							if !yield(llms.StreamStatusToolCallDelta) {
 								return // Abort if yield fails
 							}

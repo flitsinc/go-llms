@@ -107,6 +107,30 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
+			name: "Assistant message - with custom tool call metadata",
+			input: llms.Message{
+				Role:    "assistant",
+				Content: content.Content{},
+				ToolCalls: []llms.ToolCall{
+					{
+						ID:        "call_custom",
+						Name:      "custom_tool",
+						Arguments: json.RawMessage("custom input"),
+						Metadata:  map[string]string{"openai:item_type": "custom"},
+					},
+				},
+			},
+			expected: []message{
+				{
+					Role:    "assistant",
+					Content: nil,
+					ToolCalls: []toolCall{
+						{ID: "call_custom", Type: "custom", Custom: &customToolCall{Name: "custom_tool", Input: ptr("custom input")}},
+					},
+				},
+			},
+		},
+		{
 			name: "Tool result - JSON only",
 			input: llms.Message{
 				Role:       "tool",
@@ -235,6 +259,33 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 // Helper function to get a pointer to a string
 func ptr(s string) *string {
 	return &s
+}
+
+func TestToolCallDeltaToLLMPreservesMetadata(t *testing.T) {
+	input := toolCallDelta{
+		ID:   "call_custom",
+		Type: "custom",
+		Custom: &customToolCall{
+			Name:  "custom_tool",
+			Input: ptr("payload"),
+		},
+	}
+	llmCall := input.ToLLM()
+	require.Equal(t, "custom_tool", llmCall.Name)
+	require.Equal(t, "payload", string(llmCall.Arguments))
+	require.Equal(t, "custom", llmCall.Metadata["openai:item_type"])
+
+	functionDelta := toolCallDelta{
+		ID: "call_function",
+		Function: &toolCallFunction{
+			Name:      "lookup",
+			Arguments: `{"query":"value"}`,
+		},
+	}
+	llmFunctionCall := functionDelta.ToLLM()
+	require.Equal(t, "lookup", llmFunctionCall.Name)
+	require.Equal(t, `{"query":"value"}`, string(llmFunctionCall.Arguments))
+	require.Equal(t, "function", llmFunctionCall.Metadata["openai:item_type"])
 }
 
 func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
