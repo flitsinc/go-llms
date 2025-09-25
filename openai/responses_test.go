@@ -66,6 +66,85 @@ func TestResponsesStream_ReasoningSummaries_DeltaAndAggregate(t *testing.T) {
 	}
 }
 
+func TestResponsesStream_ReasoningSummaryDoneWithoutDeltas(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"r_done_only"},"output_index":0}`,
+		`data: {"type":"response.reasoning_summary_text.done","item_id":"r_done_only","text":"Final reasoning summary."}`,
+		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"r_done_only","summary":[{"type":"summary_text","text":"Final reasoning summary."}]},"output_index":0}`,
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
+
+	var thinkingDone int
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinkingDone {
+			thinkingDone++
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+	if thinkingDone != 1 {
+		t.Fatalf("expected 1 thinking done event, got %d", thinkingDone)
+	}
+
+	msg := stream.Message()
+	var summary *content.Thought
+	for _, it := range msg.Content {
+		if th, ok := it.(*content.Thought); ok && th.ID == "r_done_only" {
+			summary = th
+			break
+		}
+	}
+	if summary == nil {
+		t.Fatalf("expected reasoning thought for r_done_only")
+	}
+	if summary.Text != "Final reasoning summary." {
+		t.Fatalf("expected reasoning text to match done payload, got %q", summary.Text)
+	}
+	if !summary.Summary {
+		t.Fatalf("expected reasoning thought to be marked summary")
+	}
+}
+
+func TestResponsesStream_ReasoningOutputDoneSummaryFallback(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"r_done_only"},"output_index":0}`,
+		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"r_done_only","summary":[{"type":"summary_text","text":"Summary from output item."}]},"output_index":0}`,
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	msg := stream.Message()
+	var summary *content.Thought
+	for _, it := range msg.Content {
+		if th, ok := it.(*content.Thought); ok && th.ID == "r_done_only" {
+			summary = th
+			break
+		}
+	}
+	if summary == nil {
+		t.Fatalf("expected reasoning thought for r_done_only")
+	}
+	if summary.Text != "Summary from output item." {
+		t.Fatalf("expected reasoning text to come from output item, got %q", summary.Text)
+	}
+	if !summary.Summary {
+		t.Fatalf("expected reasoning thought to be marked summary")
+	}
+}
+
 // Test that assistant history conversion uses output_text and includes reasoning summary as full text.
 func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 	msg := llms.Message{

@@ -795,8 +795,11 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					ItemID string `json:"item_id"`
 				}
 				if err := json.Unmarshal([]byte(line), &doneEvent); err == nil {
-					// The done event contains the complete text
-					// For summaries, we could validate or replace, but we've been building it correctly
+					thought := s.message.Content.AppendThoughtWithID(doneEvent.ItemID, "", true)
+					if doneEvent.Text != "" {
+						thought.Text = doneEvent.Text
+					}
+					thought.Summary = true
 					s.lastThought = nil // Reset for next reasoning item
 					if !yield(llms.StreamStatusThinkingDone) {
 						return
@@ -810,7 +813,11 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					Status string `json:"status"`
 				}
 				if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
-					if itemHdr.Type == "image_generation_call" && itemHdr.Status == "completed" {
+					switch itemHdr.Type {
+					case "image_generation_call":
+						if itemHdr.Status != "completed" {
+							break
+						}
 						var img struct {
 							ID            string `json:"id"`
 							Background    string `json:"background"`
@@ -849,6 +856,25 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 						if event.Usage != nil {
 							s.usage = event.Usage
+						}
+					case "reasoning":
+						var reasoningItem Reasoning
+						if err := json.Unmarshal(event.Item, &reasoningItem); err == nil {
+							var summaryBuilder strings.Builder
+							for _, part := range reasoningItem.Summary {
+								if part.Text == "" {
+									continue
+								}
+								if summaryBuilder.Len() > 0 {
+									summaryBuilder.WriteString("\n")
+								}
+								summaryBuilder.WriteString(part.Text)
+							}
+							if summaryBuilder.Len() > 0 {
+								thought := s.message.Content.AppendThoughtWithID(reasoningItem.ID, "", true)
+								thought.Text = summaryBuilder.String()
+								thought.Summary = true
+							}
 						}
 					}
 				}
