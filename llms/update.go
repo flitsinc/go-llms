@@ -27,8 +27,6 @@ type Update interface {
 type ToolStartUpdate struct {
 	ToolCallID string
 	Tool       tools.Tool
-	// Metadata carries provider-specific fields that should be forwarded unchanged.
-	Metadata map[string]string
 }
 
 func (u ToolStartUpdate) Type() UpdateType {

@@ -301,7 +301,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				return false, fmt.Errorf("tool %q not found", toolCall.Name)
 			}
 			toolCallDeltaSentBytes = 0
-			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool, Metadata: cloneMetadata(toolCall.Metadata)}
+			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool}
 
 		case StreamStatusToolCallDelta:
 			toolCall := stream.ToolCall()
@@ -382,6 +382,7 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	select {
 	case <-ctx.Done(): // Don't send if already cancelled
 	default:
+		// TODO: If we ever expose a "tool starting to run" update, the Metadata can be sent there instead.
 		updateChan <- ToolDoneUpdate{ToolCallID: toolCall.ID, Result: result, Tool: t, Metadata: cloneMetadata(toolCall.Metadata)}
 	}
 
