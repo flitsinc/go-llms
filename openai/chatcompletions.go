@@ -64,8 +64,8 @@ func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletions
 	return m
 }
 
-// EnableCerebrasWorkaroundForIncludeUsage sets whether to include stream_options.include_usage in requests.
-func (m *ChatCompletionsAPI) EnableCerebrasWorkaroundForIncludeUsage(include bool) *ChatCompletionsAPI {
+// WithIncludeUsage sets whether to include stream_options.include_usage in requests.
+func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI {
 	m.includeUsage = include
 	return m
 }

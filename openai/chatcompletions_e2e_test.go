@@ -547,7 +547,7 @@ func TestOpenAIE2E(t *testing.T) {
 				client = client.WithThinking(tc.reasoningEffort)
 			}
 		if tc.includeUsage != nil {
-			client = client.EnableCerebrasWorkaroundForIncludeUsage(*tc.includeUsage)
+			client = client.WithIncludeUsage(*tc.includeUsage)
 		}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
