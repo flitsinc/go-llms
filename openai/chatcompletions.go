@@ -26,6 +26,9 @@ type ChatCompletionsAPI struct {
 	maxCompletionTokens int
 	reasoningEffort     Effort
 	verbosity           Verbosity
+
+	// When true, include stream_options.include_usage in requests; default true.
+	includeUsage bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -33,7 +36,8 @@ func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 		accessToken: accessToken,
 		model:       model,
 		endpoint:    "https://api.openai.com/v1/chat/completions",
-		company:     "OpenAI",
+        company:     "OpenAI",
+        includeUsage: true,
 	}
 }
 
@@ -57,6 +61,12 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 
 func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
+	return m
+}
+
+// WithIncludeUsage sets whether to include stream_options.include_usage in requests.
+func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI {
+	m.includeUsage = include
 	return m
 }
 
@@ -97,10 +107,14 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 
 	payload := map[string]any{
-		"model":          m.model,
-		"messages":       apiMessages,
-		"stream":         true,
-		"stream_options": map[string]any{"include_usage": true},
+		"model":    m.model,
+		"messages": apiMessages,
+		"stream":   true,
+	}
+
+	// Include stream_options only when includeUsage is true (not all providers support it)
+	if m.includeUsage {
+		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 
 	if m.maxCompletionTokens > 0 {
