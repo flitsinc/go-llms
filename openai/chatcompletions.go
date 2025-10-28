@@ -27,8 +27,8 @@ type ChatCompletionsAPI struct {
 	reasoningEffort     Effort
 	verbosity           Verbosity
 
-	// When true, omit stream_options from requests
-	disableStreamOptions bool
+	// When true, include stream_options.include_usage in requests; default true.
+	includeUsage bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -36,7 +36,8 @@ func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 		accessToken: accessToken,
 		model:       model,
 		endpoint:    "https://api.openai.com/v1/chat/completions",
-		company:     "OpenAI",
+        company:     "OpenAI",
+        includeUsage: true,
 	}
 }
 
@@ -63,10 +64,9 @@ func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletions
 	return m
 }
 
-// WithStreamOptionsDisabled controls inclusion of OpenAI stream_options in requests.
-// If set to true, stream_options will be omitted (useful for providers that don't support it).
-func (m *ChatCompletionsAPI) WithStreamOptionsDisabled(disable bool) *ChatCompletionsAPI {
-	m.disableStreamOptions = disable
+// EnableCerebrasWorkaroundForIncludeUsage sets whether to include stream_options.include_usage in requests.
+func (m *ChatCompletionsAPI) EnableCerebrasWorkaroundForIncludeUsage(include bool) *ChatCompletionsAPI {
+	m.includeUsage = include
 	return m
 }
 
@@ -112,8 +112,8 @@ func (m *ChatCompletionsAPI) Generate(
 		"stream":   true,
 	}
 
-	// Only include stream_options if not disabled (not all providers support it)
-	if !m.disableStreamOptions {
+	// Include stream_options only when includeUsage is true (not all providers support it)
+	if m.includeUsage {
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 

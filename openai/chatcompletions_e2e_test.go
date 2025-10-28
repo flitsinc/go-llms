@@ -48,7 +48,7 @@ func TestOpenAIE2E(t *testing.T) {
 		jsonOutputSchema      *tools.ValueSchema
 		maxCompletionTokens   int
 		reasoningEffort       Effort
-		disableStreamOptions  bool
+		includeUsage          *bool
 		customEndpoint        string // For testing WithEndpoint
 		customEndpointCompany string // For testing WithEndpoint
 		// verifyRequest is called after the server handler has sent its response.
@@ -121,7 +121,7 @@ func TestOpenAIE2E(t *testing.T) {
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Hello")},
 			},
-			disableStreamOptions: true,
+			includeUsage: func() *bool { b := false; return &b }(),
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				// stream_options should be omitted entirely
 				assert.Nil(t, body["stream_options"]) 
@@ -546,8 +546,8 @@ func TestOpenAIE2E(t *testing.T) {
 			if tc.reasoningEffort != "" {
 				client = client.WithThinking(tc.reasoningEffort)
 			}
-		if tc.disableStreamOptions {
-			client = client.WithStreamOptionsDisabled(true)
+		if tc.includeUsage != nil {
+			client = client.EnableCerebrasWorkaroundForIncludeUsage(*tc.includeUsage)
 		}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
