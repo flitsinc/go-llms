@@ -48,6 +48,7 @@ func TestOpenAIE2E(t *testing.T) {
 		jsonOutputSchema      *tools.ValueSchema
 		maxCompletionTokens   int
 		reasoningEffort       Effort
+		disableStreamOptions  bool
 		customEndpoint        string // For testing WithEndpoint
 		customEndpointCompany string // For testing WithEndpoint
 		// verifyRequest is called after the server handler has sent its response.
@@ -113,6 +114,17 @@ func TestOpenAIE2E(t *testing.T) {
 			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
 				assert.Equal(t, "This is a streamed response.", finalText, "Final text output mismatch")
 				assert.Empty(t, finalToolCall.ID, "No tool call should be present in basic text generation")
+			},
+		},
+		{
+			name: "With stream options disabled",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Hello")},
+			},
+			disableStreamOptions: true,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				// stream_options should be omitted entirely
+				assert.Nil(t, body["stream_options"]) 
 			},
 		},
 		{
@@ -534,6 +546,9 @@ func TestOpenAIE2E(t *testing.T) {
 			if tc.reasoningEffort != "" {
 				client = client.WithThinking(tc.reasoningEffort)
 			}
+		if tc.disableStreamOptions {
+			client = client.WithStreamOptionsDisabled(true)
+		}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
 

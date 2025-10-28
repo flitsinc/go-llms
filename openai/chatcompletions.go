@@ -26,6 +26,9 @@ type ChatCompletionsAPI struct {
 	maxCompletionTokens int
 	reasoningEffort     Effort
 	verbosity           Verbosity
+
+	// When true, omit stream_options from requests
+	disableStreamOptions bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -57,6 +60,13 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 
 func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
+	return m
+}
+
+// WithStreamOptionsDisabled controls inclusion of OpenAI stream_options in requests.
+// If set to true, stream_options will be omitted (useful for providers that don't support it).
+func (m *ChatCompletionsAPI) WithStreamOptionsDisabled(disable bool) *ChatCompletionsAPI {
+	m.disableStreamOptions = disable
 	return m
 }
 
@@ -97,10 +107,14 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 
 	payload := map[string]any{
-		"model":          m.model,
-		"messages":       apiMessages,
-		"stream":         true,
-		"stream_options": map[string]any{"include_usage": true},
+		"model":    m.model,
+		"messages": apiMessages,
+		"stream":   true,
+	}
+
+	// Only include stream_options if not disabled (not all providers support it)
+	if !m.disableStreamOptions {
+		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 
 	if m.maxCompletionTokens > 0 {
