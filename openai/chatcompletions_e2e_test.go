@@ -124,7 +124,7 @@ func TestOpenAIE2E(t *testing.T) {
 			includeUsage: func() *bool { b := false; return &b }(),
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				// stream_options should be omitted entirely
-				assert.Nil(t, body["stream_options"]) 
+				assert.Nil(t, body["stream_options"])
 			},
 		},
 		{
@@ -546,9 +546,9 @@ func TestOpenAIE2E(t *testing.T) {
 			if tc.reasoningEffort != "" {
 				client = client.WithThinking(tc.reasoningEffort)
 			}
-		if tc.includeUsage != nil {
-			client = client.WithIncludeUsage(*tc.includeUsage)
-		}
+			if tc.includeUsage != nil {
+				client = client.WithIncludeUsage(*tc.includeUsage)
+			}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
 

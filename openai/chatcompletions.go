@@ -33,11 +33,11 @@ type ChatCompletionsAPI struct {
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 	return &ChatCompletionsAPI{
-		accessToken: accessToken,
-		model:       model,
-		endpoint:    "https://api.openai.com/v1/chat/completions",
-        company:     "OpenAI",
-        includeUsage: true,
+		accessToken:  accessToken,
+		model:        model,
+		endpoint:     "https://api.openai.com/v1/chat/completions",
+		company:      "OpenAI",
+		includeUsage: true,
 	}
 }
 
@@ -285,7 +285,12 @@ func (m *ChatCompletionsAPI) Generate(
 				return &ChatCompletionsStream{err: fmt.Errorf("%s: %s: %s", resp.Status, openAIError.Error.Type, openAIError.Error.Message)}
 			}
 			// Body read okay, but JSON parsing failed or structure mismatch.
-			// Fall through to return status only.
+			// Just repeat the body up to a limit.
+			body := string(bodyBytes)
+			if len(body) > 1024 {
+				body = body[:1024]
+			}
+			return &ChatCompletionsStream{err: fmt.Errorf("%s: %s", resp.Status, body)}
 		}
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &ChatCompletionsStream{err: fmt.Errorf("%s", resp.Status)}
