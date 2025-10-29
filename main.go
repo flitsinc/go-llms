@@ -69,6 +69,15 @@ func main() {
 			return
 		}
 		llmProvider = openai.New(apiKey, "moonshotai/kimi-k2-instruct").WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")
+	case "cerebras":
+		apiKey := os.Getenv("CEREBRAS_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: CEREBRAS_API_KEY environment variable is not set")
+			return
+		}
+		llmProvider = openai.New(apiKey, "qwen-3-235b-a22b-thinking-2507").
+			WithEndpoint("https://api.cerebras.ai/v1/chat/completions", "Cerebras").
+			WithNonStreamingAPI()
 	default:
 		printUsage()
 		return
@@ -138,6 +147,7 @@ func printUsage() {
 	fmt.Println("  anthropic        - Uses Anthropic's Claude Sonnet 4 (requires ANTHROPIC_API_KEY)")
 	fmt.Println("  google           - Uses Google's Gemini 2.5 Flash (requires GEMINI_API_KEY)")
 	fmt.Println("  groq             - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
+	fmt.Println("  cerebras         - Uses qwen-3-235b-a22b-thinking (requires CEREBRAS_API_KEY)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()

@@ -29,6 +29,9 @@ type ChatCompletionsAPI struct {
 
 	// When true, include stream_options.include_usage in requests; default true.
 	includeUsage bool
+
+	// Whether to use streaming responses. Defaults to true.
+	streaming bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -38,6 +41,7 @@ func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 		endpoint:     "https://api.openai.com/v1/chat/completions",
 		company:      "OpenAI",
 		includeUsage: true,
+		streaming:    true,
 	}
 }
 
@@ -61,6 +65,14 @@ func (m *ChatCompletionsAPI) WithThinking(effort Effort) *ChatCompletionsAPI {
 
 func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletionsAPI {
 	m.verbosity = verbosity
+	return m
+}
+
+// WithNonStreamingAPI switches the client to use the non-streaming API.
+// The Generate method will perform a non-streaming request and return a
+// ProviderStream that emits the full result in one go.
+func (m *ChatCompletionsAPI) WithNonStreamingAPI() *ChatCompletionsAPI {
+	m.streaming = false
 	return m
 }
 
@@ -109,11 +121,11 @@ func (m *ChatCompletionsAPI) Generate(
 	payload := map[string]any{
 		"model":    m.model,
 		"messages": apiMessages,
-		"stream":   true,
+		"stream":   m.streaming,
 	}
 
-	// Include stream_options only when includeUsage is true (not all providers support it)
-	if m.includeUsage {
+	// Include stream_options only when streaming and includeUsage are enabled
+	if m.streaming && m.includeUsage {
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
 
@@ -296,7 +308,41 @@ func (m *ChatCompletionsAPI) Generate(
 		return &ChatCompletionsStream{err: fmt.Errorf("%s", resp.Status)}
 	}
 
-	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
+	if m.streaming {
+		return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
+	}
+
+	// Non-streaming: read and parse full JSON response
+	defer resp.Body.Close()
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return &ChatCompletionsStream{err: fmt.Errorf("error reading response: %w", readErr)}
+	}
+	if m.debugger != nil && strings.TrimSpace(string(bodyBytes)) != "" {
+		m.debugger.RawEvent(bodyBytes)
+	}
+	var full chatCompletionResponse
+	if err := json.Unmarshal(bodyBytes, &full); err != nil {
+		return &ChatCompletionsStream{err: fmt.Errorf("error unmarshalling response: %w", err)}
+	}
+	if len(full.Choices) == 0 {
+		return &ChatCompletionsStream{err: fmt.Errorf("openai chat: empty choices in response")}
+	}
+	final := full.Choices[0].Message
+	var llmMsg llms.Message
+	llmMsg.Role = final.Role
+	llmMsg.Content = contentFromContentList(final.Content)
+	if len(final.ToolCalls) > 0 {
+		llmMsg.ToolCalls = make([]llms.ToolCall, len(final.ToolCalls))
+		for i := range final.ToolCalls {
+			llmMsg.ToolCalls[i] = toolCallToLLM(final.ToolCalls[i])
+		}
+	}
+	var textOut string
+	if s, ok := llmMsg.Content.AsString(); ok {
+		textOut = s
+	}
+	return &ChatCompletionsNonStream{model: m.model, message: llmMsg, lastText: textOut, usage: full.Usage, debugger: m.debugger}
 }
 
 type ChatCompletionsStream struct {
@@ -485,6 +531,135 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 		}
 	}
+}
+
+// Non-streaming response structures
+type chatCompletionResponseChoice struct {
+    Index        int                     `json:"index"`
+    Message      message                 `json:"message"`
+    FinishReason *string                 `json:"finish_reason"`
+    Logprobs     *chatCompletionLogprobs `json:"logprobs"`
+}
+
+type chatCompletionResponse struct {
+    ID                string                         `json:"id"`
+    Object            string                         `json:"object"`
+    Created           int64                          `json:"created"`
+    Model             string                         `json:"model"`
+    SystemFingerprint string                         `json:"system_fingerprint,omitempty"`
+    ServiceTier       *string                        `json:"service_tier,omitempty"`
+    Choices           []chatCompletionResponseChoice `json:"choices"`
+    Usage             *usage                         `json:"usage,omitempty"`
+    Obfuscation       string                         `json:"obfuscation,omitempty"`
+}
+
+// contentFromContentList converts OpenAI API content list to llms.Content.
+func contentFromContentList(cl contentList) content.Content {
+    var out content.Content
+    for _, part := range cl {
+        switch part.Type {
+        case "text":
+            if part.Text != nil && *part.Text != "" {
+                out.Append(*part.Text)
+            }
+        case "image_url":
+            if part.ImageURL != nil && part.ImageURL.URL != "" {
+                out = append(out, &content.ImageURL{URL: part.ImageURL.URL})
+            }
+        }
+    }
+    return out
+}
+
+// toolCallToLLM converts a full toolCall object to llms.ToolCall.
+func toolCallToLLM(t toolCall) llms.ToolCall {
+    metadata := make(map[string]string)
+    if t.Type != "" {
+        metadata["openai:item_type"] = t.Type
+    }
+    if t.Function != nil {
+        if len(metadata) == 0 {
+            metadata["openai:item_type"] = "function"
+        }
+        args := t.Function.Arguments
+        if !json.Valid([]byte(args)) {
+            args = "{}"
+        }
+        return llms.ToolCall{
+            ID:        t.ID,
+            Name:      t.Function.Name,
+            Arguments: json.RawMessage(args),
+            Metadata:  metadata,
+        }
+    }
+    if t.Custom != nil && t.Custom.Input != nil {
+        if len(metadata) == 0 {
+            metadata["openai:item_type"] = "custom"
+        }
+        return llms.ToolCall{
+            ID:        t.ID,
+            Name:      t.Custom.Name,
+            Arguments: json.RawMessage([]byte(*t.Custom.Input)),
+            Metadata:  metadata,
+        }
+    }
+    // Fallback empty call (should not normally happen)
+    return llms.ToolCall{ID: t.ID, Metadata: metadata}
+}
+
+// ChatCompletionsNonStream implements ProviderStream for non-streaming responses.
+type ChatCompletionsNonStream struct {
+    model         string
+    debugger      llms.Debugger
+    err           error
+    message       llms.Message
+    lastText      string
+    usage         *usage
+    activeToolIdx int
+}
+
+func (s *ChatCompletionsNonStream) Err() error { return s.err }
+func (s *ChatCompletionsNonStream) Message() llms.Message { return s.message }
+func (s *ChatCompletionsNonStream) Text() string { return s.lastText }
+func (s *ChatCompletionsNonStream) Image() (string, string) { return "", "" }
+func (s *ChatCompletionsNonStream) Thought() content.Thought { return content.Thought{} }
+func (s *ChatCompletionsNonStream) Usage() llms.Usage {
+    if s.usage == nil {
+        return llms.Usage{}
+    }
+    return llms.Usage{
+        CachedInputTokens: s.usage.PromptTokensDetails.CachedTokens,
+        InputTokens:       s.usage.PromptTokens,
+        OutputTokens:      s.usage.CompletionTokens,
+    }
+}
+func (s *ChatCompletionsNonStream) ToolCall() llms.ToolCall {
+    if s.activeToolIdx >= 0 && s.activeToolIdx < len(s.message.ToolCalls) {
+        return s.message.ToolCalls[s.activeToolIdx]
+    }
+    if len(s.message.ToolCalls) == 0 {
+        return llms.ToolCall{}
+    }
+    return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+}
+
+func (s *ChatCompletionsNonStream) Iter() func(yield func(llms.StreamStatus) bool) {
+    return func(yield func(llms.StreamStatus) bool) {
+        // Emit tool call statuses if present (Begin then Ready for each)
+        for i := range s.message.ToolCalls {
+            s.activeToolIdx = i
+            if !yield(llms.StreamStatusToolCallBegin) {
+                return
+            }
+            if !yield(llms.StreamStatusToolCallReady) {
+                return
+            }
+        }
+        s.activeToolIdx = -1
+        if s.lastText != "" {
+            _ = yield(llms.StreamStatusText)
+        }
+    }
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
