@@ -556,10 +556,18 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// Google doesn't provide tool call IDs, so we generate our own
 					// using a combination of function name and a timestamp to ensure uniqueness
 					uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
+
+					// Capture thought signature if present (Gemini 3 requirement)
+					metadata := make(map[string]string)
+					if p.ThoughtSignature != "" {
+						metadata["google:thought_signature"] = p.ThoughtSignature
+					}
+
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
 						ID:        uniqueID,
 						Name:      p.FunctionCall.Name,
 						Arguments: p.FunctionCall.Args,
+						Metadata:  metadata,
 					})
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return

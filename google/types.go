@@ -249,11 +249,18 @@ func messagesFromLLM(m llms.Message) []message {
 			if toolCall.Arguments != nil {
 				args = toolCall.Arguments
 			}
+
+			var thoughtSignature string
+			if sig, ok := toolCall.Metadata["google:thought_signature"]; ok {
+				thoughtSignature = sig
+			}
+
 			apiParts = append(apiParts, part{
 				FunctionCall: &functionCall{
 					Name: toolCall.Name,
 					Args: args,
 				},
+				ThoughtSignature: thoughtSignature,
 			})
 		}
 	}
