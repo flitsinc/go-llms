@@ -51,6 +51,8 @@ type Model struct {
 	topP            float64
 	includeThoughts bool
 	thinkingBudget  int
+	thinkingLevel   ThinkingLevel
+	mediaResolution MediaResolution
 	debugger        llms.Debugger
 	modalities      []string
 	httpClient      *http.Client
@@ -116,6 +118,27 @@ func (m *Model) WithTopP(topP float64) *Model {
 func (m *Model) WithThinking(budgetTokens int) *Model {
 	m.includeThoughts = budgetTokens > 0
 	m.thinkingBudget = budgetTokens
+	return m
+}
+
+// WithThinkingLevel sets the thinking level for the model (e.g. "high", "low").
+// This corresponds to the "Thinking Levels" feature in Gemini 3.
+func (m *Model) WithThinkingLevel(level ThinkingLevel) *Model {
+	m.thinkingLevel = level
+	// If level is set, we likely imply including thoughts, but let's rely on
+	// WithThinking to enable the boolean flag or we can enable it here too.
+	// Usually enabling thinking level implies thinking is on.
+	if level != "" {
+		m.includeThoughts = true
+	}
+	return m
+}
+
+// WithMediaResolution sets the media resolution for the model
+// output/processing. Valid values might include "MEDIA_RESOLUTION_UNSPECIFIED",
+// "MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_MEDIUM", "MEDIA_RESOLUTION_HIGH".
+func (m *Model) WithMediaResolution(resolution MediaResolution) *Model {
+	m.mediaResolution = resolution
 	return m
 }
 
@@ -213,7 +236,16 @@ func (m *Model) Generate(
 		if m.thinkingBudget > 0 {
 			thinkingConfig["thinkingBudget"] = m.thinkingBudget
 		}
+		// Gemini 3 Thinking Levels
+		if m.thinkingLevel != "" {
+			// Assuming the field name is thinkingLevel based on camelCase convention
+			thinkingConfig["thinkingLevel"] = m.thinkingLevel
+		}
 		generationConfig["thinkingConfig"] = thinkingConfig
+	}
+
+	if m.mediaResolution != "" {
+		generationConfig["mediaResolution"] = m.mediaResolution
 	}
 
 	if len(m.modalities) > 0 {

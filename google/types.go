@@ -9,6 +9,24 @@ import (
 	"github.com/flitsinc/go-llms/llms"
 )
 
+// ThinkingLevel determines the depth of reasoning the model applies.
+// This corresponds to the "Thinking Levels" feature in Gemini 3.
+type ThinkingLevel string
+
+const (
+	ThinkingLevelLow  ThinkingLevel = "LOW"
+	ThinkingLevelHigh ThinkingLevel = "HIGH"
+)
+
+// MediaResolution determines the resolution of media content in the response.
+type MediaResolution string
+
+const (
+	MediaResolutionLow    MediaResolution = "MEDIA_RESOLUTION_LOW"
+	MediaResolutionMedium MediaResolution = "MEDIA_RESOLUTION_MEDIUM"
+	MediaResolutionHigh   MediaResolution = "MEDIA_RESOLUTION_HIGH"
+)
+
 type errorResponse struct {
 	Error struct {
 		Code    int    `json:"code"`
