@@ -238,7 +238,6 @@ func (m *Model) Generate(
 		}
 		// Gemini 3 Thinking Levels
 		if m.thinkingLevel != "" {
-			// Assuming the field name is thinkingLevel based on camelCase convention
 			thinkingConfig["thinkingLevel"] = m.thinkingLevel
 		}
 		generationConfig["thinkingConfig"] = thinkingConfig

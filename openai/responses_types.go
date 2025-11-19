@@ -697,7 +697,7 @@ type MCPToolChoice struct {
 
 // ReasoningConfig represents reasoning configuration
 type ReasoningConfig struct {
-	Effort          string  `json:"effort,omitempty"`           // "low", "medium", "high"
+	Effort          string  `json:"effort,omitempty"`           // "low", "medium", "high", "xhigh"
 	Summary         *string `json:"summary,omitempty"`          // "auto", "concise", "detailed"
 	GenerateSummary *string `json:"generate_summary,omitempty"` // deprecated
 }

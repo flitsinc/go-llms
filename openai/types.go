@@ -9,6 +9,7 @@ const (
 	EffortLow     Effort = "low"
 	EffortMedium  Effort = "medium"
 	EffortHigh    Effort = "high"
+	EffortXHigh   Effort = "xhigh"
 )
 
 type Verbosity string

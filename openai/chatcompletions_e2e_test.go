@@ -310,6 +310,16 @@ func TestOpenAIE2E(t *testing.T) {
 			},
 		},
 		{
+			name: "With extra high reasoning effort",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Think really, really hard about this.")},
+			},
+			reasoningEffort: EffortXHigh,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				assert.Equal(t, string(EffortXHigh), body["reasoning_effort"].(string))
+			},
+		},
+		{
 			name: "With custom endpoint",
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Testing custom endpoint.")},
