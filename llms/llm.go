@@ -387,9 +387,9 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	}
 
 	return Message{
-		Role:       "tool",
-		Name:       toolCall.Name,
-		Content:    result.Content(),
-		ToolCallID: toolCall.ID,
+		Role:         "tool",
+		Content:      result.Content(),
+		ToolCallID:   toolCall.ID,
+		ToolCallName: toolCall.Name,
 	}
 }

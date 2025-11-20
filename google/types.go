@@ -199,13 +199,14 @@ func messagesFromLLM(m llms.Message) []message {
 
 		// Gemini expects function responses to reference the function name (not an arbitrary call ID).
 		// If the tool name is missing, treat it as a programming error rather than silently falling back.
-		if m.Name == "" {
+		// Prefer the tool's function name (ToolCallName). This must be present for Gemini.
+		if m.ToolCallName == "" {
 			panic("tool response missing function name")
 		}
 
 		// Create the primary tool/function response message.
 		responseWrapperJSON, err := json.Marshal(map[string]any{
-			"name":    m.Name,
+			"name":    m.ToolCallName,
 			"content": primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
 		})
 		if err != nil {
@@ -218,7 +219,7 @@ func messagesFromLLM(m llms.Message) []message {
 			Parts: parts{
 				{
 					FunctionResponse: &functionResponse{
-						Name:     m.Name, // Associate with the function call name
+						Name:     m.ToolCallName, // Associate with the function call name
 						Response: responseWrapperJSON,
 					},
 				},
