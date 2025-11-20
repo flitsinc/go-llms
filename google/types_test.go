@@ -84,9 +84,10 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 		{
 			name: "Tool result - JSON only",
 			input: llms.Message{
-				Role:       "tool",
-				ToolCallID: "call_g1",
-				Content:    content.FromRawJSON(json.RawMessage(`{"result": "found"}`)),
+				Role:         "tool",
+				ToolCallID:   "call_g1",
+				ToolCallName: "get_weather",
+				Content:      content.FromRawJSON(json.RawMessage(`{"result": "found"}`)),
 			},
 			expected: []message{
 				{
@@ -94,8 +95,30 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
-								Name:     "call_g1",
-								Response: mustMarshal(map[string]any{"name": "call_g1", "content": json.RawMessage(`{"result": "found"}`)}),
+								Name:     "get_weather",
+								Response: mustMarshal(map[string]any{"name": "get_weather", "content": json.RawMessage(`{"result": "found"}`)}),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "Tool result - prefers function name over call id",
+			input: llms.Message{
+				Role:         "tool",
+				ToolCallName: "search_web",
+				ToolCallID:   "call_g_name_only",
+				Content:      content.FromRawJSON(json.RawMessage(`{"result": "found"}`)),
+			},
+			expected: []message{
+				{
+					Role: "function",
+					Parts: parts{
+						{
+							FunctionResponse: &functionResponse{
+								Name:     "search_web",
+								Response: mustMarshal(map[string]any{"name": "search_web", "content": json.RawMessage(`{"result": "found"}`)}),
 							},
 						},
 					},
@@ -105,9 +128,10 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 		{
 			name: "Tool result - Non-JSON primary (Error generated)",
 			input: llms.Message{
-				Role:       "tool",
-				ToolCallID: "call_g2",
-				Content:    content.FromText("Just text, not JSON"),
+				Role:         "tool",
+				ToolCallID:   "call_g2",
+				ToolCallName: "introspect",
+				Content:      content.FromText("Just text, not JSON"),
 			},
 			expected: []message{
 				{
@@ -115,8 +139,8 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
-								Name:     "call_g2",
-								Response: mustMarshal(map[string]any{"name": "call_g2", "content": json.RawMessage(`{"error":"Primary tool result must be JSON for Google Gemini"}`)}),
+								Name:     "introspect",
+								Response: mustMarshal(map[string]any{"name": "introspect", "content": json.RawMessage(`{"error":"Primary tool result must be JSON for Google Gemini"}`)}),
 							},
 						},
 					},
@@ -130,8 +154,9 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 		{
 			name: "Tool result - JSON primary + Text secondary",
 			input: llms.Message{
-				Role:       "tool",
-				ToolCallID: "call_g3",
+				Role:         "tool",
+				ToolCallID:   "call_g3",
+				ToolCallName: "status",
 				Content: content.Content{
 					&content.JSON{Data: json.RawMessage(`{"status": "complete"}`)},
 					&content.Text{Text: "Secondary info."},
@@ -143,8 +168,8 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
-								Name:     "call_g3",
-								Response: mustMarshal(map[string]any{"name": "call_g3", "content": json.RawMessage(`{"status": "complete"}`)}),
+								Name:     "status",
+								Response: mustMarshal(map[string]any{"name": "status", "content": json.RawMessage(`{"status": "complete"}`)}),
 							},
 						},
 					},

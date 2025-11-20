@@ -161,9 +161,10 @@ func TestGemini3ThoughtSignature(t *testing.T) {
 			ToolCalls: []llms.ToolCall{toolCall}, // This toolCall has the metadata from step 1
 		},
 		{
-			Role:       "tool",
-			ToolCallID: toolCall.ID,
-			Content:    content.FromText("result"),
+			Role:         "tool",
+			ToolCallID:   toolCall.ID,
+			ToolCallName: toolCall.Name,
+			Content:      content.FromText("result"),
 		},
 	}
 
