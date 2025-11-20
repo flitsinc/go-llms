@@ -163,6 +163,7 @@ func TestGemini3ThoughtSignature(t *testing.T) {
 		{
 			Role:       "tool",
 			ToolCallID: toolCall.ID,
+			Name:       toolCall.Name,
 			Content:    content.FromText("result"),
 		},
 	}
