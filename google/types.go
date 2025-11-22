@@ -173,7 +173,7 @@ type message struct {
 
 // messagesFromLLM converts an llms.Message to the Google API message format.
 // It may return multiple messages if the input is a tool result with auxiliary content.
-func messagesFromLLM(m llms.Message) []message {
+func messagesFromLLM(m llms.Message) ([]message, error) {
 	if m.Role == "tool" {
 		var messagesToReturn []message
 		var primaryResultJSON json.RawMessage
@@ -201,7 +201,7 @@ func messagesFromLLM(m llms.Message) []message {
 		// If the tool name is missing, treat it as a programming error rather than silently falling back.
 		// Prefer the tool's function name (ToolCallName). This must be present for Gemini.
 		if m.ToolCallName == "" {
-			panic("tool response missing function name")
+			return nil, fmt.Errorf("tool response missing function name")
 		}
 
 		// Create the primary tool/function response message.
@@ -210,8 +210,7 @@ func messagesFromLLM(m llms.Message) []message {
 			"content": primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
 		})
 		if err != nil {
-			// Handle marshaling error for the wrapper, maybe return an error message
-			panic(fmt.Sprintf("failed to marshal google function response wrapper: %v", err))
+			return nil, fmt.Errorf("failed to marshal google function response wrapper: %w", err)
 		}
 
 		primaryMessage := message{
@@ -238,7 +237,7 @@ func messagesFromLLM(m llms.Message) []message {
 				messagesToReturn = append(messagesToReturn, secondaryMessage)
 			}
 		}
-		return messagesToReturn
+		return messagesToReturn, nil
 	}
 
 	// Handle regular messages (user, model/assistant)
@@ -275,13 +274,13 @@ func messagesFromLLM(m llms.Message) []message {
 
 	// Only return a message if it has parts
 	if len(apiParts) == 0 {
-		return []message{}
+		return []message{}, nil
 	}
 
 	return []message{{
 		Role:  apiRole,
 		Parts: apiParts,
-	}}
+	}}, nil
 }
 
 type usageMetadata struct {

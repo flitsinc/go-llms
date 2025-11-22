@@ -180,7 +180,10 @@ func (m *Model) Generate(
 
 	var apiMessages []message
 	for _, msg := range messages {
-		convertedMsgs := messagesFromLLM(msg)
+		convertedMsgs, err := messagesFromLLM(msg)
+		if err != nil {
+			return &Stream{err: fmt.Errorf("failed to convert message for Google: %w", err)}
+		}
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 

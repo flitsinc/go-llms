@@ -189,7 +189,8 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := messagesFromLLM(tc.input)
+			actual, err := messagesFromLLM(tc.input)
+			require.NoError(t, err)
 
 			require.Equal(t, len(tc.expected), len(actual), "Number of messages mismatch")
 
@@ -229,6 +230,16 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMessagesFromLLM_Google_MissingFunctionName(t *testing.T) {
+	_, err := messagesFromLLM(llms.Message{
+		Role:    "tool",
+		Content: content.FromRawJSON(json.RawMessage(`{"result":"ok"}`)),
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "function name")
 }
 
 func TestGoogle_ToolChoice_Config(t *testing.T) {
