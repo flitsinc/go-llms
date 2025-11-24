@@ -49,6 +49,7 @@ func TestOpenAIE2E(t *testing.T) {
 		maxCompletionTokens   int
 		reasoningEffort       Effort
 		includeUsage          *bool
+		nonStreaming          bool
 		customEndpoint        string // For testing WithEndpoint
 		customEndpointCompany string // For testing WithEndpoint
 		// verifyRequest is called after the server handler has sent its response.
@@ -125,6 +126,52 @@ func TestOpenAIE2E(t *testing.T) {
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				// stream_options should be omitted entirely
 				assert.Nil(t, body["stream_options"])
+			},
+		},
+		{
+			name: "Non-streaming basic text",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Hello")},
+			},
+			nonStreaming: true,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				assert.Equal(t, mockModel, body["model"])
+				assert.Equal(t, false, body["stream"].(bool))
+				assert.Nil(t, body["stream_options"]) // omitted when non-streaming
+			},
+			customResponse: func(t *testing.T, w http.ResponseWriter) {
+				// Return a full JSON response (non-streaming)
+				// We keep the default headers as-is; client does not rely on Content-Type
+				resp := map[string]any{
+					"id":      "chatcmpl-ns-1",
+					"object":  "chat.completion",
+					"created": 1677652288,
+					"model":   mockModel,
+					"choices": []any{
+						map[string]any{
+							"index": 0,
+							"message": map[string]any{
+								"role":    "assistant",
+								"content": "Hello non-stream",
+							},
+							"finish_reason": "stop",
+						},
+					},
+					"usage": map[string]any{
+						"prompt_tokens":     5,
+						"completion_tokens": 2,
+						"total_tokens":      7,
+					},
+				}
+				bytes, err := json.Marshal(resp)
+				require.NoError(t, err)
+				_, _ = w.Write(bytes)
+			},
+			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusText,
+			},
+			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
+				assert.Equal(t, "Hello non-stream", finalText)
 			},
 		},
 		{
@@ -550,7 +597,7 @@ func TestOpenAIE2E(t *testing.T) {
 			}
 
 			// Apply other configurations
-			if tc.maxCompletionTokens > 0 {
+		if tc.maxCompletionTokens > 0 {
 				client = client.WithMaxCompletionTokens(tc.maxCompletionTokens)
 			}
 			if tc.reasoningEffort != "" {
@@ -559,6 +606,9 @@ func TestOpenAIE2E(t *testing.T) {
 			if tc.includeUsage != nil {
 				client = client.WithIncludeUsage(*tc.includeUsage)
 			}
+		if tc.nonStreaming {
+			client = client.WithNonStreamingAPI()
+		}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
 
