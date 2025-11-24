@@ -616,6 +616,9 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 					case "message":
 						// Capture the assistant message ID so it can be replayed later
 						s.message.ID = item.ID
+						if !yield(llms.StreamStatusMessageStart) {
+							return
+						}
 					case "function_call":
 						if activeToolCall != nil {
 							if !yield(llms.StreamStatusToolCallReady) {

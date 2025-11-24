@@ -375,6 +375,12 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			case "message_start":
 				// Initialize the message with the role from the message_start event
 				s.message.Role = event.Message.Role
+				if event.Message.ID != "" {
+					s.message.ID = event.Message.ID
+					if !yield(llms.StreamStatusMessageStart) {
+						return
+					}
+				}
 				if u := event.Message.Usage; u != nil {
 					// Values are cumulative, so we overwrite the numbers instead of adding.
 					// https://docs.anthropic.com/en/docs/build-with-claude/streaming

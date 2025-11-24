@@ -19,4 +19,6 @@ const (
 	StreamStatusThinking
 	// StreamStatusThinkingDone means the stream finished a thought.
 	StreamStatusThinkingDone
+	// StreamStatusMessageStart means the stream surfaced the server-assigned message ID.
+	StreamStatusMessageStart
 )

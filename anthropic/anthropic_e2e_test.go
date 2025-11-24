@@ -327,6 +327,7 @@ func TestAnthropicE2E(t *testing.T) {
 				}
 			},
 			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
 				llms.StreamStatusToolCallBegin,
 				llms.StreamStatusToolCallDelta,
 				llms.StreamStatusToolCallDelta,

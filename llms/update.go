@@ -18,6 +18,7 @@ const (
 	UpdateTypeImage        UpdateType = "image"
 	UpdateTypeThinking     UpdateType = "thinking"
 	UpdateTypeThinkingDone UpdateType = "thinking_done"
+	UpdateTypeMessageStart UpdateType = "message_start"
 )
 
 type Update interface {
@@ -93,4 +94,12 @@ type ThinkingDoneUpdate struct{}
 
 func (u ThinkingDoneUpdate) Type() UpdateType {
 	return UpdateTypeThinkingDone
+}
+
+type MessageStartUpdate struct {
+	MessageID string
+}
+
+func (u MessageStartUpdate) Type() UpdateType {
+	return UpdateTypeMessageStart
 }
