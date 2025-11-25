@@ -280,9 +280,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		switch status {
 		case StreamStatusMessageStart:
 			msg := stream.Message()
-			if msg.ID != "" {
-				updateChan <- MessageStartUpdate{MessageID: msg.ID}
-			}
+			updateChan <- MessageStartUpdate{MessageID: msg.ID}
 
 		case StreamStatusText:
 			updateChan <- TextUpdate{stream.Text()}

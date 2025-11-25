@@ -435,6 +435,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		// Track whether the last yielded event was a thinking update, so we can emit ThinkingDone
 		lastEventWasThinking := false
+		messageStartYielded := false
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -489,6 +490,14 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			delta := chunk.Candidates[0].Content
 			if delta.Role != "" {
 				s.message.Role = delta.Role
+			}
+			// Emit message_start once before any content is yielded. Google does not
+			// currently provide a message ID, but downstream expects the event.
+			if !messageStartYielded {
+				messageStartYielded = true
+				if !yield(llms.StreamStatusMessageStart) {
+					return
+				}
 			}
 			for _, p := range delta.Parts {
 				if p.Text != nil && *p.Text != "" {

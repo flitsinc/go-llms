@@ -2,13 +2,81 @@ package llms
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type messageStartStream struct {
+	message Message
+	text    string
+}
+
+func (s *messageStartStream) Err() error { return nil }
+func (s *messageStartStream) Iter() func(func(StreamStatus) bool) {
+	return func(yield func(StreamStatus) bool) {
+		if !yield(StreamStatusMessageStart) {
+			return
+		}
+		yield(StreamStatusText)
+	}
+}
+func (s *messageStartStream) Message() Message {
+	if s.message.Content == nil {
+		s.message = Message{
+			Role:    "assistant",
+			Content: content.FromText(s.text),
+		}
+	}
+	return s.message
+}
+func (s *messageStartStream) Text() string             { return s.text }
+func (s *messageStartStream) Image() (string, string)  { return "", "" }
+func (s *messageStartStream) Thought() content.Thought { return content.Thought{} }
+func (s *messageStartStream) ToolCall() ToolCall       { return ToolCall{} }
+func (s *messageStartStream) Usage() Usage             { return Usage{} }
+
+type messageStartProvider struct{}
+
+func (p *messageStartProvider) Company() string              { return "Message Start Provider" }
+func (p *messageStartProvider) Model() string                { return "message-start-model" }
+func (p *messageStartProvider) SetDebugger(d Debugger)       {}
+func (p *messageStartProvider) SetHTTPClient(_ *http.Client) {}
+func (p *messageStartProvider) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) ProviderStream {
+	return &messageStartStream{
+		text: "hello world",
+	}
+}
+
+func TestMessageStartUpdateSentWithoutID(t *testing.T) {
+	llm := New(&messageStartProvider{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Test message")
+
+	require.NoError(t, llm.Err(), "LLM should not error when message ID is missing")
+	require.Len(t, updates, 2, "Expected message_start and text updates")
+
+	start, ok := updates[0].(MessageStartUpdate)
+	require.True(t, ok, "First update should be MessageStartUpdate")
+	assert.Empty(t, start.MessageID, "Message ID should be empty for providers without IDs")
+
+	text, ok := updates[1].(TextUpdate)
+	require.True(t, ok, "Second update should be TextUpdate")
+	assert.Equal(t, "hello world", text.Text)
+}
 
 // TestChatFlow tests the complete chat flow with a tool call and response.
 func TestChatFlow(t *testing.T) {
