@@ -90,7 +90,7 @@ func main() {
 	var prevUpdate llms.UpdateType
 
 	// llm.Chat returns a channel of updates.
-	for update := range llm.Chat("List the files in the current directory. Then tell me a poem trying to rhyme with the most interesting file names.") {
+	for update := range llm.Chat("List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names.") {
 		// Output formatting: Add two newlines before new update types.
 		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
 			fmt.Println()
