@@ -40,11 +40,11 @@ func main() {
 			return
 		}
 		if provider == "openai-responses" {
-			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5").
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.1").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		} else {
-			llmProvider = openai.New(apiKey, "gpt-5").
+			llmProvider = openai.New(apiKey, "gpt-5.1").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		}
@@ -54,14 +54,16 @@ func main() {
 			fmt.Println("Error: ANTHROPIC_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-20250514").WithBeta("extended-cache-ttl-2025-04-11")
+		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-5").WithBeta("extended-cache-ttl-2025-04-11")
 	case "google":
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
 			fmt.Println("Error: GEMINI_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = google.New("gemini-2.5-flash").WithGeminiAPI(apiKey)
+		llmProvider = google.New("gemini-3-pro-preview").
+			WithThinkingLevel(google.ThinkingLevelLow).
+			WithGeminiAPI(apiKey)
 	case "groq":
 		apiKey := os.Getenv("GROQ_API_KEY")
 		if apiKey == "" {
