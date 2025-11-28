@@ -179,13 +179,42 @@ func (m *Model) Generate(
 	}
 
 	var apiMessages []message
+	var pendingFunctionMsg *message
+	var deferredAfterFunction []message
+
+	flushPending := func() {
+		if pendingFunctionMsg != nil {
+			apiMessages = append(apiMessages, *pendingFunctionMsg)
+			pendingFunctionMsg = nil
+		}
+		if len(deferredAfterFunction) > 0 {
+			apiMessages = append(apiMessages, deferredAfterFunction...)
+			deferredAfterFunction = nil
+		}
+	}
+
 	for _, msg := range messages {
 		convertedMsgs, err := messagesFromLLM(msg)
 		if err != nil {
 			return &Stream{err: fmt.Errorf("failed to convert message for Google: %w", err)}
 		}
+		if msg.Role == "tool" {
+			if len(convertedMsgs) > 0 && convertedMsgs[0].Role == "function" {
+				if pendingFunctionMsg == nil {
+					pendingFunctionMsg = &message{Role: "function"}
+				}
+				pendingFunctionMsg.Parts = append(pendingFunctionMsg.Parts, convertedMsgs[0].Parts...)
+				if len(convertedMsgs) > 1 {
+					deferredAfterFunction = append(deferredAfterFunction, convertedMsgs[1:]...)
+				}
+				continue
+			}
+		}
+
+		flushPending()
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
+	flushPending()
 
 	payload := map[string]any{
 		"contents": apiMessages,

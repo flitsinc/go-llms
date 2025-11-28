@@ -173,3 +173,104 @@ func TestGemini3ThoughtSignature(t *testing.T) {
 		t.Fatalf("Generate 2 failed: %v", err)
 	}
 }
+
+func TestGemini3AggregatesFunctionResponses(t *testing.T) {
+	toolCalls := []llms.ToolCall{
+		{ID: "t1", Name: "a", Arguments: json.RawMessage(`{}`)},
+		{ID: "t2", Name: "b", Arguments: json.RawMessage(`{}`)},
+		{ID: "t3", Name: "c", Arguments: json.RawMessage(`{}`)},
+	}
+	history := []llms.Message{
+		{Role: "assistant", ToolCalls: toolCalls},
+		{Role: "tool", ToolCallID: "t1", ToolCallName: "a", Content: content.FromRawJSON(json.RawMessage(`{"ok":1}`))},
+		{Role: "tool", ToolCallID: "t2", ToolCallName: "b", Content: content.FromRawJSON(json.RawMessage(`{"ok":2}`))},
+		{Role: "tool", ToolCallID: "t3", ToolCallName: "c", Content: content.FromRawJSON(json.RawMessage(`{"ok":3}`))},
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "done"}]}}]}` + "\n\n"))
+	}))
+	defer server.Close()
+
+	model := New("gemini-3-pro-preview").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, history, nil, nil)
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	payload := <-payloadCh
+
+	contents, ok := payload["contents"].([]any)
+	if !ok {
+		t.Fatalf("expected contents array, got %T", payload["contents"])
+	}
+
+	var functionMsg map[string]any
+	functionCount := 0
+	for _, raw := range contents {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if role, _ := msg["role"].(string); role == "function" {
+			functionMsg = msg
+			functionCount++
+		}
+	}
+
+	if functionCount != 1 {
+		t.Fatalf("expected exactly one function message, got %d", functionCount)
+	}
+	if functionMsg == nil {
+		t.Fatalf("function message missing")
+	}
+
+	var parts []any
+	switch p := functionMsg["parts"].(type) {
+	case []any:
+		parts = p
+	case map[string]any:
+		parts = []any{p}
+	default:
+		t.Fatalf("unexpected parts type %T", functionMsg["parts"])
+	}
+
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 function response parts, got %d", len(parts))
+	}
+
+	names := map[string]bool{}
+	for idx, partRaw := range parts {
+		part, ok := partRaw.(map[string]any)
+		if !ok {
+			t.Fatalf("part %d is not an object", idx)
+		}
+		fr, ok := part["functionResponse"].(map[string]any)
+		if !ok {
+			t.Fatalf("part %d missing functionResponse", idx)
+		}
+		name, _ := fr["name"].(string)
+		if name == "" {
+			t.Fatalf("part %d missing functionResponse.name", idx)
+		}
+		names[name] = true
+	}
+
+	for _, expected := range []string{"a", "b", "c"} {
+		if !names[expected] {
+			t.Fatalf("missing functionResponse for %q", expected)
+		}
+	}
+}
