@@ -46,10 +46,47 @@ type fileData struct {
 	FileURI  string `json:"fileUri"`
 }
 
+// partialFunctionArgument represents a single partial update to function call
+// arguments, delivered when streamFunctionCallArguments is enabled.
+//
+// Per official Google docs, each partialArg contains:
+// - jsonPath: A JSONPath string (e.g., "$.location", "$.location.latitude")
+// - One of: numberValue, stringValue, boolValue, nullValue
+// - willContinue: (optional) true if more string chunks are coming for this argument
+type partialFunctionArgument struct {
+	JSONPath string `json:"jsonPath,omitempty"`
+
+	// Value fields - exactly one should be populated per the API spec.
+	StringValue *string  `json:"stringValue,omitempty"` // Pointer to distinguish empty string from absent
+	NumberValue *float64 `json:"numberValue,omitempty"`
+	BoolValue   *bool    `json:"boolValue,omitempty"`
+	NullValue   *bool    `json:"nullValue,omitempty"` // Presence indicates null value
+
+	// WillContinue at the partialArg level indicates if more string chunks are
+	// expected for this specific argument (only relevant for stringValue).
+	WillContinue bool `json:"willContinue,omitempty"`
+}
+
 type functionCall struct {
-	ID   string          `json:"id,omitempty"`
-	Name string          `json:"name"`
+	// ID is provided by some API versions for tracking parallel calls.
+	// May be absent in streaming scenarios per official docs.
+	ID string `json:"id,omitempty"`
+
+	// Name appears on the first chunk of a function call.
+	// Subsequent chunks in streaming may omit this field.
+	Name string `json:"name,omitempty"`
+
+	// Args contains the complete arguments (non-streaming or final snapshot).
 	Args json.RawMessage `json:"args,omitempty"`
+
+	// PartialArgs contains incremental argument updates when streaming is enabled.
+	// Each entry specifies a JSON path and the value to set at that path.
+	PartialArgs []partialFunctionArgument `json:"partialArgs,omitempty"`
+
+	// WillContinue at the functionCall level indicates if more partialArgs chunks
+	// are expected for this function call. When false or absent with an empty
+	// functionCall object, the function call is complete.
+	WillContinue *bool `json:"willContinue,omitempty"`
 }
 
 type functionResponse struct {
@@ -311,4 +348,73 @@ type safetyRating struct {
 	ProbabilityScore float64 `json:"probabilityScore"`
 	Severity         string  `json:"severity"`
 	SeverityScore    float64 `json:"severityScore"`
+}
+
+// applyPartialArgsJSON merges partial argument updates into an existing JSON object.
+// It supports simple top-level JSON paths like "$.field" or ".field" and appends
+// string values to existing strings at that path.
+//
+// Per official Google docs, partialArgs contain jsonPath + one of:
+// stringValue, numberValue, boolValue, nullValue
+//
+// This function is best-effort: if the current JSON is malformed or the path is
+// too complex, it returns the original unchanged.
+func applyPartialArgsJSON(current json.RawMessage, patches []partialFunctionArgument) (json.RawMessage, error) {
+	if len(patches) == 0 {
+		return current, nil
+	}
+
+	// Parse current args into a map
+	var args map[string]any
+	if err := json.Unmarshal(current, &args); err != nil {
+		// If we can't parse as object, try to start fresh
+		args = make(map[string]any)
+	}
+
+	for _, patch := range patches {
+		// Parse the JSON path - support simple formats like "$.field", ".field", or "field"
+		path := patch.JSONPath
+		path = strings.TrimPrefix(path, "$")
+		path = strings.TrimPrefix(path, ".")
+
+		// For now, we only support single-level field names (no nested paths)
+		// More complex paths like "$.foo.bar" or "$.items[0]" are not handled
+		if path == "" || strings.ContainsAny(path, ".[") {
+			continue
+		}
+
+		// Determine the value from the patch (per official docs: one of these fields)
+		var newValue any
+		var isString bool
+		switch {
+		case patch.StringValue != nil:
+			newValue = *patch.StringValue
+			isString = true
+		case patch.NumberValue != nil:
+			newValue = *patch.NumberValue
+		case patch.BoolValue != nil:
+			newValue = *patch.BoolValue
+		case patch.NullValue != nil:
+			newValue = nil
+		default:
+			// No value set - this can happen for "end of string" markers
+			// where willContinue transitions from true to absent
+			continue
+		}
+
+		// Get existing value and append/set
+		existing, exists := args[path]
+		if exists && isString {
+			// If both are strings, append (streaming text scenario)
+			if existingStr, ok := existing.(string); ok {
+				args[path] = existingStr + newValue.(string)
+				continue
+			}
+		}
+		// Otherwise just set/overwrite
+		args[path] = newValue
+	}
+
+	// Re-marshal the updated args
+	return json.Marshal(args)
 }

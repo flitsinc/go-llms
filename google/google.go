@@ -56,6 +56,12 @@ type Model struct {
 	debugger        llms.Debugger
 	modalities      []string
 	httpClient      *http.Client
+
+	// streamFunctionCallArguments enables streaming of function call arguments
+	// on Vertex AI Gemini 3+ models. When true, the backend sends partial argument
+	// chunks via partialArgs with a stable functionCall.id across chunks.
+	// Note: This is only supported on Vertex AI; the Gemini Developer API ignores this.
+	streamFunctionCallArguments bool
 }
 
 func New(model string) *Model {
@@ -148,6 +154,19 @@ func (m *Model) WithMediaResolution(resolution MediaResolution) *Model {
 // Some valid values are: "TEXT", "IMAGE", "AUDIO"
 func (m *Model) WithModalities(modalities ...string) *Model {
 	m.modalities = modalities
+	return m
+}
+
+// WithStreamingToolArguments enables streaming of function call arguments on
+// Vertex AI Gemini 3+ models. When enabled, the backend sends partial argument
+// chunks with a stable functionCall.id, allowing the stream to emit ToolCallBegin
+// once, then multiple ToolCallDelta events as arguments stream in, and finally
+// ToolCallReady when complete.
+//
+// Note: This feature is only supported on Vertex AI. The Gemini Developer API
+// (WithGeminiAPI) does not support partialArgs and will ignore this setting.
+func (m *Model) WithStreamingToolArguments(enabled bool) *Model {
+	m.streamFunctionCallArguments = enabled
 	return m
 }
 
@@ -316,43 +335,36 @@ func (m *Model) Generate(
 		// We keep all functionDeclarations above for cacheability, and rely on
 		// toolConfig.functionCallingConfig.allowedFunctionNames to constrain use.
 		choice := toolbox.Choice
+		functionCallingConfig := map[string]any{}
+
 		switch choice.Mode {
 		case tools.ChoiceAllowOnly:
 			if len(choice.AllowedTools) == 0 {
-				payload["toolConfig"] = map[string]any{
-					"functionCallingConfig": map[string]any{
-						"mode": "NONE",
-					},
-				}
+				functionCallingConfig["mode"] = "NONE"
 			} else {
-				payload["toolConfig"] = map[string]any{
-					"functionCallingConfig": map[string]any{
-						"mode":                 "AUTO",
-						"allowedFunctionNames": choice.AllowedTools,
-					},
-				}
+				functionCallingConfig["mode"] = "AUTO"
+				functionCallingConfig["allowedFunctionNames"] = choice.AllowedTools
 			}
 		case tools.ChoiceRequireOneOf:
 			if len(choice.AllowedTools) == 0 {
-				payload["toolConfig"] = map[string]any{
-					"functionCallingConfig": map[string]any{
-						"mode": "NONE",
-					},
-				}
+				functionCallingConfig["mode"] = "NONE"
 			} else {
-				payload["toolConfig"] = map[string]any{
-					"functionCallingConfig": map[string]any{
-						"mode":                 "ANY",
-						"allowedFunctionNames": choice.AllowedTools,
-					},
-				}
+				functionCallingConfig["mode"] = "ANY"
+				functionCallingConfig["allowedFunctionNames"] = choice.AllowedTools
 			}
 		default:
-			payload["toolConfig"] = map[string]any{
-				"functionCallingConfig": map[string]any{
-					"mode": "AUTO",
-				},
-			}
+			functionCallingConfig["mode"] = "AUTO"
+		}
+
+		// Enable streaming function call arguments when configured.
+		// This is supported on Vertex AI Gemini 3+ models and causes the backend
+		// to send partialArgs with a stable functionCall.id across chunks.
+		if m.streamFunctionCallArguments {
+			functionCallingConfig["streamFunctionCallArguments"] = true
+		}
+
+		payload["toolConfig"] = map[string]any{
+			"functionCallingConfig": functionCallingConfig,
 		}
 	}
 
@@ -403,7 +415,15 @@ func (m *Model) Generate(
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
 		return &Stream{err: fmt.Errorf("%s", resp.Status)}
 	}
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
+	return &Stream{
+		ctx:            ctx,
+		model:          m.model,
+		stream:         resp.Body,
+		debugger:       m.debugger,
+		toolCallsByID:  make(map[string]int),
+		toolArgsByID:   make(map[string]json.RawMessage),
+		toolCallsReady: make(map[string]bool),
+	}
 }
 
 type Stream struct {
@@ -417,6 +437,14 @@ type Stream struct {
 	usage       *usageMetadata
 	debugger    llms.Debugger
 	lastImage   struct{ URL, MIME string }
+
+	// Tool call tracking for streaming function call arguments.
+	// Maps functionCall.ID to the index in message.ToolCalls.
+	toolCallsByID map[string]int
+	// Tracks the latest arguments JSON snapshot for each tool call ID.
+	toolArgsByID map[string]json.RawMessage
+	// Tracks tool calls that have had ToolCallReady emitted (by ID).
+	toolCallsReady map[string]bool
 }
 
 func (s *Stream) Err() error {
@@ -465,6 +493,22 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 		// Track whether the last yielded event was a thinking update, so we can emit ThinkingDone
 		lastEventWasThinking := false
 		messageStartYielded := false
+
+		// emitPendingToolCallsReady emits ToolCallReady for any tool calls that
+		// haven't been marked ready yet. This handles the case where the stream
+		// ends without a finishReason (common in one-shot scenarios).
+		emitPendingToolCallsReady := func() bool {
+			for callID := range s.toolCallsByID {
+				if !s.toolCallsReady[callID] {
+					s.toolCallsReady[callID] = true
+					if !yield(llms.StreamStatusToolCallReady) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -481,6 +525,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if err == io.EOF {
 						// If we have accumulated partial data, process it before returning
 						if lineBuilder.Len() == 0 {
+							// Stream ended; emit Ready for any pending tool calls
+							emitPendingToolCallsReady()
 							return
 						}
 						break
@@ -592,31 +638,122 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 						lastEventWasThinking = false
 					}
-					// Note: Gemini's streaming API doesn't have partial tool calls.
-					// Google doesn't provide tool call IDs, so we generate our own
-					// using a combination of function name and a timestamp to ensure uniqueness
-					uniqueID := fmt.Sprintf("%s-%d", p.FunctionCall.Name, time.Now().UnixNano())
 
-					// Capture thought signature if present (Gemini 3 requirement)
-					metadata := make(map[string]string)
-					if p.ThoughtSignature != "" {
-						metadata["google:thought_signature"] = p.ThoughtSignature
+					fc := p.FunctionCall
+
+					// Per official Google docs for streaming function call arguments:
+					// - A chunk with `name` field starts a new function call
+					// - Chunks with `partialArgs` continue the current call
+					// - An empty functionCall {} signals the end of the current call
+					// - `willContinue` at functionCall level indicates if more chunks are expected
+					//
+					// We support two tracking modes:
+					// 1. ID-based: when fc.ID is provided (may be available in some API versions)
+					// 2. Index-based: track "current active call" by message.ToolCalls index
+
+					// Detect empty functionCall {} which signals end of current function call
+					isEmptyFunctionCall := fc.Name == "" && fc.Args == nil && len(fc.PartialArgs) == 0 &&
+						(fc.WillContinue == nil || !*fc.WillContinue)
+
+					if isEmptyFunctionCall {
+						// Mark all pending tool calls as ready
+						for callID := range s.toolCallsByID {
+							if !s.toolCallsReady[callID] {
+								s.toolCallsReady[callID] = true
+								if !yield(llms.StreamStatusToolCallReady) {
+									return
+								}
+							}
+						}
+						continue
 					}
 
-					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
-						ID:        uniqueID,
-						Name:      p.FunctionCall.Name,
-						Arguments: p.FunctionCall.Args,
-						Metadata:  metadata,
-					})
-					if !yield(llms.StreamStatusToolCallBegin) {
-						return
+					// Determine call ID for tracking
+					callID := fc.ID
+					if callID == "" {
+						// No ID provided - use name-based tracking for streaming scenarios.
+						// Per docs, `name` appears on first chunk of each function call.
+						if fc.Name != "" {
+							// New function call starting - generate a unique ID
+							callID = fmt.Sprintf("%s-%d", fc.Name, time.Now().UnixNano())
+						} else if len(s.message.ToolCalls) > 0 {
+							// Continuation chunk (no name, has partialArgs) - use last call's ID
+							callID = s.message.ToolCalls[len(s.message.ToolCalls)-1].ID
+						} else {
+							// Edge case: partialArgs without any prior call - skip
+							continue
+						}
 					}
-					if !yield(llms.StreamStatusToolCallDelta) {
-						return
+
+					// Get or create the llms.ToolCall entry for this ID.
+					idx, exists := s.toolCallsByID[callID]
+					if !exists {
+						// First time we've seen this function call.
+						metadata := make(map[string]string)
+						if p.ThoughtSignature != "" {
+							metadata["google:thought_signature"] = p.ThoughtSignature
+						}
+
+						// Initial arguments: may be nil if we're only getting partialArgs at first.
+						args := fc.Args
+						if args == nil {
+							args = json.RawMessage("{}")
+						}
+
+						s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
+							ID:        callID,
+							Name:      fc.Name,
+							Arguments: args,
+							Metadata:  metadata,
+						})
+						idx = len(s.message.ToolCalls) - 1
+						s.toolCallsByID[callID] = idx
+						s.toolArgsByID[callID] = args
+
+						// First chunk: signal begin
+						if !yield(llms.StreamStatusToolCallBegin) {
+							return
+						}
 					}
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
+
+					// Update arguments snapshot based on args and/or partialArgs.
+					currentArgs := s.toolArgsByID[callID]
+
+					// If the backend sends full args (fc.Args), prefer that as the latest snapshot.
+					if len(fc.Args) > 0 {
+						currentArgs = fc.Args
+					}
+
+					// Apply partialArgs if present (streaming argument updates).
+					if len(fc.PartialArgs) > 0 {
+						merged, err := applyPartialArgsJSON(currentArgs, fc.PartialArgs)
+						if err == nil {
+							currentArgs = merged
+						}
+						// On error, we continue with whatever we have - partial args are best-effort.
+					}
+
+					// Persist the updated snapshot
+					s.toolArgsByID[callID] = currentArgs
+					s.message.ToolCalls[idx].Arguments = currentArgs
+
+					// Emit a delta for this chunk (only if we have content to report)
+					if len(fc.Args) > 0 || len(fc.PartialArgs) > 0 {
+						if !yield(llms.StreamStatusToolCallDelta) {
+							return
+						}
+					}
+
+					// Check if this is the final chunk for the function call.
+					// Per docs: willContinue=false or absent means this is the final chunk.
+					// Also check finishReason for non-streaming scenarios.
+					isFinalChunk := (fc.WillContinue != nil && !*fc.WillContinue) ||
+						chunk.Candidates[0].FinishReason != ""
+					if isFinalChunk && !s.toolCallsReady[callID] {
+						s.toolCallsReady[callID] = true
+						if !yield(llms.StreamStatusToolCallReady) {
+							return
+						}
 					}
 				}
 				// If the candidate reports a finish reason and we were thinking just before,
