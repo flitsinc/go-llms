@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/metalim/jsonmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -192,14 +193,16 @@ func TestOpenAIE2E(t *testing.T) {
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Output some structured data.")},
 			},
-			jsonOutputSchema: &tools.ValueSchema{
-				Type: "object",
-				Properties: &map[string]tools.ValueSchema{
-					"name": {Type: "string", Description: "The name"},
-					"age":  {Type: "integer", Description: "The age"},
-				},
-				Required: []string{"name", "age"},
-			},
+			jsonOutputSchema: func() *tools.ValueSchema {
+				props := jsonmap.New()
+				props.Set("name", tools.ValueSchema{Type: "string", Description: "The name"})
+				props.Set("age", tools.ValueSchema{Type: "integer", Description: "The age"})
+				return &tools.ValueSchema{
+					Type:       "object",
+					Properties: props,
+					Required:   []string{"name", "age"},
+				}
+			}(),
 			maxCompletionTokens: 200,
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				assert.NotNil(t, body["response_format"], "Response format should be present for JSON mode")
@@ -412,19 +415,21 @@ func TestOpenAIE2E(t *testing.T) {
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Output complex JSON data with streaming.")},
 			},
-			jsonOutputSchema: &tools.ValueSchema{
-				Type: "object",
-				Properties: &map[string]tools.ValueSchema{
-					"name":      {Type: "string", Description: "Person's name"},
-					"age":       {Type: "integer", Description: "Person's age"},
-					"isStudent": {Type: "boolean", Description: "Is the person a student"},
-					"courses": {
-						Type:  "array",
-						Items: &tools.ValueSchema{Type: "string"},
-					},
-				},
-				Required: []string{"name", "age", "isStudent"},
-			},
+			jsonOutputSchema: func() *tools.ValueSchema {
+				props := jsonmap.New()
+				props.Set("name", tools.ValueSchema{Type: "string", Description: "Person's name"})
+				props.Set("age", tools.ValueSchema{Type: "integer", Description: "Person's age"})
+				props.Set("isStudent", tools.ValueSchema{Type: "boolean", Description: "Is the person a student"})
+				props.Set("courses", tools.ValueSchema{
+					Type:  "array",
+					Items: &tools.ValueSchema{Type: "string"},
+				})
+				return &tools.ValueSchema{
+					Type:       "object",
+					Properties: props,
+					Required:   []string{"name", "age", "isStudent"},
+				}
+			}(),
 			maxCompletionTokens: 300,
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				assert.NotNil(t, body["response_format"], "Response format should be present for JSON mode")

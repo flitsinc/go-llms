@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/tools"
-	"github.com/stretchr/testify/require"
 )
 
 // --- Common Test Tool Definition ---

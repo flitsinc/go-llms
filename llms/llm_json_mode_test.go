@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flitsinc/go-llms/content"
-	"github.com/flitsinc/go-llms/tools"
+	"github.com/metalim/jsonmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 // mockJSONProvider returns a JSON response according to the schema
@@ -90,12 +92,12 @@ func (s *mockJSONStreamWithError) Usage() Usage             { return Usage{} }
 func TestLLM_JSONMode_PassesSchemaToProvider(t *testing.T) {
 	provider := &mockJSONProvider{}
 	llm := New(provider)
+	props := jsonmap.New()
+	props.Set("foo", tools.ValueSchema{Type: "string"})
 	schema := &tools.ValueSchema{
-		Type: "object",
-		Properties: &map[string]tools.ValueSchema{
-			"foo": {Type: "string"},
-		},
-		Required: []string{"foo"},
+		Type:       "object",
+		Properties: props,
+		Required:   []string{"foo"},
 	}
 	llm.JSONOutputSchema = schema
 
@@ -129,13 +131,13 @@ func TestLLM_JSONMode_ConflictsWithTools(t *testing.T) {
 func TestLLM_JSONMode_RespectsSchemaInCall(t *testing.T) {
 	provider := &mockJSONProvider{}
 	llm := New(provider)
+	props := jsonmap.New()
+	props.Set("foo", tools.ValueSchema{Type: "string"})
+	props.Set("bar", tools.ValueSchema{Type: "number"})
 	schema := &tools.ValueSchema{
-		Type: "object",
-		Properties: &map[string]tools.ValueSchema{
-			"foo": {Type: "string"},
-			"bar": {Type: "number"},
-		},
-		Required: []string{"foo", "bar"},
+		Type:       "object",
+		Properties: props,
+		Required:   []string{"foo", "bar"},
 	}
 	llm.JSONOutputSchema = schema
 

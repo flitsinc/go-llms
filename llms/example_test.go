@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/metalim/jsonmap"
+
 	"github.com/flitsinc/go-llms/anthropic"
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/google"
@@ -237,12 +239,14 @@ func ExampleLLM_AddExternalTools() {
 			Description: "Get the current weather for a location",
 			Parameters: tools.ValueSchema{
 				Type: "object",
-				Properties: &map[string]tools.ValueSchema{
-					"location": {
+				Properties: func() *jsonmap.Map {
+					props := jsonmap.New()
+					props.Set("location", tools.ValueSchema{
 						Type:        "string",
 						Description: "The city and state, e.g. San Francisco, CA",
-					},
-				},
+					})
+					return props
+				}(),
 				Required: []string{"location"},
 			},
 		},

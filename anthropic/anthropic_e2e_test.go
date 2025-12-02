@@ -10,11 +10,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/metalim/jsonmap"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestAnthropicE2E tests the request generation logic of the Generate function
@@ -137,13 +139,15 @@ func TestAnthropicE2E(t *testing.T) {
 			messages: []llms.Message{
 				{Role: "user", Content: content.FromText("Output JSON")},
 			},
-			jsonOutputSchema: &tools.ValueSchema{
-				Type: "object",
-				Properties: &map[string]tools.ValueSchema{
-					"data": {Type: "string", Description: "The data"},
-				},
-				Required: []string{"data"},
-			},
+			jsonOutputSchema: func() *tools.ValueSchema {
+				props := jsonmap.New()
+				props.Set("data", tools.ValueSchema{Type: "string", Description: "The data"})
+				return &tools.ValueSchema{
+					Type:       "object",
+					Properties: props,
+					Required:   []string{"data"},
+				}
+			}(),
 			maxTokens: 200,
 			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
 				assert.NotNil(t, body["tools"], "Tools should be present for JSON mode")

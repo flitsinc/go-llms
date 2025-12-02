@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/metalim/jsonmap"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
@@ -800,30 +802,30 @@ func TestStreamingToolArguments_EmptyFunctionCallEndsCall(t *testing.T) {
 
 // getWeatherFunctionDeclaration provides a test schema matching Google's examples
 func getWeatherFunctionDeclaration() tools.FunctionSchema {
+	props := jsonmap.New()
+	props.Set("location", tools.ValueSchema{
+		Type:        "string",
+		Description: "The location to get the weather for",
+	})
+	props.Set("country", tools.ValueSchema{
+		Type:        "string",
+		Description: "The country to get the weather for",
+	})
+	props.Set("unit", tools.ValueSchema{
+		Type:        "string",
+		Description: "Temperature unit (C or F)",
+	})
+	props.Set("purpose", tools.ValueSchema{
+		Type:        "string",
+		Description: "Describes the purpose of asking the weather",
+	})
 	return tools.FunctionSchema{
 		Name:        "get_current_weather",
 		Description: "Get the current weather in a city",
 		Parameters: tools.ValueSchema{
-			Type: "object",
-			Properties: &map[string]tools.ValueSchema{
-				"location": {
-					Type:        "string",
-					Description: "The location to get the weather for",
-				},
-				"country": {
-					Type:        "string",
-					Description: "The country to get the weather for",
-				},
-				"unit": {
-					Type:        "string",
-					Description: "Temperature unit (C or F)",
-				},
-				"purpose": {
-					Type:        "string",
-					Description: "Describes the purpose of asking the weather",
-				},
-			},
-			Required: []string{"location", "unit", "country"},
+			Type:       "object",
+			Properties: props,
+			Required:   []string{"location", "unit", "country"},
 		},
 	}
 }

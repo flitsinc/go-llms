@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flitsinc/go-llms/content"
+	"github.com/metalim/jsonmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/flitsinc/go-llms/content"
 )
 
 // Params defines a struct type with various fields for testing tool functionality.
@@ -239,22 +241,22 @@ func TestToolFunctionReport(t *testing.T) {
 // TestExternalTool tests the creation and execution of an external tool.
 func TestExternalTool(t *testing.T) {
 	// 1. Define the schema manually, including an anyOf structure
+	props := jsonmap.New()
+	props.Set("id", ValueSchema{Type: "string"})
+	props.Set("value", ValueSchema{
+		AnyOf: []ValueSchema{
+			{Type: "string"},
+			{Type: "number"},
+			{Type: "boolean"},
+		},
+	})
 	externalSchema := &FunctionSchema{
 		Name:        "external_processor",
 		Description: "Processes data with flexible value types.",
 		Parameters: ValueSchema{
-			Type: "object",
-			Properties: &map[string]ValueSchema{
-				"id": {Type: "string"},
-				"value": {
-					AnyOf: []ValueSchema{
-						{Type: "string"},
-						{Type: "number"},
-						{Type: "boolean"},
-					},
-				},
-			},
-			Required: []string{"id", "value"},
+			Type:       "object",
+			Properties: props,
+			Required:   []string{"id", "value"},
 		},
 	}
 
@@ -286,8 +288,10 @@ func TestExternalTool(t *testing.T) {
 	retrievedSchema := g.Schema()
 	assert.Equal(t, externalSchema, retrievedSchema, "Tool schema mismatch")
 	// Quick check on AnyOf part preservation
-	valueProp, ok := (*retrievedSchema.Parameters.Properties)["value"]
+	rawValueProp, ok := retrievedSchema.Parameters.Properties.Get("value")
 	require.True(t, ok, "Value property not found in retrieved schema")
+	valueProp, ok := rawValueProp.(ValueSchema)
+	require.True(t, ok, "Value property should be ValueSchema")
 	require.NotNil(t, valueProp.AnyOf, "AnyOf field is nil in retrieved schema")
 	assert.Len(t, valueProp.AnyOf, 3, "Incorrect number of items in AnyOf")
 	assert.Equal(t, "string", valueProp.AnyOf[0].Type)

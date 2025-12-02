@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flitsinc/go-llms/content"
-	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 )
 
 type messageStartStream struct {

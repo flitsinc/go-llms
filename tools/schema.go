@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/metalim/jsonmap"
 )
 
 // FunctionSchema defines the structure for a function tool that an LLM can call.
@@ -31,9 +33,8 @@ type ValueSchema struct {
 	// Items defines the schema for elements within an array. Only used when Type is "array".
 	Items *ValueSchema `json:"items,omitempty"`
 	// Properties defines the schema for properties within an object. Only used when Type is "object".
-	// Note: We use a pointer to the map here to differentiate "no map" from "empty map".
-	// See: https://github.com/golang/go/issues/22480
-	Properties *map[string]ValueSchema `json:"properties,omitempty"`
+	// Note: We use an ordered map to preserve insertion order from callers (e.g., TS clients).
+	Properties *jsonmap.Map `json:"properties,omitempty"`
 	// AdditionalProperties specifies the schema for additional properties in an object, or allows/disallows them.
 	// It can be a boolean (true to allow any, false to disallow) or a ValueSchema defining the type of allowed additional properties.
 	// Only used when Type is "object".
@@ -42,6 +43,27 @@ type ValueSchema struct {
 	Required []string `json:"required,omitempty"`
 	// AnyOf specifies that the value must conform to at least one of the provided schemas.
 	AnyOf []ValueSchema `json:"anyOf,omitempty"`
+}
+
+// UnmarshalJSON ensures Properties is allocated and preserves insertion order via jsonmap.
+func (v *ValueSchema) UnmarshalJSON(data []byte) error {
+	type alias ValueSchema
+	var aux struct {
+		alias
+		Properties json.RawMessage `json:"properties,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*v = ValueSchema(aux.alias)
+	if len(aux.Properties) > 0 {
+		props := jsonmap.New()
+		if err := json.Unmarshal(aux.Properties, props); err != nil {
+			return err
+		}
+		v.Properties = props
+	}
+	return nil
 }
 
 // generateSchema initializes and returns the main structure of a function's JSON Schema
@@ -83,7 +105,7 @@ func fieldTypeToJSONSchema(t reflect.Type) ValueSchema {
 
 // generateObjectSchema constructs a JSON Schema for structs
 func generateObjectSchema(typ reflect.Type) ValueSchema {
-	properties := make(map[string]ValueSchema)
+	properties := jsonmap.New()
 	required := []string{}
 
 	for i := 0; i < typ.NumField(); i++ {
@@ -105,14 +127,14 @@ func generateObjectSchema(typ reflect.Type) ValueSchema {
 		if description := field.Tag.Get("description"); description != "" {
 			fieldSchema.Description = description
 		}
-		properties[fieldName] = fieldSchema
+		properties.Set(fieldName, fieldSchema)
 		if len(parts) == 1 || (len(parts) > 1 && parts[1] != "omitempty") {
 			required = append(required, fieldName)
 		}
 	}
 	return ValueSchema{
 		Type:                 "object",
-		Properties:           &properties,
+		Properties:           properties,
 		Required:             required,
 		AdditionalProperties: false,
 	}
@@ -135,8 +157,19 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 	}
 
 	for key, val := range dataMap {
-		fieldSchema, found := (*schema.Properties)[key]
+		rawFieldSchema, found := schema.Properties.Get(key)
 		if found {
+			fieldSchema, ok := rawFieldSchema.(ValueSchema)
+			if !ok {
+				switch v := rawFieldSchema.(type) {
+				case json.RawMessage:
+					if err := json.Unmarshal(v, &fieldSchema); err != nil {
+						return fmt.Errorf("schema error: properties[%q] decode failed: %w", key, err)
+					}
+				default:
+					return fmt.Errorf("schema error: properties[%q] is %T, want ValueSchema", key, rawFieldSchema)
+				}
+			}
 			// Validate known property
 			if err := validateField(fieldSchema, val); err != nil {
 				return fmt.Errorf("field \"%s\": %w", key, err)
@@ -158,6 +191,14 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 		case ValueSchema:
 			// Validate against the provided schema for additional properties
 			if err := validateField(ap, val); err != nil {
+				return fmt.Errorf("additional property %q: %w", key, err)
+			}
+		case json.RawMessage:
+			var vs ValueSchema
+			if err := json.Unmarshal(ap, &vs); err != nil {
+				return fmt.Errorf("invalid schema: cannot decode additionalProperties for %q: %w", key, err)
+			}
+			if err := validateField(vs, val); err != nil {
 				return fmt.Errorf("additional property %q: %w", key, err)
 			}
 		default:

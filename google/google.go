@@ -29,10 +29,23 @@ func clearAdditionalProperties(schema *tools.ValueSchema) {
 	}
 
 	if schema.Properties != nil {
-		for k := range *schema.Properties {
-			v := (*schema.Properties)[k]
+		for _, k := range schema.Properties.Keys() {
+			raw, ok := schema.Properties.Get(k)
+			if !ok {
+				continue
+			}
+			v, ok := raw.(tools.ValueSchema)
+			if !ok {
+				if rm, rok := raw.(json.RawMessage); rok {
+					if err := json.Unmarshal(rm, &v); err != nil {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
 			clearAdditionalProperties(&v)
-			(*schema.Properties)[k] = v
+			schema.Properties.Set(k, v)
 		}
 	}
 

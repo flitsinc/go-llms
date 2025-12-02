@@ -2,9 +2,12 @@ package tools
 
 import (
 	"encoding/json"
+	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/metalim/jsonmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,39 +111,58 @@ func TestGenerateSchema_AdvancedTypes(t *testing.T) {
 
 	// Basic structural checks
 	require.NotNil(t, schema.Parameters.Properties, "Properties map should not be nil")
-	props := *schema.Parameters.Properties
+	props := schema.Parameters.Properties
+
+	getProp := func(key string) (ValueSchema, bool) {
+		raw, ok := props.Get(key)
+		if !ok {
+			return ValueSchema{}, false
+		}
+		val, ok := raw.(ValueSchema)
+		require.True(t, ok, "Property %q should be ValueSchema, got %T", key, raw)
+		return val, true
+	}
 
 	// Check specific field types
-	assert.Equal(t, "array", props["string_slice"].Type, "string_slice type mismatch")
-	require.NotNil(t, props["string_slice"].Items, "string_slice items should not be nil")
-	assert.Equal(t, "string", props["string_slice"].Items.Type, "string_slice item type mismatch")
+	stringSlice, ok := getProp("string_slice")
+	require.True(t, ok, "string_slice should exist")
+	assert.Equal(t, "array", stringSlice.Type, "string_slice type mismatch")
+	require.NotNil(t, stringSlice.Items, "string_slice items should not be nil")
+	assert.Equal(t, "string", stringSlice.Items.Type, "string_slice item type mismatch")
 
-	assert.Equal(t, "integer", props["int_ptr"].Type, "int_ptr type mismatch") // Note: Ptr unwraps
+	intPtr, ok := getProp("int_ptr")
+	require.True(t, ok, "int_ptr should exist")
+	assert.Equal(t, "integer", intPtr.Type, "int_ptr type mismatch") // Note: Ptr unwraps
 
-	assert.Equal(t, "object", props["struct_map"].Type, "struct_map type mismatch")
-	require.NotNil(t, props["struct_map"].AdditionalProperties, "struct_map additionalProperties should not be nil")
+	structMap, ok := getProp("struct_map")
+	require.True(t, ok, "struct_map should exist")
+	assert.Equal(t, "object", structMap.Type, "struct_map type mismatch")
+	require.NotNil(t, structMap.AdditionalProperties, "struct_map additionalProperties should not be nil")
 	// Type assert AdditionalProperties to access its fields
-	apSchema, ok := props["struct_map"].AdditionalProperties.(ValueSchema)
+	apSchema, ok := structMap.AdditionalProperties.(ValueSchema)
 	require.True(t, ok, "AdditionalProperties should be of type ValueSchema")
 	assert.Equal(t, "object", apSchema.Type, "struct_map value type mismatch")
 	require.NotNil(t, apSchema.Properties, "struct_map value properties should not be nil")
-	nestedProps := *apSchema.Properties
-	assert.Equal(t, "string", nestedProps["nested_field"].Type, "nested_field type mismatch")
-	assert.Equal(t, "A nested field.", nestedProps["nested_field"].Description, "nested_field description mismatch")
+	nestedRaw, ok := apSchema.Properties.Get("nested_field")
+	require.True(t, ok, "nested_field should exist")
+	nested, ok := nestedRaw.(ValueSchema)
+	require.True(t, ok, "nested_field should be ValueSchema")
+	assert.Equal(t, "string", nested.Type, "nested_field type mismatch")
+	assert.Equal(t, "A nested field.", nested.Description, "nested_field description mismatch")
 	assert.Equal(t, false, apSchema.AdditionalProperties, "Nested struct should also have AdditionalProperties false")
 
 	// Check ignored/unexported fields are absent
-	_, ignoredExists := props["Ignored"]
+	_, ignoredExists := getProp("Ignored")
 	assert.False(t, ignoredExists, "Ignored field should not be in schema")
-	_, ignoredJsonExists := props["-"]
+	_, ignoredJsonExists := getProp("-")
 	assert.False(t, ignoredJsonExists, "json: '-' field should not be in schema")
-	_, unexportedExists := props["unexported"] // Check lowercase name
+	_, unexportedExists := getProp("unexported") // Check lowercase name
 	assert.False(t, unexportedExists, "Unexported field should not be in schema")
 
 	// Check renamed field
-	_, originalRenamedExists := props["Renamed"]
+	_, originalRenamedExists := getProp("Renamed")
 	assert.False(t, originalRenamedExists, "Original name of renamed field should not exist")
-	renamedSchema, renamedExists := props["renamed_field"]
+	renamedSchema, renamedExists := getProp("renamed_field")
 	assert.True(t, renamedExists, "Renamed field should exist")
 	assert.Equal(t, "boolean", renamedSchema.Type, "Renamed field type mismatch")
 
@@ -150,6 +172,56 @@ func TestGenerateSchema_AdvancedTypes(t *testing.T) {
 
 	// Check that AdditionalProperties is set to false for struct-generated schemas
 	assert.Equal(t, false, schema.Parameters.AdditionalProperties, "AdditionalProperties should be false for struct schemas")
+}
+
+func TestValueSchema_OrderPreservedOnMarshal(t *testing.T) {
+	r := rand.New(rand.NewSource(42))
+
+	randomKey := func(n int) string {
+		const letters = "abcdefghijklmnopqrstuvwxyz"
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			b.WriteByte(letters[r.Intn(len(letters))])
+		}
+		return b.String()
+	}
+
+	// Build many random schemas and assert marshal output matches the original bytes.
+	for i := 0; i < 200; i++ {
+		propCount := 5 + r.Intn(10)
+		names := make([]string, propCount)
+		for j := range names {
+			names[j] = randomKey(6 + r.Intn(6))
+		}
+
+		var b strings.Builder
+		b.WriteString(`{"type":"object","properties":{`)
+		for j, n := range names {
+			if j > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(`"`)
+			b.WriteString(n)
+			b.WriteString(`":{"type":"string"}`)
+		}
+		b.WriteString(`},"required":[`)
+		for j, n := range names {
+			if j > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(`"`)
+			b.WriteString(n)
+			b.WriteString(`"`)
+		}
+		b.WriteString(`]}`)
+		orig := b.String()
+
+		var schema ValueSchema
+		require.NoError(t, json.Unmarshal([]byte(orig), &schema))
+		out, err := json.Marshal(schema)
+		require.NoError(t, err)
+		assert.Equal(t, orig, string(out), "schema order changed on case %d", i)
+	}
 }
 
 // TestValidateJSON tests the validateJSON function with various scenarios.
@@ -274,19 +346,19 @@ func TestValidateJSON(t *testing.T) {
 	})
 
 	t.Run("AnyOf Validation - String Matches", func(t *testing.T) {
+		props := jsonmap.New()
+		props.Set("value", ValueSchema{
+			AnyOf: []ValueSchema{
+				{Type: "string"},
+				{Type: "integer"},
+			},
+		})
 		schema := FunctionSchema{
 			Name: "AnyOfTest",
 			Parameters: ValueSchema{
-				Type: "object",
-				Properties: &map[string]ValueSchema{
-					"value": {
-						AnyOf: []ValueSchema{
-							{Type: "string"},
-							{Type: "integer"},
-						},
-					},
-				},
-				Required: []string{"value"},
+				Type:       "object",
+				Properties: props,
+				Required:   []string{"value"},
 			},
 		}
 		jsonData := json.RawMessage(`{"value": "hello"}`)
@@ -295,19 +367,19 @@ func TestValidateJSON(t *testing.T) {
 	})
 
 	t.Run("AnyOf Validation - Integer Matches", func(t *testing.T) {
+		props := jsonmap.New()
+		props.Set("value", ValueSchema{
+			AnyOf: []ValueSchema{
+				{Type: "string"},
+				{Type: "integer"},
+			},
+		})
 		schema := FunctionSchema{
 			Name: "AnyOfTest",
 			Parameters: ValueSchema{
-				Type: "object",
-				Properties: &map[string]ValueSchema{
-					"value": {
-						AnyOf: []ValueSchema{
-							{Type: "string"},
-							{Type: "integer"},
-						},
-					},
-				},
-				Required: []string{"value"},
+				Type:       "object",
+				Properties: props,
+				Required:   []string{"value"},
 			},
 		}
 		jsonData := json.RawMessage(`{"value": 123}`)
@@ -316,19 +388,19 @@ func TestValidateJSON(t *testing.T) {
 	})
 
 	t.Run("AnyOf Validation - Boolean Fails (No Match)", func(t *testing.T) {
+		props := jsonmap.New()
+		props.Set("value", ValueSchema{
+			AnyOf: []ValueSchema{
+				{Type: "string"},
+				{Type: "integer"},
+			},
+		})
 		schema := FunctionSchema{
 			Name: "AnyOfTest",
 			Parameters: ValueSchema{
-				Type: "object",
-				Properties: &map[string]ValueSchema{
-					"value": {
-						AnyOf: []ValueSchema{
-							{Type: "string"},
-							{Type: "integer"},
-						},
-					},
-				},
-				Required: []string{"value"},
+				Type:       "object",
+				Properties: props,
+				Required:   []string{"value"},
 			},
 		}
 		jsonData := json.RawMessage(`{"value": true}`)
