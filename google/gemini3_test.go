@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -361,7 +362,8 @@ func TestStreamingToolArguments_StableID(t *testing.T) {
 		{Role: "user", Content: content.FromText("search for something")},
 	}, nil, nil)
 
-	var beginCount, deltaCount, readyCount int
+	var beginCount, readyCount int
+	var deltaArgs []string
 	var finalToolCall llms.ToolCall
 
 	stream.Iter()(func(status llms.StreamStatus) bool {
@@ -369,7 +371,7 @@ func TestStreamingToolArguments_StableID(t *testing.T) {
 		case llms.StreamStatusToolCallBegin:
 			beginCount++
 		case llms.StreamStatusToolCallDelta:
-			deltaCount++
+			deltaArgs = append(deltaArgs, string(stream.ToolCall().Arguments))
 		case llms.StreamStatusToolCallReady:
 			readyCount++
 			finalToolCall = stream.ToolCall()
@@ -385,8 +387,19 @@ func TestStreamingToolArguments_StableID(t *testing.T) {
 	if beginCount != 1 {
 		t.Errorf("Expected 1 ToolCallBegin, got %d", beginCount)
 	}
-	if deltaCount != 3 {
-		t.Errorf("Expected 3 ToolCallDelta events, got %d", deltaCount)
+	expectedDeltas := []string{
+		`{"q": "hel"`,
+		`{"q": "hello"`,
+		`{"q": "hello world"`,
+		`{"q": "hello world"}`,
+	}
+	if len(deltaArgs) != len(expectedDeltas) {
+		t.Fatalf("Delta count mismatch: got %d, want %d", len(deltaArgs), len(expectedDeltas))
+	}
+	for i := range deltaArgs {
+		if deltaArgs[i] != expectedDeltas[i] {
+			t.Fatalf("Delta %d mismatch: got %q, want %q", i, deltaArgs[i], expectedDeltas[i])
+		}
 	}
 	if readyCount != 1 {
 		t.Errorf("Expected 1 ToolCallReady, got %d", readyCount)
@@ -436,7 +449,8 @@ func TestStreamingToolArguments_OneShotWithoutFinishReason(t *testing.T) {
 		{Role: "user", Content: content.FromText("what time is it?")},
 	}, nil, nil)
 
-	var beginCount, deltaCount, readyCount int
+	var beginCount, readyCount int
+	var deltaArgs []string
 	var toolCall llms.ToolCall
 
 	stream.Iter()(func(status llms.StreamStatus) bool {
@@ -444,7 +458,7 @@ func TestStreamingToolArguments_OneShotWithoutFinishReason(t *testing.T) {
 		case llms.StreamStatusToolCallBegin:
 			beginCount++
 		case llms.StreamStatusToolCallDelta:
-			deltaCount++
+			deltaArgs = append(deltaArgs, string(stream.ToolCall().Arguments))
 		case llms.StreamStatusToolCallReady:
 			readyCount++
 			toolCall = stream.ToolCall()
@@ -460,8 +474,12 @@ func TestStreamingToolArguments_OneShotWithoutFinishReason(t *testing.T) {
 	if beginCount != 1 {
 		t.Errorf("Expected 1 ToolCallBegin, got %d", beginCount)
 	}
-	if deltaCount != 1 {
-		t.Errorf("Expected 1 ToolCallDelta, got %d", deltaCount)
+	expectedDeltas := []string{
+		`{`,
+		`{}`,
+	}
+	if !reflect.DeepEqual(deltaArgs, expectedDeltas) {
+		t.Fatalf("Delta arguments mismatch\n got: %v\nwant: %v", deltaArgs, expectedDeltas)
 	}
 	if readyCount != 1 {
 		t.Errorf("Expected 1 ToolCallReady, got %d", readyCount)
@@ -788,8 +806,8 @@ func TestStreamingToolArguments_EmptyFunctionCallEndsCall(t *testing.T) {
 	if beginCount != 1 {
 		t.Errorf("Expected 1 ToolCallBegin, got %d", beginCount)
 	}
-	if deltaCount != 1 {
-		t.Errorf("Expected 1 ToolCallDelta, got %d", deltaCount)
+	if deltaCount != 2 {
+		t.Errorf("Expected 2 ToolCallDelta, got %d", deltaCount)
 	}
 	if readyCount != 1 {
 		t.Errorf("Expected 1 ToolCallReady, got %d", readyCount)
@@ -1212,9 +1230,9 @@ func TestStreamingWithWillContinueFlag(t *testing.T) {
 		t.Errorf("Expected 1 ToolCallBegin, got %d", beginCount)
 	}
 
-	// Should have 2 Deltas (chunks 2 and 3 have partialArgs)
-	if deltaCount != 2 {
-		t.Errorf("Expected 2 ToolCallDelta, got %d", deltaCount)
+	// Should have 3 Deltas (chunks 2 and 3 have partialArgs, finalize adds closing brace)
+	if deltaCount != 3 {
+		t.Errorf("Expected 3 ToolCallDelta, got %d", deltaCount)
 	}
 
 	// Should have 1 Ready (when willContinue=false)
@@ -1355,3 +1373,117 @@ func TestStreamingMultiTurnConversation(t *testing.T) {
 		t.Errorf("Expected 8 messages in history, got %d", len(history))
 	}
 }
+
+// This test simulates streaming partialArgs and verifies the emitted tool deltas
+// remain a valid JSON prefix as fields and string segments arrive.
+func TestGeminiToolDeltasArePrefixSafe(t *testing.T) {
+	t.Parallel()
+
+	stream := newStreamingArgsBuilder()
+	toolCallDeltaSentBytes := 0
+
+	// Chunk 1: platform, willContinue=true (string stays open)
+	patch1 := partialFunctionArgument{
+		JSONPath:     "$.platform",
+		StringValue:  strPtr("web"),
+		WillContinue: true,
+	}
+	_ = stream.applyPartialArg(patch1)
+	delta1 := string(stream.buf.Bytes()[toolCallDeltaSentBytes:])
+	toolCallDeltaSentBytes = stream.buf.Len()
+
+	// Chunk 2: supplementalContext, final chunk (willContinue=false)
+	patch2 := partialFunctionArgument{
+		JSONPath:     "$.supplementalContext",
+		StringValue:  strPtr("User wants cozy"),
+		WillContinue: false,
+	}
+	_ = stream.applyPartialArg(patch2)
+	delta2 := string(stream.buf.Bytes()[toolCallDeltaSentBytes:])
+	toolCallDeltaSentBytes = stream.buf.Len()
+
+	// Finalize (closes any open strings and the object) and emit tail delta
+	stream.finalize()
+	delta3 := string(stream.buf.Bytes()[toolCallDeltaSentBytes:])
+
+	combined := delta1 + delta2 + delta3
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(combined), &parsed); err != nil {
+		t.Fatalf("streamed tool args should be valid JSON; got %q with error: %v", combined, err)
+	}
+
+	if parsed["platform"] != "web" || parsed["supplementalContext"] != "User wants cozy" {
+		t.Fatalf("unexpected parsed content: %#v", parsed)
+	}
+}
+
+// This test mirrors the docs examples: numberValue, streamed string chunks,
+// valueless partialArg for continued streaming, and parallel calls.
+func TestGeminiDocStreamingExamples(t *testing.T) {
+	t.Parallel()
+
+	// Single call: brightness number, colorTemperature string with empty continuation
+	builder := newStreamingArgsBuilder()
+	_ = builder.applyPartialArg(partialFunctionArgument{
+		JSONPath:    "$.brightness",
+		NumberValue: floatPtr(50),
+	})
+	_ = builder.applyPartialArg(partialFunctionArgument{
+		JSONPath:     "$.colorTemperature",
+		StringValue:  strPtr("warm"),
+		WillContinue: true,
+	})
+	_ = builder.applyPartialArg(partialFunctionArgument{
+		JSONPath: "$.colorTemperature",
+	})
+	builder.finalize()
+
+	var parsed map[string]any
+	if err := json.Unmarshal(builder.buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("single-call example JSON invalid: %v", err)
+	}
+	if parsed["brightness"] != float64(50) || parsed["colorTemperature"] != "warm" {
+		t.Fatalf("single-call example unexpected: %#v", parsed)
+	}
+
+	// Parallel calls: two builders interleaved
+	call1 := newStreamingArgsBuilder()
+	call2 := newStreamingArgsBuilder()
+
+	_ = call1.applyPartialArg(partialFunctionArgument{
+		JSONPath:     "$.location",
+		StringValue:  strPtr("New Delhi"),
+		WillContinue: true,
+	})
+	_ = call1.applyPartialArg(partialFunctionArgument{
+		JSONPath: "$.location",
+	})
+	call1.finalize()
+
+	if err := json.Unmarshal(call1.buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("call1 JSON invalid: %v", err)
+	}
+	if parsed["location"] != "New Delhi" {
+		t.Fatalf("call1 location mismatch: %#v", parsed)
+	}
+
+	_ = call2.applyPartialArg(partialFunctionArgument{
+		JSONPath:     "$.location",
+		StringValue:  strPtr("San Francisco"),
+		WillContinue: true,
+	})
+	_ = call2.applyPartialArg(partialFunctionArgument{
+		JSONPath: "$.location",
+	})
+	call2.finalize()
+
+	if err := json.Unmarshal(call2.buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("call2 JSON invalid: %v", err)
+	}
+	if parsed["location"] != "San Francisco" {
+		t.Fatalf("call2 location mismatch: %#v", parsed)
+	}
+}
+
+func strPtr(s string) *string     { return &s }
+func floatPtr(f float64) *float64 { return &f }

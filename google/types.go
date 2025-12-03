@@ -179,11 +179,7 @@ func convertContent(c content.Content) (p parts) {
 }
 
 func (p parts) MarshalJSON() ([]byte, error) {
-	// If there's just one part, don't wrap it in an array.
-	if len(p) == 1 {
-		return json.Marshal(p[0])
-	}
-	// Otherwise, directly marshal the parts slice.
+	// Always marshal as an array for consistency.
 	return json.Marshal([]part(p))
 }
 

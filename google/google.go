@@ -435,6 +435,7 @@ func (m *Model) Generate(
 		debugger:       m.debugger,
 		toolCallsByID:  make(map[string]int),
 		toolArgsByID:   make(map[string]json.RawMessage),
+		toolArgStreams: make(map[string]*streamingArgsBuilder),
 		toolCallsReady: make(map[string]bool),
 	}
 }
@@ -456,6 +457,8 @@ type Stream struct {
 	toolCallsByID map[string]int
 	// Tracks the latest arguments JSON snapshot for each tool call ID.
 	toolArgsByID map[string]json.RawMessage
+	// Tracks the streaming, append-only buffer for each tool call ID.
+	toolArgStreams map[string]*streamingArgsBuilder
 	// Tracks tool calls that have had ToolCallReady emitted (by ID).
 	toolCallsReady map[string]bool
 }
@@ -500,9 +503,21 @@ func (s *Stream) Usage() llms.Usage {
 }
 
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
-	reader := bufio.NewReader(s.stream)
 	return func(yield func(llms.StreamStatus) bool) {
-		defer io.Copy(io.Discard, s.stream)
+		if s.stream == nil {
+			if s.err == nil {
+				s.err = fmt.Errorf("nil stream")
+			}
+			return
+		}
+		reader := bufio.NewReader(s.stream)
+		if s.stream != nil {
+			defer io.Copy(io.Discard, s.stream)
+		}
+		ctx := s.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		// Track whether the last yielded event was a thinking update, so we can emit ThinkingDone
 		lastEventWasThinking := false
 		messageStartYielded := false
@@ -511,7 +526,17 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 		// haven't been marked ready yet. This handles the case where the stream
 		// ends without a finishReason (common in one-shot scenarios).
 		emitPendingToolCallsReady := func() bool {
-			for callID := range s.toolCallsByID {
+			for callID, idx := range s.toolCallsByID {
+				if streamState := s.toolArgStreams[callID]; streamState != nil {
+					changed := streamState.finalize()
+					s.toolArgsByID[callID] = streamState.marshalSnapshot()
+					s.message.ToolCalls[idx].Arguments = streamState.buf.Bytes()
+					if changed {
+						if !yield(llms.StreamStatusToolCallDelta) {
+							return false
+						}
+					}
+				}
 				if !s.toolCallsReady[callID] {
 					s.toolCallsReady[callID] = true
 					if !yield(llms.StreamStatusToolCallReady) {
@@ -524,8 +549,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 
 		for {
 			select {
-			case <-s.ctx.Done():
-				s.err = s.ctx.Err()
+			case <-ctx.Done():
+				s.err = ctx.Err()
 				return
 			default:
 			}
@@ -669,8 +694,18 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						(fc.WillContinue == nil || !*fc.WillContinue)
 
 					if isEmptyFunctionCall {
-						// Mark all pending tool calls as ready
-						for callID := range s.toolCallsByID {
+						// Finalize and mark all pending tool calls as ready
+						for callID, idx := range s.toolCallsByID {
+							if streamState := s.toolArgStreams[callID]; streamState != nil {
+								changed := streamState.finalize()
+								s.toolArgsByID[callID] = streamState.marshalSnapshot()
+								s.message.ToolCalls[idx].Arguments = streamState.buf.Bytes()
+								if changed {
+									if !yield(llms.StreamStatusToolCallDelta) {
+										return
+									}
+								}
+							}
 							if !s.toolCallsReady[callID] {
 								s.toolCallsReady[callID] = true
 								if !yield(llms.StreamStatusToolCallReady) {
@@ -701,13 +736,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// Get or create the llms.ToolCall entry for this ID.
 					idx, exists := s.toolCallsByID[callID]
 					if !exists {
-						// First time we've seen this function call.
 						metadata := make(map[string]string)
 						if p.ThoughtSignature != "" {
 							metadata["google:thought_signature"] = p.ThoughtSignature
 						}
-
-						// Initial arguments: may be nil if we're only getting partialArgs at first.
 						args := fc.Args
 						if args == nil {
 							args = json.RawMessage("{}")
@@ -722,6 +754,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						idx = len(s.message.ToolCalls) - 1
 						s.toolCallsByID[callID] = idx
 						s.toolArgsByID[callID] = args
+						s.toolArgStreams[callID] = newStreamingArgsBuilder()
 
 						// First chunk: signal begin
 						if !yield(llms.StreamStatusToolCallBegin) {
@@ -729,28 +762,34 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 					}
 
-					// Update arguments snapshot based on args and/or partialArgs.
-					currentArgs := s.toolArgsByID[callID]
+					streamState := s.toolArgStreams[callID]
+					if streamState == nil {
+						streamState = newStreamingArgsBuilder()
+						s.toolArgStreams[callID] = streamState
+					}
 
-					// If the backend sends full args (fc.Args), prefer that as the latest snapshot.
+					// If the backend sends full args (fc.Args), reset snapshot and stream from that.
 					if len(fc.Args) > 0 {
-						currentArgs = fc.Args
+						var m map[string]any
+						if err := json.Unmarshal(fc.Args, &m); err == nil {
+							streamState = newStreamingArgsBuilder()
+							streamState.setFullArgs(fc.Args)
+							s.toolArgStreams[callID] = streamState
+						}
 					}
 
 					// Apply partialArgs if present (streaming argument updates).
 					if len(fc.PartialArgs) > 0 {
-						merged, err := applyPartialArgsJSON(currentArgs, fc.PartialArgs)
-						if err == nil {
-							currentArgs = merged
+						for _, patch := range fc.PartialArgs {
+							_ = streamState.applyPartialArg(patch) // best-effort
 						}
-						// On error, we continue with whatever we have - partial args are best-effort.
 					}
 
 					// Persist the updated snapshot
-					s.toolArgsByID[callID] = currentArgs
-					s.message.ToolCalls[idx].Arguments = currentArgs
+					s.toolArgsByID[callID] = streamState.marshalSnapshot()
+					s.message.ToolCalls[idx].Arguments = streamState.buf.Bytes()
 
-					// Emit a delta for this chunk (only if we have content to report)
+					// Emit a delta for this chunk when args or partials arrive.
 					if len(fc.Args) > 0 || len(fc.PartialArgs) > 0 {
 						if !yield(llms.StreamStatusToolCallDelta) {
 							return
@@ -758,11 +797,29 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 
 					// Check if this is the final chunk for the function call.
-					// Per docs: willContinue=false or absent means this is the final chunk.
-					// Also check finishReason for non-streaming scenarios.
-					isFinalChunk := (fc.WillContinue != nil && !*fc.WillContinue) ||
-						chunk.Candidates[0].FinishReason != ""
+					// Per docs: functionCall.willContinue=true means more chunks are coming.
+					// partialArg.willContinue only refers to that specific string field; do not
+					// finalize based on it unless any field is still continuing.
+					anyPartialContinues := false
+					for _, patch := range fc.PartialArgs {
+						if patch.WillContinue {
+							anyPartialContinues = true
+							break
+						}
+					}
+
+					isFinalChunk := chunk.Candidates[0].FinishReason != "" ||
+						(fc.WillContinue != nil && !*fc.WillContinue && !anyPartialContinues)
+
 					if isFinalChunk && !s.toolCallsReady[callID] {
+						changed := streamState.finalize()
+						s.toolArgsByID[callID] = streamState.marshalSnapshot()
+						s.message.ToolCalls[idx].Arguments = streamState.buf.Bytes()
+						if changed {
+							if !yield(llms.StreamStatusToolCallDelta) {
+								return
+							}
+						}
 						s.toolCallsReady[callID] = true
 						if !yield(llms.StreamStatusToolCallReady) {
 							return
