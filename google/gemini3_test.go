@@ -1843,7 +1843,7 @@ func TestSanitizeSchemaForGemini_ArrayItemsWithUnsupportedFields(t *testing.T) {
 	// Create an array property with items that have unsupported fields
 	itemsProp := jsonmap.New()
 	itemsProp.Set("type", "integer")
-	itemsProp.Set("minimum", float64(1))        // Supported by some but not Gemini
+	itemsProp.Set("minimum", float64(1))          // Supported by some but not Gemini
 	itemsProp.Set("exclusiveMinimum", float64(0)) // Unsupported
 
 	arrayProp := jsonmap.New()

@@ -22,9 +22,9 @@ import (
 
 // sanitizeSchemaForGemini recursively removes unsupported JSON Schema properties
 // to make schemas compatible with Google's Gemini API. This includes:
-// - Setting AdditionalProperties to nil
-// - Stripping unsupported keywords like exclusiveMinimum, const, pattern, etc.
-//   by round-tripping through tools.ValueSchema which only has supported fields.
+//   - Setting AdditionalProperties to nil
+//   - Stripping unsupported keywords like exclusiveMinimum, const, pattern, etc.
+//     by round-tripping through tools.ValueSchema which only has supported fields.
 func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
 	schema.AdditionalProperties = nil
 
