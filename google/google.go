@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/metalim/jsonmap"
 	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
@@ -19,13 +20,16 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
-// clearAdditionalProperties recursively sets AdditionalProperties to nil
-// in all ValueSchemas to make them compatible with Google's API.
-func clearAdditionalProperties(schema *tools.ValueSchema) {
+// sanitizeSchemaForGemini recursively removes unsupported JSON Schema properties
+// to make schemas compatible with Google's Gemini API. This includes:
+//   - Setting AdditionalProperties to nil
+//   - Stripping unsupported keywords like exclusiveMinimum, const, pattern, etc.
+//     by round-tripping through tools.ValueSchema which only has supported fields.
+func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
 	schema.AdditionalProperties = nil
 
 	if schema.Items != nil {
-		clearAdditionalProperties(schema.Items)
+		sanitizeSchemaForGemini(schema.Items)
 	}
 
 	if schema.Properties != nil {
@@ -34,23 +38,36 @@ func clearAdditionalProperties(schema *tools.ValueSchema) {
 			if !ok {
 				continue
 			}
-			v, ok := raw.(tools.ValueSchema)
-			if !ok {
-				if rm, rok := raw.(json.RawMessage); rok {
-					if err := json.Unmarshal(rm, &v); err != nil {
-						continue
-					}
-				} else {
+
+			var v tools.ValueSchema
+			switch val := raw.(type) {
+			case tools.ValueSchema:
+				v = val
+			case *jsonmap.Map:
+				// Property is a nested map from jsonmap - marshal to JSON then
+				// unmarshal into ValueSchema to strip unsupported fields.
+				data, err := json.Marshal(val)
+				if err != nil {
 					continue
 				}
+				if err := json.Unmarshal(data, &v); err != nil {
+					continue
+				}
+			case json.RawMessage:
+				if err := json.Unmarshal(val, &v); err != nil {
+					continue
+				}
+			default:
+				continue
 			}
-			clearAdditionalProperties(&v)
+
+			sanitizeSchemaForGemini(&v)
 			schema.Properties.Set(k, v)
 		}
 	}
 
 	for i := range schema.AnyOf {
-		clearAdditionalProperties(&schema.AnyOf[i])
+		sanitizeSchemaForGemini(&schema.AnyOf[i])
 	}
 }
 
@@ -334,7 +351,7 @@ func (m *Model) Generate(
 			switch g := tool.Grammar().(type) {
 			case tools.JSONGrammar:
 				schema := *g.Schema()
-				clearAdditionalProperties(&schema.Parameters)
+				sanitizeSchemaForGemini(&schema.Parameters)
 				declarations[i] = schema
 			default:
 				panic(fmt.Sprintf("unsupported grammar type: %T", g))
