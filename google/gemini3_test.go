@@ -2003,3 +2003,81 @@ func TestSanitizeSchemaForGemini_PreservesValueSchemaType(t *testing.T) {
 		t.Errorf("expected 2 required fields, got %d", len(required))
 	}
 }
+
+// TestSanitizeSchemaForGemini_MapStringAny tests that properties stored as
+// map[string]any (not *jsonmap.Map) are also sanitized. This can happen when
+// schemas come from certain sources or after JSON round-tripping.
+func TestSanitizeSchemaForGemini_MapStringAny(t *testing.T) {
+	props := jsonmap.New()
+
+	// Set a property directly as map[string]any (not *jsonmap.Map)
+	countProp := map[string]any{
+		"type":             "integer",
+		"description":      "A positive count",
+		"exclusiveMinimum": float64(0), // Unsupported field
+	}
+	props.Set("count", countProp)
+
+	schema := tools.FunctionSchema{
+		Name:        "test_func",
+		Description: "Test function",
+		Parameters: tools.ValueSchema{
+			Type:       "object",
+			Properties: props,
+			Required:   []string{"count"},
+		},
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		json.NewDecoder(r.Body).Decode(&payload)
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}` + "\n"))
+	}))
+	defer server.Close()
+
+	tb := tools.Box(
+		tools.External("Test", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		}),
+	)
+
+	model := New("gemini-2.0-flash").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, []llms.Message{
+		{Role: "user", Content: content.FromText("test")},
+	}, tb, nil)
+
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	payload := <-payloadCh
+
+	toolsPayload := payload["tools"].(map[string]any)
+	declarations := toolsPayload["functionDeclarations"].([]any)
+	decl := declarations[0].(map[string]any)
+	params := decl["parameters"].(map[string]any)
+	properties := params["properties"].(map[string]any)
+	countSchema := properties["count"].(map[string]any)
+
+	// Verify exclusiveMinimum was stripped
+	if _, exists := countSchema["exclusiveMinimum"]; exists {
+		t.Error("exclusiveMinimum should have been stripped from map[string]any schema")
+	}
+
+	// Verify supported fields are preserved
+	if countSchema["type"] != "integer" {
+		t.Errorf("Expected type 'integer', got %v", countSchema["type"])
+	}
+	if countSchema["description"] != "A positive count" {
+		t.Errorf("Expected description 'A positive count', got %v", countSchema["description"])
+	}
+}

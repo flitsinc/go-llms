@@ -53,6 +53,16 @@ func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
 				if err := json.Unmarshal(data, &v); err != nil {
 					continue
 				}
+			case map[string]any:
+				// Property is a generic map - marshal to JSON then unmarshal
+				// into ValueSchema to strip unsupported fields.
+				data, err := json.Marshal(val)
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(data, &v); err != nil {
+					continue
+				}
 			case json.RawMessage:
 				if err := json.Unmarshal(val, &v); err != nil {
 					continue
