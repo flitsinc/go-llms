@@ -302,7 +302,10 @@ func (s *Stream) Image() (string, string) {
 }
 
 func (s *Stream) Thought() content.Thought {
-	return *s.lastThought
+	if s.lastThought != nil {
+		return *s.lastThought
+	}
+	return content.Thought{}
 }
 
 func (s *Stream) ToolCall() llms.ToolCall {
