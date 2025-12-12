@@ -514,7 +514,10 @@ func (s *Stream) ToolCall() llms.ToolCall {
 }
 
 func (s *Stream) Thought() content.Thought {
-	return *s.lastThought
+	if s.lastThought != nil {
+		return *s.lastThought
+	}
+	return content.Thought{}
 }
 
 func (s *Stream) Usage() llms.Usage {
