@@ -566,6 +566,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 		// ends without a finishReason (common in one-shot scenarios).
 		emitPendingToolCallsReady := func() bool {
 			for callID, idx := range s.toolCallsByID {
+				// Set lastToolCallIdx so ToolCall() returns the correct tool for this event
+				s.lastToolCallIdx = idx
 				if streamState := s.toolArgStreams[callID]; streamState != nil {
 					changed := streamState.finalize()
 					s.toolArgsByID[callID] = streamState.marshalSnapshot()
