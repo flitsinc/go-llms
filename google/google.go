@@ -488,6 +488,11 @@ type Stream struct {
 	toolArgStreams map[string]*streamingArgsBuilder
 	// Tracks tool calls that have had ToolCallReady emitted (by ID).
 	toolCallsReady map[string]bool
+	// Tracks the index of the "current" tool call for event attribution.
+	// Updated before emitting Delta/Ready events so ToolCall() returns the correct one.
+	lastToolCallIdx int
+	// Tracks the ID of the currently active streaming tool call (for finalization when new one starts).
+	activeToolCallID string
 }
 
 func (s *Stream) Err() error {
@@ -509,6 +514,10 @@ func (s *Stream) Image() (string, string) {
 func (s *Stream) ToolCall() llms.ToolCall {
 	if len(s.message.ToolCalls) == 0 {
 		return llms.ToolCall{}
+	}
+	// Return the tool call that was most recently updated (for correct event attribution)
+	if s.lastToolCallIdx >= 0 && s.lastToolCallIdx < len(s.message.ToolCalls) {
+		return s.message.ToolCalls[s.lastToolCallIdx]
 	}
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
@@ -726,6 +735,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if isEmptyFunctionCall {
 						// Finalize and mark all pending tool calls as ready
 						for callID, idx := range s.toolCallsByID {
+							// Set lastToolCallIdx so ToolCall() returns the correct tool for this event
+							s.lastToolCallIdx = idx
 							if streamState := s.toolArgStreams[callID]; streamState != nil {
 								changed := streamState.finalize()
 								s.toolArgsByID[callID] = streamState.marshalSnapshot()
@@ -743,6 +754,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 								}
 							}
 						}
+						s.activeToolCallID = ""
 						continue
 					}
 
@@ -752,7 +764,26 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						// No ID provided - use name-based tracking for streaming scenarios.
 						// Per docs, `name` appears on first chunk of each function call.
 						if fc.Name != "" {
-							// New function call starting - generate a unique ID
+							// New function call starting - finalize the previous active call first
+							if s.activeToolCallID != "" && !s.toolCallsReady[s.activeToolCallID] {
+								prevIdx := s.toolCallsByID[s.activeToolCallID]
+								s.lastToolCallIdx = prevIdx
+								if streamState := s.toolArgStreams[s.activeToolCallID]; streamState != nil {
+									changed := streamState.finalize()
+									s.toolArgsByID[s.activeToolCallID] = streamState.marshalSnapshot()
+									s.message.ToolCalls[prevIdx].Arguments = streamState.buf.Bytes()
+									if changed {
+										if !yield(llms.StreamStatusToolCallDelta) {
+											return
+										}
+									}
+								}
+								s.toolCallsReady[s.activeToolCallID] = true
+								if !yield(llms.StreamStatusToolCallReady) {
+									return
+								}
+							}
+							// Generate a unique ID for the new function call
 							callID = fmt.Sprintf("%s-%d", fc.Name, time.Now().UnixNano())
 						} else if len(s.message.ToolCalls) > 0 {
 							// Continuation chunk (no name, has partialArgs) - use last call's ID
@@ -786,6 +817,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						s.toolArgsByID[callID] = args
 						s.toolArgStreams[callID] = newStreamingArgsBuilder()
 
+						// Track this as the active tool call and set lastToolCallIdx for event attribution
+						s.activeToolCallID = callID
+						s.lastToolCallIdx = idx
+
 						// First chunk: signal begin
 						if !yield(llms.StreamStatusToolCallBegin) {
 							return
@@ -818,6 +853,10 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					// Persist the updated snapshot
 					s.toolArgsByID[callID] = streamState.marshalSnapshot()
 					s.message.ToolCalls[idx].Arguments = streamState.buf.Bytes()
+
+					// Update tracking for event attribution
+					s.activeToolCallID = callID
+					s.lastToolCallIdx = idx
 
 					// Emit a delta for this chunk when args or partials arrive.
 					if len(fc.Args) > 0 || len(fc.PartialArgs) > 0 {

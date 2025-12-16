@@ -818,6 +818,181 @@ func TestStreamingToolArguments_EmptyFunctionCallEndsCall(t *testing.T) {
 	}
 }
 
+// TestStreamingToolArguments_ParallelCallsWithPartialArgs tests the scenario where
+// Gemini returns two parallel tool calls with streaming partialArgs, where the second
+// tool call starts before the first one's JSON is complete.
+//
+// This reproduces a real-world bug where:
+// 1. navigateSandbox starts streaming with partialArgs
+// 2. Before navigateSandbox completes, queryElements starts with its own partialArgs
+// 3. An empty functionCall {} with finishReason: STOP signals end of all calls
+//
+// Expected behavior:
+// - Each tool call gets exactly one Begin and one Ready
+// - Both tool calls receive complete JSON including closing braces
+// - No duplicate Ready events
+func TestStreamingToolArguments_ParallelCallsWithPartialArgs(t *testing.T) {
+	// This is the exact sequence from a real Gemini 3 Pro Preview stream
+	streamResp := strings.Join([]string{
+		// Tool 1: navigateSandbox starts with name and willContinue
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"name": "navigateSandbox", "willContinue": true}}]}}]}`,
+		// Tool 1: partialArgs for path with willContinue (string streaming starts)
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"partialArgs": [{"jsonPath": "$.path", "stringValue": "/", "willContinue": true}], "willContinue": true}}]}}]}`,
+		// Tool 1: partialArgs for path with empty string (string streaming ends)
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"partialArgs": [{"jsonPath": "$.path", "stringValue": ""}], "willContinue": true}}]}}]}`,
+		// Tool 1: partialArgs for waitForReady boolean (no willContinue on partialArg)
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"partialArgs": [{"jsonPath": "$.waitForReady", "boolValue": true}]}}]}}]}`,
+		// Tool 2: queryElements STARTS while navigateSandbox is still incomplete!
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"name": "queryElements", "partialArgs": [{"jsonPath": "$.includeHidden", "boolValue": false}], "willContinue": true}}]}}]}`,
+		// Tool 2: partialArgs for selector string (streaming starts)
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"partialArgs": [{"jsonPath": "$.selector", "stringValue": "input, textarea, [contenteditable]", "willContinue": true}], "willContinue": true}}]}}]}`,
+		// Tool 2: partialArgs for selector with empty string (streaming ends)
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"partialArgs": [{"jsonPath": "$.selector", "stringValue": ""}], "willContinue": true}}]}}]}`,
+		// Empty functionCall {} with finishReason signals end of all calls
+		`data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {}}]}, "finishReason": "STOP"}]}`,
+	}, "\n")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(streamResp))
+	}))
+	defer server.Close()
+
+	model := New("gemini-3-pro-preview").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, []llms.Message{
+		{Role: "user", Content: content.FromText("navigate and query")},
+	}, nil, nil)
+
+	// Track events per tool call
+	type toolCallEvents struct {
+		beginCount int
+		readyCount int
+		deltas     []string
+	}
+	eventsByTool := make(map[string]*toolCallEvents)
+
+	// Track the sequence of all events
+	var eventSequence []string
+
+	stream.Iter()(func(status llms.StreamStatus) bool {
+		tc := stream.ToolCall()
+		if tc.ID == "" {
+			return true
+		}
+
+		if eventsByTool[tc.ID] == nil {
+			eventsByTool[tc.ID] = &toolCallEvents{}
+		}
+		events := eventsByTool[tc.ID]
+
+		switch status {
+		case llms.StreamStatusToolCallBegin:
+			events.beginCount++
+			eventSequence = append(eventSequence, "begin:"+tc.Name)
+		case llms.StreamStatusToolCallDelta:
+			events.deltas = append(events.deltas, string(tc.Arguments))
+			eventSequence = append(eventSequence, "delta:"+tc.Name)
+		case llms.StreamStatusToolCallReady:
+			events.readyCount++
+			eventSequence = append(eventSequence, "ready:"+tc.Name)
+		}
+		return true
+	})
+
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+
+	// Verify we have exactly 2 tool calls
+	msg := stream.Message()
+	if len(msg.ToolCalls) != 2 {
+		t.Fatalf("Expected 2 tool calls, got %d", len(msg.ToolCalls))
+	}
+
+	// Verify both tool names are present
+	toolNames := make(map[string]bool)
+	for _, tc := range msg.ToolCalls {
+		toolNames[tc.Name] = true
+	}
+	if !toolNames["navigateSandbox"] || !toolNames["queryElements"] {
+		t.Errorf("Expected tool names navigateSandbox and queryElements, got %v", toolNames)
+	}
+
+	// Verify each tool gets exactly one Begin and one Ready
+	for id, events := range eventsByTool {
+		if events.beginCount != 1 {
+			t.Errorf("Tool %s: expected 1 Begin, got %d", id, events.beginCount)
+		}
+		if events.readyCount != 1 {
+			t.Errorf("Tool %s: expected 1 Ready, got %d (possible duplicate Ready bug)", id, events.readyCount)
+		}
+	}
+
+	// Verify the final JSON is valid and complete for both tools
+	for _, tc := range msg.ToolCalls {
+		var parsed map[string]any
+		if err := json.Unmarshal(tc.Arguments, &parsed); err != nil {
+			t.Errorf("Tool %s: invalid final JSON %q: %v", tc.Name, string(tc.Arguments), err)
+			continue
+		}
+
+		switch tc.Name {
+		case "navigateSandbox":
+			if parsed["path"] != "/" {
+				t.Errorf("navigateSandbox: expected path '/', got %v", parsed["path"])
+			}
+			if parsed["waitForReady"] != true {
+				t.Errorf("navigateSandbox: expected waitForReady true, got %v", parsed["waitForReady"])
+			}
+		case "queryElements":
+			if parsed["includeHidden"] != false {
+				t.Errorf("queryElements: expected includeHidden false, got %v", parsed["includeHidden"])
+			}
+			if parsed["selector"] != "input, textarea, [contenteditable]" {
+				t.Errorf("queryElements: expected selector 'input, textarea, [contenteditable]', got %v", parsed["selector"])
+			}
+		}
+	}
+
+	// Verify event sequence: each tool's Begin should come before its Ready
+	// and we shouldn't see Ready before all Deltas are done
+	navigateBeginIdx := -1
+	navigateReadyIdx := -1
+	queryBeginIdx := -1
+	queryReadyIdx := -1
+
+	for i, evt := range eventSequence {
+		switch evt {
+		case "begin:navigateSandbox":
+			navigateBeginIdx = i
+		case "ready:navigateSandbox":
+			navigateReadyIdx = i
+		case "begin:queryElements":
+			queryBeginIdx = i
+		case "ready:queryElements":
+			queryReadyIdx = i
+		}
+	}
+
+	if navigateBeginIdx == -1 || navigateReadyIdx == -1 {
+		t.Errorf("navigateSandbox missing Begin or Ready: begin=%d, ready=%d", navigateBeginIdx, navigateReadyIdx)
+	} else if navigateBeginIdx >= navigateReadyIdx {
+		t.Errorf("navigateSandbox: Begin should come before Ready")
+	}
+
+	if queryBeginIdx == -1 || queryReadyIdx == -1 {
+		t.Errorf("queryElements missing Begin or Ready: begin=%d, ready=%d", queryBeginIdx, queryReadyIdx)
+	} else if queryBeginIdx >= queryReadyIdx {
+		t.Errorf("queryElements: Begin should come before Ready")
+	}
+
+	t.Logf("Event sequence: %v", eventSequence)
+}
+
 // getWeatherFunctionDeclaration provides a test schema matching Google's examples
 func getWeatherFunctionDeclaration() tools.FunctionSchema {
 	props := jsonmap.New()
