@@ -282,7 +282,12 @@ func (m *ChatCompletionsAPI) Generate(
 
 			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
 				// Successfully parsed the OpenAI error format
-				return &ChatCompletionsStream{err: fmt.Errorf("%s: %s: %s", resp.Status, openAIError.Error.Type, openAIError.Error.Message)}
+				return &ChatCompletionsStream{err: &llms.HTTPError{
+					StatusCode: resp.StatusCode,
+					Status:     resp.Status,
+					ErrorType:  openAIError.Error.Type,
+					Message:    openAIError.Error.Message,
+				}}
 			}
 			// Body read okay, but JSON parsing failed or structure mismatch.
 			// Just repeat the body up to a limit.
@@ -290,10 +295,17 @@ func (m *ChatCompletionsAPI) Generate(
 			if len(body) > 1024 {
 				body = body[:1024]
 			}
-			return &ChatCompletionsStream{err: fmt.Errorf("%s: %s", resp.Status, body)}
+			return &ChatCompletionsStream{err: &llms.HTTPError{
+				StatusCode: resp.StatusCode,
+				Status:     resp.Status,
+				Message:    body,
+			}}
 		}
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
-		return &ChatCompletionsStream{err: fmt.Errorf("%s", resp.Status)}
+		return &ChatCompletionsStream{err: &llms.HTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+		}}
 	}
 
 	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
