@@ -474,13 +474,21 @@ func (m *ResponsesAPI) Generate(
 
 			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
 				// Successfully parsed the OpenAI error format
-				return &ResponsesStream{err: fmt.Errorf("%s: %s: %s", resp.Status, openAIError.Error.Type, openAIError.Error.Message)}
+				return &ResponsesStream{err: &llms.HTTPError{
+					StatusCode: resp.StatusCode,
+					Status:     resp.Status,
+					ErrorType:  openAIError.Error.Type,
+					Message:    openAIError.Error.Message,
+				}}
 			}
 			// Body read okay, but JSON parsing failed or structure mismatch.
 			// Fall through to return status only.
 		}
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
-		return &ResponsesStream{err: fmt.Errorf("%s", resp.Status)}
+		return &ResponsesStream{err: &llms.HTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+		}}
 	}
 
 	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger, lastThought: &content.Thought{}}

@@ -447,13 +447,21 @@ func (m *Model) Generate(
 			var errResp errorResponse // Assumes this struct matches Google's { "error": { ... } } format
 			if jsonErr := json.Unmarshal(bodyBytes, &errResp); jsonErr == nil && errResp.Error.Message != "" {
 				// Successfully parsed the Google error format
-				return &Stream{err: fmt.Errorf("%s: %s", resp.Status, errResp.Error.Message)}
+				return &Stream{err: &llms.HTTPError{
+					StatusCode: resp.StatusCode,
+					Status:     resp.Status,
+					ErrorType:  errResp.Error.Status,
+					Message:    errResp.Error.Message,
+				}}
 			}
 			// Body read okay, but JSON parsing failed or structure mismatch.
 			// Fall through to return status only.
 		}
 		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
-		return &Stream{err: fmt.Errorf("%s", resp.Status)}
+		return &Stream{err: &llms.HTTPError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+		}}
 	}
 	return &Stream{
 		ctx:            ctx,
