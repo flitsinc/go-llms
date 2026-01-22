@@ -29,6 +29,8 @@ type ChatCompletionsAPI struct {
 
 	// When true, include stream_options.include_usage in requests; default true.
 	includeUsage bool
+
+	customPayloadValues map[string]any
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -67,6 +69,18 @@ func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletions
 // WithIncludeUsage sets whether to include stream_options.include_usage in requests.
 func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI {
 	m.includeUsage = include
+	return m
+}
+
+// WithCustomPayloadValue sets a custom key-value pair in the request payload.
+// Use this for provider-specific parameters not covered by other methods.
+// WARNING: Do not override core fields (stream, model, messages) as this will
+// break response parsing or cause unexpected behavior.
+func (m *ChatCompletionsAPI) WithCustomPayloadValue(key string, value any) *ChatCompletionsAPI {
+	if m.customPayloadValues == nil {
+		m.customPayloadValues = make(map[string]any)
+	}
+	m.customPayloadValues[key] = value
 	return m
 }
 
@@ -127,6 +141,10 @@ func (m *ChatCompletionsAPI) Generate(
 
 	if m.verbosity != "" {
 		payload["verbosity"] = m.verbosity
+	}
+
+	for k, v := range m.customPayloadValues {
+		payload[k] = v
 	}
 
 	if toolbox != nil {
