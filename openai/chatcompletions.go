@@ -29,6 +29,12 @@ type ChatCompletionsAPI struct {
 
 	// When true, include stream_options.include_usage in requests; default true.
 	includeUsage bool
+
+	// clearThink controls whether reasoning content persists across multi-turn
+	// conversations. When false, thinking from previous turns is preserved,
+	// improving consistency and cache efficiency in agentic workflows.
+	// nil means don't send the parameter. Used by Cerebras GLM models.
+	clearThink *bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -67,6 +73,13 @@ func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletions
 // WithIncludeUsage sets whether to include stream_options.include_usage in requests.
 func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI {
 	m.includeUsage = include
+	return m
+}
+
+// WithClearThink sets the clear_think parameter for Cerebras GLM models.
+// When false, thinking from previous turns is preserved across tool-calling loops.
+func (m *ChatCompletionsAPI) WithClearThink(clear bool) *ChatCompletionsAPI {
+	m.clearThink = &clear
 	return m
 }
 
@@ -127,6 +140,10 @@ func (m *ChatCompletionsAPI) Generate(
 
 	if m.verbosity != "" {
 		payload["verbosity"] = m.verbosity
+	}
+
+	if m.clearThink != nil {
+		payload["clear_think"] = *m.clearThink
 	}
 
 	if toolbox != nil {
