@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,17 +46,20 @@ type ValueSchema struct {
 	AnyOf []ValueSchema `json:"anyOf,omitempty"`
 }
 
-// UnmarshalJSON ensures Properties is allocated and preserves insertion order via jsonmap.
+// UnmarshalJSON ensures map-like schema fields preserve insertion order via jsonmap.
 func (v *ValueSchema) UnmarshalJSON(data []byte) error {
 	type alias ValueSchema
 	var aux struct {
 		alias
-		Properties json.RawMessage `json:"properties,omitempty"`
+		Properties           json.RawMessage `json:"properties,omitempty"`
+		AdditionalProperties json.RawMessage `json:"additionalProperties,omitempty"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+
 	*v = ValueSchema(aux.alias)
+
 	if len(aux.Properties) > 0 {
 		props := jsonmap.New()
 		if err := json.Unmarshal(aux.Properties, props); err != nil {
@@ -63,6 +67,35 @@ func (v *ValueSchema) UnmarshalJSON(data []byte) error {
 		}
 		v.Properties = props
 	}
+
+	if len(aux.AdditionalProperties) > 0 {
+		raw := bytes.TrimSpace(aux.AdditionalProperties)
+		if len(raw) > 0 {
+			switch raw[0] {
+			case '{':
+				ordered := jsonmap.New()
+				if err := json.Unmarshal(raw, ordered); err != nil {
+					return err
+				}
+				v.AdditionalProperties = ordered
+			case 't', 'f':
+				var allow bool
+				if err := json.Unmarshal(raw, &allow); err != nil {
+					return err
+				}
+				v.AdditionalProperties = allow
+			case 'n':
+				v.AdditionalProperties = nil
+			default:
+				var fallback any
+				if err := json.Unmarshal(raw, &fallback); err != nil {
+					return err
+				}
+				v.AdditionalProperties = fallback
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -145,6 +178,27 @@ func validateJSON(schema *FunctionSchema, jsonData json.RawMessage) error {
 	return validateParameters(schema.Parameters, jsonData)
 }
 
+func decodeAdditionalPropertiesSchema(raw any) (ValueSchema, error) {
+	var (
+		data []byte
+		err  error
+	)
+	if msg, ok := raw.(json.RawMessage); ok {
+		data = msg
+	} else {
+		data, err = json.Marshal(raw)
+		if err != nil {
+			return ValueSchema{}, err
+		}
+	}
+
+	var vs ValueSchema
+	if err := json.Unmarshal(data, &vs); err != nil {
+		return ValueSchema{}, err
+	}
+	return vs, nil
+}
+
 // validateParameters validates JSON data against the provided parameters schema
 func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 	if schema.Type != "object" || schema.Properties == nil {
@@ -193,9 +247,9 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 			if err := validateField(ap, val); err != nil {
 				return fmt.Errorf("additional property %q: %w", key, err)
 			}
-		case json.RawMessage:
-			var vs ValueSchema
-			if err := json.Unmarshal(ap, &vs); err != nil {
+		case json.RawMessage, *jsonmap.Map, map[string]any:
+			vs, err := decodeAdditionalPropertiesSchema(ap)
+			if err != nil {
 				return fmt.Errorf("invalid schema: cannot decode additionalProperties for %q: %w", key, err)
 			}
 			if err := validateField(vs, val); err != nil {

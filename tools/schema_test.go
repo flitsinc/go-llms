@@ -224,6 +224,58 @@ func TestValueSchema_OrderPreservedOnMarshal(t *testing.T) {
 	}
 }
 
+func TestValueSchema_AdditionalPropertiesOrderPreservedOnMarshal(t *testing.T) {
+	orig := `{"type":"object","additionalProperties":{"type":"object","properties":{"reasoning":{"type":"string"},"answer":{"type":"string"},"confidence":{"type":"number"}}}}`
+
+	var schema ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(orig), &schema))
+
+	out, err := json.Marshal(schema)
+	require.NoError(t, err)
+	body := string(out)
+
+	posReasoning := strings.Index(body, `"reasoning"`)
+	posAnswer := strings.Index(body, `"answer"`)
+	posConfidence := strings.Index(body, `"confidence"`)
+	require.Greater(t, posReasoning, -1)
+	require.Greater(t, posAnswer, -1)
+	require.Greater(t, posConfidence, -1)
+	assert.True(t, posReasoning < posAnswer && posAnswer < posConfidence, "additionalProperties field order changed")
+
+	apMap, ok := schema.AdditionalProperties.(*jsonmap.Map)
+	require.True(t, ok, "additionalProperties should decode to ordered map")
+	rawProps, ok := apMap.Get("properties")
+	require.True(t, ok)
+	props, ok := rawProps.(*jsonmap.Map)
+	require.True(t, ok)
+	assert.Equal(t, []string{"reasoning", "answer", "confidence"}, props.Keys())
+}
+
+func TestValidateJSON_AdditionalPropertiesOrderedMapSchema(t *testing.T) {
+	props := jsonmap.New()
+	props.Set("name", ValueSchema{Type: "string"})
+
+	additional := jsonmap.New()
+	additional.Set("type", "string")
+
+	schema := FunctionSchema{
+		Name: "OrderedAdditionalProperties",
+		Parameters: ValueSchema{
+			Type:                 "object",
+			Properties:           props,
+			Required:             []string{"name"},
+			AdditionalProperties: additional,
+		},
+	}
+
+	err := validateJSON(&schema, json.RawMessage(`{"name":"Alice","extra":"ok"}`))
+	assert.NoError(t, err)
+
+	err = validateJSON(&schema, json.RawMessage(`{"name":"Alice","extra":123}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `additional property "extra": type mismatch: expected string`)
+}
+
 // TestValidateJSON tests the validateJSON function with various scenarios.
 func TestValidateJSON(t *testing.T) {
 	// Use the schema generated from TestGenerateSchema's local testParams

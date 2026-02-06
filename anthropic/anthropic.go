@@ -11,13 +11,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/metalim/jsonmap"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
-)
-
-const (
-	jsonModeToolName = "json_output" // Name for the simulated tool in JSON mode
 )
 
 type Model struct {
@@ -104,6 +102,135 @@ func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
 }
 
+type schemaContainerKind uint8
+
+const (
+	schemaContainerNone schemaContainerKind = iota
+	schemaContainerMap
+	schemaContainerArray
+	schemaContainerDirect
+)
+
+func schemaChildContainerKind(key string) schemaContainerKind {
+	switch key {
+	case "properties", "patternProperties", "dependentSchemas", "$defs", "definitions", "dependencies":
+		return schemaContainerMap
+	case "anyOf", "allOf", "oneOf", "prefixItems":
+		return schemaContainerArray
+	case "items", "additionalProperties", "additionalItems", "contains", "propertyNames", "not", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties":
+		return schemaContainerDirect
+	default:
+		return schemaContainerNone
+	}
+}
+
+// normalizeOutputSchemaForAnthropic returns a deep-normalized schema for Anthropic
+// structured outputs without mutating the caller's schema.
+func normalizeOutputSchemaForAnthropic(schema *tools.ValueSchema) (any, error) {
+	// Round-trip through JSON and decode into jsonmap so object key order is preserved.
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	decoded := jsonmap.New()
+	if err := json.Unmarshal(data, decoded); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schema into ordered map: %w", err)
+	}
+
+	normalizeSchemaNode(decoded)
+	return decoded, nil
+}
+
+func normalizeSchemaNode(node any) {
+	switch n := node.(type) {
+	case *jsonmap.Map:
+		normalizeSchemaObject(n)
+	case []any:
+		for _, item := range n {
+			normalizeSchemaNode(item)
+		}
+	}
+}
+
+func normalizeSchemaObject(node *jsonmap.Map) {
+	// Anthropic requires additionalProperties: false on all object schemas.
+	isObjectType := false
+	if rawType, ok := node.Get("type"); ok {
+		isObjectType = schemaTypeIncludesObject(rawType)
+	}
+	if isObjectType || jsonMapLooksLikeObject(node) {
+		node.Set("additionalProperties", false)
+	}
+
+	for _, key := range node.Keys() {
+		raw, ok := node.Get(key)
+		if !ok {
+			continue
+		}
+		switch schemaChildContainerKind(key) {
+		case schemaContainerMap:
+			normalizeSchemaMapContainer(raw)
+		case schemaContainerArray:
+			normalizeSchemaArrayContainer(raw)
+		case schemaContainerDirect:
+			normalizeSchemaNode(raw)
+		}
+	}
+}
+
+func normalizeSchemaMapContainer(raw any) {
+	v, ok := raw.(*jsonmap.Map)
+	if !ok {
+		return
+	}
+	for _, key := range v.Keys() {
+		child, ok := v.Get(key)
+		if !ok {
+			continue
+		}
+		normalizeSchemaNode(child)
+	}
+}
+
+func normalizeSchemaArrayContainer(raw any) {
+	switch v := raw.(type) {
+	case []any:
+		for _, child := range v {
+			normalizeSchemaNode(child)
+		}
+	}
+}
+
+func jsonMapLooksLikeObject(node *jsonmap.Map) bool {
+	for _, key := range []string{"properties", "patternProperties", "required", "dependencies", "dependentSchemas"} {
+		if _, ok := node.Get(key); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaTypeIncludesObject(raw any) bool {
+	switch t := raw.(type) {
+	case string:
+		return t == "object"
+	case []any:
+		for _, v := range t {
+			if s, ok := v.(string); ok && s == "object" {
+				return true
+			}
+		}
+	case []string:
+		for _, s := range t {
+			if s == "object" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (m *Model) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -115,9 +242,6 @@ func (m *Model) Generate(
 	for _, msg := range messages {
 		apiMessages = append(apiMessages, messageFromLLM(msg))
 	}
-
-	// Use a boolean flag to track if JSON mode is active for stream processing
-	isJSONMode := jsonOutputSchema != nil
 
 	maxTokens := m.maxTokens + m.maxThinkingTokens
 	if m.adaptiveThinking {
@@ -137,16 +261,20 @@ func (m *Model) Generate(
 		payload["system"] = contentFromLLM(systemPrompt)
 	}
 
-	if isJSONMode {
-		// Simulate JSON mode using a forced tool
-		jsonModeTool := Tool{
-			Name:        jsonModeToolName,
-			Description: "This tool receives your response in a specific JSON format.",
-			InputSchema: *jsonOutputSchema, // Use the provided schema
+	if jsonOutputSchema != nil {
+		schema, err := normalizeOutputSchemaForAnthropic(jsonOutputSchema)
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: failed to normalize JSON output schema: %w", err)}
 		}
-		payload["tools"] = []Tool{jsonModeTool}
-		payload["tool_choice"] = ToolChoice{Type: "tool", Name: jsonModeToolName}
-	} else if toolbox != nil {
+		payload["output_config"] = map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"schema": schema,
+			},
+		}
+	}
+
+	if toolbox != nil {
 		// Build full tool list first.
 		allTools := Tools(toolbox)
 		choice := toolbox.Choice
@@ -231,18 +359,14 @@ func (m *Model) Generate(
 		payload["tool_choice"] = toolChoice
 	}
 
-	// Note: Anthropic does not support thinking when forcing tool use (which we
-	// do to simulate JSON mode from other providers).
-	if !isJSONMode {
-		if m.adaptiveThinking {
-			payload["thinking"] = map[string]any{
-				"type": "adaptive",
-			}
-		} else if m.maxThinkingTokens > 0 {
-			payload["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": m.maxThinkingTokens,
-			}
+	if m.adaptiveThinking {
+		payload["thinking"] = map[string]any{
+			"type": "adaptive",
+		}
+	} else if m.maxThinkingTokens > 0 {
+		payload["thinking"] = map[string]any{
+			"type":          "enabled",
+			"budget_tokens": m.maxThinkingTokens,
 		}
 	}
 
@@ -313,7 +437,7 @@ func (m *Model) Generate(
 		}}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode, debugger: m.debugger}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
 }
 
 type Stream struct {
@@ -324,7 +448,6 @@ type Stream struct {
 	message     llms.Message
 	lastText    string
 	lastThought *content.Thought
-	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
 	debugger    llms.Debugger
 
 	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
@@ -375,7 +498,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		lastToolCallIndex := -1
-		var handlingJsonModeTool bool // Flag if we are inside the JSON mode tool block
 		var resetNextArgumentsDelta bool
 		// Track content block types by index so we can signal when a thinking block ends
 		contentBlockTypeByIndex := map[int]string{}
@@ -452,11 +574,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				contentBlockTypeByIndex[event.Index] = event.ContentBlock.Type
 				switch event.ContentBlock.Type {
 				case "tool_use":
-					if s.isJSONMode && event.ContentBlock.Name == jsonModeToolName {
-						// Start handling the JSON mode tool.
-						handlingJsonModeTool = true
-						continue // Don't process as regular tool call.
-					}
 					lastToolCallIndex = event.Index
 					resetNextArgumentsDelta = true
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
@@ -511,15 +628,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if event.Delta.PartialJSON == "" {
 						continue
 					}
-					if handlingJsonModeTool {
-						// Accumulate JSON delta as if it was text (because we're in JSON mode).
-						s.lastText = event.Delta.PartialJSON
-						s.message.Content.Append(s.lastText)
-						if !yield(llms.StreamStatusText) {
-							return
-						}
-						continue // Don't process as regular tool call.
-					}
 					index := len(s.message.ToolCalls) - 1
 					if resetNextArgumentsDelta {
 						s.message.ToolCalls[index].Arguments = json.RawMessage(event.Delta.PartialJSON)
@@ -549,11 +657,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					continue
 				}
 			case "content_block_stop":
-				if handlingJsonModeTool {
-					// Stop handling the JSON mode tool.
-					handlingJsonModeTool = false
-					continue // Don't process as regular tool.
-				}
 				// Signal the end of a content block
 				// For tool calls, signal that the tool call is ready
 				if event.Index == lastToolCallIndex {
