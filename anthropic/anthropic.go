@@ -94,57 +94,227 @@ func (m *Model) SetHTTPClient(client *http.Client) {
 
 // ensureAdditionalPropertiesFalse recursively sets additionalProperties to false
 // on all object types in a schema. The Anthropic structured outputs API requires this.
+// Returns a new schema without modifying the original.
 func ensureAdditionalPropertiesFalse(schema tools.ValueSchema) tools.ValueSchema {
 	if schema.Type == "object" && schema.AdditionalProperties == nil {
 		schema.AdditionalProperties = false
 	}
 	if schema.Properties != nil {
+		// Create a new map to avoid mutating the caller's schema
+		newProps := jsonmap.New()
 		for _, key := range schema.Properties.Keys() {
 			raw, ok := schema.Properties.Get(key)
 			if !ok {
 				continue
 			}
 
-			var v tools.ValueSchema
 			switch val := raw.(type) {
 			case tools.ValueSchema:
-				v = val
+				newProps.Set(key, ensureAdditionalPropertiesFalse(val))
 			case *jsonmap.Map:
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
+				// Keep as *jsonmap.Map to preserve all JSON Schema fields
+				newProps.Set(key, ensureAdditionalPropertiesFalseMap(val))
 			case map[string]any:
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
+				// Keep as map[string]any to preserve all JSON Schema fields
+				newProps.Set(key, ensureAdditionalPropertiesFalseAny(val))
 			case json.RawMessage:
-				if err := json.Unmarshal(val, &v); err != nil {
-					continue
+				// Keep as map[string]any to preserve all JSON Schema fields
+				var m map[string]any
+				if err := json.Unmarshal(val, &m); err != nil {
+					newProps.Set(key, val)
+				} else {
+					newProps.Set(key, ensureAdditionalPropertiesFalseAny(m))
 				}
 			default:
-				continue
+				newProps.Set(key, val)
 			}
-
-			v = ensureAdditionalPropertiesFalse(v)
-			schema.Properties.Set(key, v)
 		}
+		schema.Properties = newProps
 	}
 	if schema.Items != nil {
 		normalized := ensureAdditionalPropertiesFalse(*schema.Items)
 		schema.Items = &normalized
 	}
-	for i, sub := range schema.AnyOf {
-		schema.AnyOf[i] = ensureAdditionalPropertiesFalse(sub)
+	if len(schema.AnyOf) > 0 {
+		// Create a new slice to avoid mutating the caller's schema
+		newAnyOf := make([]tools.ValueSchema, len(schema.AnyOf))
+		for i, sub := range schema.AnyOf {
+			newAnyOf[i] = ensureAdditionalPropertiesFalse(sub)
+		}
+		schema.AnyOf = newAnyOf
 	}
 	return schema
+}
+
+// ensureAdditionalPropertiesFalseMap recursively sets additionalProperties to false
+// on all object types in a *jsonmap.Map schema, preserving all JSON Schema fields.
+// Returns a new map without modifying the original.
+func ensureAdditionalPropertiesFalseMap(m *jsonmap.Map) *jsonmap.Map {
+	if m == nil {
+		return nil
+	}
+	// Create a copy of the map
+	result := jsonmap.New()
+	for _, key := range m.Keys() {
+		val, _ := m.Get(key)
+		result.Set(key, val)
+	}
+
+	// Check if this is an object type
+	if typ, ok := result.Get("type"); ok && typ == "object" {
+		if _, hasAP := result.Get("additionalProperties"); !hasAP {
+			result.Set("additionalProperties", false)
+		}
+	}
+
+	// Process nested properties
+	if props, ok := result.Get("properties"); ok {
+		switch p := props.(type) {
+		case *jsonmap.Map:
+			newProps := jsonmap.New()
+			for _, key := range p.Keys() {
+				val, _ := p.Get(key)
+				switch v := val.(type) {
+				case *jsonmap.Map:
+					newProps.Set(key, ensureAdditionalPropertiesFalseMap(v))
+				case map[string]any:
+					newProps.Set(key, ensureAdditionalPropertiesFalseAny(v))
+				default:
+					newProps.Set(key, val)
+				}
+			}
+			result.Set("properties", newProps)
+		case map[string]any:
+			newProps := make(map[string]any, len(p))
+			for key, val := range p {
+				switch v := val.(type) {
+				case *jsonmap.Map:
+					newProps[key] = ensureAdditionalPropertiesFalseMap(v)
+				case map[string]any:
+					newProps[key] = ensureAdditionalPropertiesFalseAny(v)
+				default:
+					newProps[key] = val
+				}
+			}
+			result.Set("properties", newProps)
+		}
+	}
+
+	// Process items
+	if items, ok := result.Get("items"); ok {
+		switch i := items.(type) {
+		case *jsonmap.Map:
+			result.Set("items", ensureAdditionalPropertiesFalseMap(i))
+		case map[string]any:
+			result.Set("items", ensureAdditionalPropertiesFalseAny(i))
+		}
+	}
+
+	// Process anyOf
+	if anyOf, ok := result.Get("anyOf"); ok {
+		switch a := anyOf.(type) {
+		case []any:
+			newAnyOf := make([]any, len(a))
+			for i, item := range a {
+				switch v := item.(type) {
+				case *jsonmap.Map:
+					newAnyOf[i] = ensureAdditionalPropertiesFalseMap(v)
+				case map[string]any:
+					newAnyOf[i] = ensureAdditionalPropertiesFalseAny(v)
+				default:
+					newAnyOf[i] = item
+				}
+			}
+			result.Set("anyOf", newAnyOf)
+		}
+	}
+
+	return result
+}
+
+// ensureAdditionalPropertiesFalseAny recursively sets additionalProperties to false
+// on all object types in a map[string]any schema, preserving all JSON Schema fields.
+// Returns a new map without modifying the original.
+func ensureAdditionalPropertiesFalseAny(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	// Create a copy of the map
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = v
+	}
+
+	// Check if this is an object type
+	if typ, ok := result["type"]; ok && typ == "object" {
+		if _, hasAP := result["additionalProperties"]; !hasAP {
+			result["additionalProperties"] = false
+		}
+	}
+
+	// Process nested properties
+	if props, ok := result["properties"]; ok {
+		switch p := props.(type) {
+		case *jsonmap.Map:
+			newProps := jsonmap.New()
+			for _, key := range p.Keys() {
+				val, _ := p.Get(key)
+				switch v := val.(type) {
+				case *jsonmap.Map:
+					newProps.Set(key, ensureAdditionalPropertiesFalseMap(v))
+				case map[string]any:
+					newProps.Set(key, ensureAdditionalPropertiesFalseAny(v))
+				default:
+					newProps.Set(key, val)
+				}
+			}
+			result["properties"] = newProps
+		case map[string]any:
+			newProps := make(map[string]any, len(p))
+			for key, val := range p {
+				switch v := val.(type) {
+				case *jsonmap.Map:
+					newProps[key] = ensureAdditionalPropertiesFalseMap(v)
+				case map[string]any:
+					newProps[key] = ensureAdditionalPropertiesFalseAny(v)
+				default:
+					newProps[key] = val
+				}
+			}
+			result["properties"] = newProps
+		}
+	}
+
+	// Process items
+	if items, ok := result["items"]; ok {
+		switch i := items.(type) {
+		case *jsonmap.Map:
+			result["items"] = ensureAdditionalPropertiesFalseMap(i)
+		case map[string]any:
+			result["items"] = ensureAdditionalPropertiesFalseAny(i)
+		}
+	}
+
+	// Process anyOf
+	if anyOf, ok := result["anyOf"]; ok {
+		switch a := anyOf.(type) {
+		case []any:
+			newAnyOf := make([]any, len(a))
+			for i, item := range a {
+				switch v := item.(type) {
+				case *jsonmap.Map:
+					newAnyOf[i] = ensureAdditionalPropertiesFalseMap(v)
+				case map[string]any:
+					newAnyOf[i] = ensureAdditionalPropertiesFalseAny(v)
+				default:
+					newAnyOf[i] = item
+				}
+			}
+			result["anyOf"] = newAnyOf
+		}
+	}
+
+	return result
 }
 
 func (m *Model) Generate(
