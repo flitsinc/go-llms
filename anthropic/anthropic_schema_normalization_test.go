@@ -22,6 +22,13 @@ func normalizedSchemaAsMap(t *testing.T, normalized any) map[string]any {
 	return out
 }
 
+func mustNormalizeOutputSchemaForAnthropic(t *testing.T, schema *tools.ValueSchema) any {
+	t.Helper()
+	normalized, err := normalizeOutputSchemaForAnthropic(schema)
+	require.NoError(t, err)
+	return normalized
+}
+
 func keyPositions(body string, keys ...string) []int {
 	pos := make([]int, len(keys))
 	for i, key := range keys {
@@ -86,7 +93,7 @@ func TestNormalizeOutputSchemaForAnthropic_OverridesPresetAndPreservesFields(t *
 		AdditionalProperties: true,
 	}
 
-	normalizedAny := normalizeOutputSchemaForAnthropic(&schema)
+	normalizedAny := mustNormalizeOutputSchemaForAnthropic(t, &schema)
 	normalized := normalizedSchemaAsMap(t, normalizedAny)
 	assert.Equal(t, false, normalized["additionalProperties"])
 
@@ -144,7 +151,7 @@ func TestNormalizeOutputSchemaForAnthropic_DoesNotMutateInputSchema(t *testing.T
 		},
 	}
 
-	normalizedAny := normalizeOutputSchemaForAnthropic(&schema)
+	normalizedAny := mustNormalizeOutputSchemaForAnthropic(t, &schema)
 	normalized := normalizedSchemaAsMap(t, normalizedAny)
 	normalizedAnyOf, ok := normalized["anyOf"].([]any)
 	require.True(t, ok)
@@ -183,7 +190,7 @@ func TestNormalizeOutputSchemaForAnthropic_NormalizesRawMessageWithoutFieldLoss(
 		Properties: props,
 	}
 
-	normalizedAny := normalizeOutputSchemaForAnthropic(&schema)
+	normalizedAny := mustNormalizeOutputSchemaForAnthropic(t, &schema)
 	normalized := normalizedSchemaAsMap(t, normalizedAny)
 	normalizedProps, ok := normalized["properties"].(map[string]any)
 	require.True(t, ok)
@@ -210,10 +217,19 @@ func TestNormalizeOutputSchemaForAnthropic_PreservesPropertyOrder(t *testing.T) 
 		Properties: props,
 	}
 
-	normalizedAny := normalizeOutputSchemaForAnthropic(&schema)
+	normalizedAny := mustNormalizeOutputSchemaForAnthropic(t, &schema)
 	data, err := json.Marshal(normalizedAny)
 	require.NoError(t, err)
 
 	pos := keyPositions(string(data), "reasoning", "answer", "confidence")
 	assert.True(t, positionsOrdered(pos), "schema property order should be preserved in serialized output")
+}
+
+func TestNormalizeOutputSchemaForAnthropic_ErrorsOnCyclicSchema(t *testing.T) {
+	schema := tools.ValueSchema{Type: "array"}
+	schema.Items = &schema
+
+	_, err := normalizeOutputSchemaForAnthropic(&schema)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to marshal schema")
 }

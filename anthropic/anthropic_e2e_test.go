@@ -448,6 +448,22 @@ func TestAnthropicE2E(t *testing.T) {
 	}
 }
 
+func TestAnthropicGenerate_CyclicJSONOutputSchemaReturnsError(t *testing.T) {
+	schema := tools.ValueSchema{Type: "array"}
+	schema.Items = &schema
+
+	stream := New("test-key", "claude-test").Generate(
+		context.Background(),
+		nil,
+		[]llms.Message{{Role: "user", Content: content.FromText("Output JSON")}},
+		nil,
+		&schema,
+	)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "failed to normalize JSON output schema")
+}
+
 // Helper to escape strings for use as JSON string values within a larger JSON structure,
 // specifically for manual construction of mock SSE data.
 func escapeJSONStringValue(s string) string {
