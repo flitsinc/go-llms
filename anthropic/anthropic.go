@@ -28,6 +28,7 @@ type Model struct {
 	debugger          llms.Debugger
 	maxTokens         int
 	maxThinkingTokens int
+	adaptiveThinking  bool
 	betaFeatures      []string
 	httpClient        *http.Client
 }
@@ -64,6 +65,15 @@ func (m *Model) WithMaxTokens(maxTokens int) *Model {
 
 func (m *Model) WithThinking(budgetTokens int) *Model {
 	m.maxThinkingTokens = budgetTokens
+	m.adaptiveThinking = false
+	return m
+}
+
+// WithAdaptiveThinking enables adaptive thinking mode, where the model
+// dynamically decides when and how much to think based on query complexity.
+// This is only supported on Claude Opus 4.6+.
+func (m *Model) WithAdaptiveThinking() *Model {
+	m.adaptiveThinking = true
 	return m
 }
 
@@ -98,13 +108,18 @@ func (m *Model) Generate(
 	// Use a boolean flag to track if JSON mode is active for stream processing
 	isJSONMode := jsonOutputSchema != nil
 
+	maxTokens := m.maxTokens + m.maxThinkingTokens
+	if m.adaptiveThinking {
+		// With adaptive thinking the model decides how much to think, so we
+		// only need the output token budget.
+		maxTokens = m.maxTokens
+	}
+
 	payload := map[string]any{
-		"model":    m.model,
-		"messages": apiMessages,
-		"stream":   true,
-		// We make an opinionated choice here to calculate thinking tokens on
-		// top of the max output tokens.
-		"max_tokens": m.maxTokens + m.maxThinkingTokens,
+		"model":      m.model,
+		"messages":   apiMessages,
+		"stream":     true,
+		"max_tokens": maxTokens,
 	}
 
 	if systemPrompt != nil {
@@ -207,10 +222,16 @@ func (m *Model) Generate(
 
 	// Note: Anthropic does not support thinking when forcing tool use (which we
 	// do to simulate JSON mode from other providers).
-	if m.maxThinkingTokens > 0 && !isJSONMode {
-		payload["thinking"] = map[string]any{
-			"type":          "enabled",
-			"budget_tokens": m.maxThinkingTokens,
+	if !isJSONMode {
+		if m.adaptiveThinking {
+			payload["thinking"] = map[string]any{
+				"type": "adaptive",
+			}
+		} else if m.maxThinkingTokens > 0 {
+			payload["thinking"] = map[string]any{
+				"type":          "enabled",
+				"budget_tokens": m.maxThinkingTokens,
+			}
 		}
 	}
 
