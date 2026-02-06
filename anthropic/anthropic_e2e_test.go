@@ -161,6 +161,7 @@ func TestAnthropicE2E(t *testing.T) {
 				schema, ok := format["schema"].(map[string]interface{})
 				require.True(t, ok)
 				assert.Equal(t, "object", schema["type"])
+				assert.Equal(t, false, schema["additionalProperties"])
 				props, ok := schema["properties"].(map[string]interface{})
 				require.True(t, ok)
 				dataProp, ok := props["data"].(map[string]interface{})

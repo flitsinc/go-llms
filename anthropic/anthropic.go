@@ -18,7 +18,6 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
-
 type Model struct {
 	apiKey            string
 	model             string
@@ -92,59 +91,216 @@ func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
 }
 
-// ensureAdditionalPropertiesFalse recursively sets additionalProperties to false
-// on all object types in a schema. The Anthropic structured outputs API requires this.
-func ensureAdditionalPropertiesFalse(schema tools.ValueSchema) tools.ValueSchema {
-	if schema.Type == "object" && schema.AdditionalProperties == nil {
-		schema.AdditionalProperties = false
+var schemaMapContainers = [...]string{
+	"properties",
+	"patternProperties",
+	"dependentSchemas",
+	"$defs",
+	"definitions",
+	"dependencies",
+}
+
+var schemaArrayContainers = [...]string{
+	"anyOf",
+	"allOf",
+	"oneOf",
+	"prefixItems",
+}
+
+var schemaDirectChildren = [...]string{
+	"items",
+	"additionalProperties",
+	"additionalItems",
+	"contains",
+	"propertyNames",
+	"not",
+	"if",
+	"then",
+	"else",
+	"unevaluatedItems",
+	"unevaluatedProperties",
+}
+
+// normalizeOutputSchemaForAnthropic returns a deep-normalized schema for Anthropic
+// structured outputs without mutating the caller's schema.
+func normalizeOutputSchemaForAnthropic(schema *tools.ValueSchema) any {
+	// Round-trip through JSON and decode into jsonmap so object key order is preserved.
+	data, err := json.Marshal(schema)
+	if err != nil {
+		fallback := normalizeValueSchemaFallback(*schema)
+		return &fallback
 	}
-	if schema.Properties != nil {
-		for _, key := range schema.Properties.Keys() {
-			raw, ok := schema.Properties.Get(key)
+
+	decoded := jsonmap.New()
+	if err := json.Unmarshal(data, decoded); err != nil {
+		fallback := normalizeValueSchemaFallback(*schema)
+		return &fallback
+	}
+
+	normalizeSchemaObject(decoded)
+	return decoded
+}
+
+func normalizeSchemaTree(node any) {
+	switch n := node.(type) {
+	case *jsonmap.Map:
+		normalizeSchemaObject(n)
+	case map[string]any:
+		// Fallback for callers that provide native maps in schema fragments.
+		for _, key := range schemaMapContainers {
+			container, ok := n[key].(map[string]any)
 			if !ok {
 				continue
 			}
-
-			var v tools.ValueSchema
-			switch val := raw.(type) {
-			case tools.ValueSchema:
-				v = val
-			case *jsonmap.Map:
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case map[string]any:
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case json.RawMessage:
-				if err := json.Unmarshal(val, &v); err != nil {
-					continue
-				}
-			default:
-				continue
+			for _, child := range container {
+				normalizeSchemaTree(child)
 			}
-
-			v = ensureAdditionalPropertiesFalse(v)
-			schema.Properties.Set(key, v)
+		}
+		for _, key := range schemaArrayContainers {
+			normalizeSchemaTree(n[key])
+		}
+		for _, key := range schemaDirectChildren {
+			normalizeSchemaTree(n[key])
+		}
+	case []any:
+		for _, item := range n {
+			normalizeSchemaTree(item)
 		}
 	}
-	if schema.Items != nil {
-		normalized := ensureAdditionalPropertiesFalse(*schema.Items)
-		schema.Items = &normalized
+}
+
+func normalizeSchemaObject(node *jsonmap.Map) {
+	// Anthropic requires additionalProperties: false on all object schemas.
+	if jsonMapTypeIncludesObject(node) || jsonMapLooksLikeObject(node) {
+		node.Set("additionalProperties", false)
 	}
-	for i, sub := range schema.AnyOf {
-		schema.AnyOf[i] = ensureAdditionalPropertiesFalse(sub)
+
+	for _, key := range schemaMapContainers {
+		raw, ok := node.Get(key)
+		if !ok {
+			continue
+		}
+		normalizeSchemaMapContainer(raw)
 	}
-	return schema
+
+	for _, key := range schemaArrayContainers {
+		raw, ok := node.Get(key)
+		if !ok {
+			continue
+		}
+		normalizeSchemaArrayContainer(raw)
+	}
+
+	for _, key := range schemaDirectChildren {
+		raw, ok := node.Get(key)
+		if !ok {
+			continue
+		}
+		normalizeSchemaTree(raw)
+	}
+}
+
+func normalizeSchemaMapContainer(raw any) {
+	switch v := raw.(type) {
+	case *jsonmap.Map:
+		for _, key := range v.Keys() {
+			child, ok := v.Get(key)
+			if !ok {
+				continue
+			}
+			normalizeSchemaTree(child)
+		}
+	case map[string]any:
+		for _, child := range v {
+			normalizeSchemaTree(child)
+		}
+	}
+}
+
+func normalizeSchemaArrayContainer(raw any) {
+	switch v := raw.(type) {
+	case []any:
+		for _, child := range v {
+			normalizeSchemaTree(child)
+		}
+	}
+}
+
+func jsonMapTypeIncludesObject(node *jsonmap.Map) bool {
+	raw, ok := node.Get("type")
+	if !ok {
+		return false
+	}
+	return schemaTypeIncludesObject(raw)
+}
+
+func jsonMapLooksLikeObject(node *jsonmap.Map) bool {
+	hasProperties := jsonMapHasKey(node, "properties")
+	hasPatternProperties := jsonMapHasKey(node, "patternProperties")
+	hasRequired := jsonMapHasKey(node, "required")
+	hasDependencies := jsonMapHasKey(node, "dependencies")
+	hasDependentSchemas := jsonMapHasKey(node, "dependentSchemas")
+	return hasProperties || hasPatternProperties || hasRequired || hasDependencies || hasDependentSchemas
+}
+
+func jsonMapHasKey(node *jsonmap.Map, key string) bool {
+	_, ok := node.Get(key)
+	return ok
+}
+
+// normalizeValueSchemaFallback is used only if JSON round-tripping fails.
+func normalizeValueSchemaFallback(schema tools.ValueSchema) tools.ValueSchema {
+	normalized := schema
+	if normalized.Type == "object" {
+		normalized.AdditionalProperties = false
+	}
+	if normalized.Properties != nil {
+		props := jsonmap.New()
+		for _, key := range normalized.Properties.Keys() {
+			raw, ok := normalized.Properties.Get(key)
+			if !ok {
+				continue
+			}
+			if child, ok := raw.(tools.ValueSchema); ok {
+				props.Set(key, normalizeValueSchemaFallback(child))
+				continue
+			}
+			props.Set(key, raw)
+		}
+		normalized.Properties = props
+	}
+	if normalized.Items != nil {
+		items := normalizeValueSchemaFallback(*normalized.Items)
+		normalized.Items = &items
+	}
+	if len(normalized.AnyOf) > 0 {
+		anyOf := make([]tools.ValueSchema, len(normalized.AnyOf))
+		for i, sub := range normalized.AnyOf {
+			anyOf[i] = normalizeValueSchemaFallback(sub)
+		}
+		normalized.AnyOf = anyOf
+	}
+	return normalized
+}
+
+func schemaTypeIncludesObject(raw any) bool {
+	switch t := raw.(type) {
+	case string:
+		return t == "object"
+	case []any:
+		for _, v := range t {
+			if s, ok := v.(string); ok && s == "object" {
+				return true
+			}
+		}
+	case []string:
+		for _, s := range t {
+			if s == "object" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *Model) Generate(
@@ -178,11 +334,11 @@ func (m *Model) Generate(
 	}
 
 	if jsonOutputSchema != nil {
-		schema := ensureAdditionalPropertiesFalse(*jsonOutputSchema)
+		schema := normalizeOutputSchemaForAnthropic(jsonOutputSchema)
 		payload["output_config"] = map[string]any{
 			"format": map[string]any{
 				"type":   "json_schema",
-				"schema": &schema,
+				"schema": schema,
 			},
 		}
 	}
@@ -355,7 +511,7 @@ type Stream struct {
 	message     llms.Message
 	lastText    string
 	lastThought *content.Thought
-	debugger llms.Debugger
+	debugger    llms.Debugger
 
 	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
 }
