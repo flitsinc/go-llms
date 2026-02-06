@@ -29,6 +29,7 @@ type Model struct {
 	maxTokens         int
 	maxThinkingTokens int
 	adaptiveThinking  bool
+	effort            Effort
 	betaFeatures      []string
 	httpClient        *http.Client
 }
@@ -74,6 +75,16 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 // This is only supported on Claude Opus 4.6+.
 func (m *Model) WithAdaptiveThinking() *Model {
 	m.adaptiveThinking = true
+	return m
+}
+
+// WithEffort controls how many tokens Claude uses when responding, trading off
+// between response thoroughness and token efficiency. Supported on Claude Opus
+// 4.5 and 4.6. For Opus 4.6, this is the recommended way to control thinking
+// depth (combine with WithAdaptiveThinking for best results). EffortMax is only
+// available on Opus 4.6.
+func (m *Model) WithEffort(effort Effort) *Model {
+	m.effort = effort
 	return m
 }
 
@@ -232,6 +243,12 @@ func (m *Model) Generate(
 				"type":          "enabled",
 				"budget_tokens": m.maxThinkingTokens,
 			}
+		}
+	}
+
+	if m.effort != "" {
+		payload["output_config"] = map[string]any{
+			"effort": m.effort,
 		}
 	}
 

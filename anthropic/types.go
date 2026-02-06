@@ -6,6 +6,17 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
+// Effort controls how many tokens Claude uses when responding,
+// trading off between response thoroughness and token efficiency.
+type Effort string
+
+const (
+	EffortLow    Effort = "low"
+	EffortMedium Effort = "medium"
+	EffortHigh   Effort = "high"
+	EffortMax    Effort = "max" // Opus 4.6 only
+)
+
 type Tool struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
