@@ -99,16 +99,43 @@ func ensureAdditionalPropertiesFalse(schema tools.ValueSchema) tools.ValueSchema
 		schema.AdditionalProperties = false
 	}
 	if schema.Properties != nil {
-		normalized := jsonmap.New()
 		for _, key := range schema.Properties.Keys() {
-			raw, _ := schema.Properties.Get(key)
-			if vs, ok := raw.(tools.ValueSchema); ok {
-				normalized.Set(key, ensureAdditionalPropertiesFalse(vs))
-			} else {
-				normalized.Set(key, raw)
+			raw, ok := schema.Properties.Get(key)
+			if !ok {
+				continue
 			}
+
+			var v tools.ValueSchema
+			switch val := raw.(type) {
+			case tools.ValueSchema:
+				v = val
+			case *jsonmap.Map:
+				data, err := json.Marshal(val)
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(data, &v); err != nil {
+					continue
+				}
+			case map[string]any:
+				data, err := json.Marshal(val)
+				if err != nil {
+					continue
+				}
+				if err := json.Unmarshal(data, &v); err != nil {
+					continue
+				}
+			case json.RawMessage:
+				if err := json.Unmarshal(val, &v); err != nil {
+					continue
+				}
+			default:
+				continue
+			}
+
+			v = ensureAdditionalPropertiesFalse(v)
+			schema.Properties.Set(key, v)
 		}
-		schema.Properties = normalized
 	}
 	if schema.Items != nil {
 		normalized := ensureAdditionalPropertiesFalse(*schema.Items)
