@@ -11,14 +11,13 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/metalim/jsonmap"
+
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
 
-const (
-	jsonModeToolName = "json_output" // Name for the simulated tool in JSON mode
-)
 
 type Model struct {
 	apiKey            string
@@ -93,6 +92,34 @@ func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
 }
 
+// ensureAdditionalPropertiesFalse recursively sets additionalProperties to false
+// on all object types in a schema. The Anthropic structured outputs API requires this.
+func ensureAdditionalPropertiesFalse(schema tools.ValueSchema) tools.ValueSchema {
+	if schema.Type == "object" && schema.AdditionalProperties == nil {
+		schema.AdditionalProperties = false
+	}
+	if schema.Properties != nil {
+		normalized := jsonmap.New()
+		for _, key := range schema.Properties.Keys() {
+			raw, _ := schema.Properties.Get(key)
+			if vs, ok := raw.(tools.ValueSchema); ok {
+				normalized.Set(key, ensureAdditionalPropertiesFalse(vs))
+			} else {
+				normalized.Set(key, raw)
+			}
+		}
+		schema.Properties = normalized
+	}
+	if schema.Items != nil {
+		normalized := ensureAdditionalPropertiesFalse(*schema.Items)
+		schema.Items = &normalized
+	}
+	for i, sub := range schema.AnyOf {
+		schema.AnyOf[i] = ensureAdditionalPropertiesFalse(sub)
+	}
+	return schema
+}
+
 func (m *Model) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -104,9 +131,6 @@ func (m *Model) Generate(
 	for _, msg := range messages {
 		apiMessages = append(apiMessages, messageFromLLM(msg))
 	}
-
-	// Use a boolean flag to track if JSON mode is active for stream processing
-	isJSONMode := jsonOutputSchema != nil
 
 	maxTokens := m.maxTokens + m.maxThinkingTokens
 	if m.adaptiveThinking {
@@ -126,16 +150,17 @@ func (m *Model) Generate(
 		payload["system"] = contentFromLLM(systemPrompt)
 	}
 
-	if isJSONMode {
-		// Simulate JSON mode using a forced tool
-		jsonModeTool := Tool{
-			Name:        jsonModeToolName,
-			Description: "This tool receives your response in a specific JSON format.",
-			InputSchema: *jsonOutputSchema, // Use the provided schema
+	if jsonOutputSchema != nil {
+		schema := ensureAdditionalPropertiesFalse(*jsonOutputSchema)
+		payload["output_config"] = map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"schema": &schema,
+			},
 		}
-		payload["tools"] = []Tool{jsonModeTool}
-		payload["tool_choice"] = ToolChoice{Type: "tool", Name: jsonModeToolName}
-	} else if toolbox != nil {
+	}
+
+	if toolbox != nil {
 		// Build full tool list first.
 		allTools := Tools(toolbox)
 		choice := toolbox.Choice
@@ -220,18 +245,14 @@ func (m *Model) Generate(
 		payload["tool_choice"] = toolChoice
 	}
 
-	// Note: Anthropic does not support thinking when forcing tool use (which we
-	// do to simulate JSON mode from other providers).
-	if !isJSONMode {
-		if m.adaptiveThinking {
-			payload["thinking"] = map[string]any{
-				"type": "adaptive",
-			}
-		} else if m.maxThinkingTokens > 0 {
-			payload["thinking"] = map[string]any{
-				"type":          "enabled",
-				"budget_tokens": m.maxThinkingTokens,
-			}
+	if m.adaptiveThinking {
+		payload["thinking"] = map[string]any{
+			"type": "adaptive",
+		}
+	} else if m.maxThinkingTokens > 0 {
+		payload["thinking"] = map[string]any{
+			"type":          "enabled",
+			"budget_tokens": m.maxThinkingTokens,
 		}
 	}
 
@@ -296,7 +317,7 @@ func (m *Model) Generate(
 		}}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, isJSONMode: isJSONMode, debugger: m.debugger}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
 }
 
 type Stream struct {
@@ -307,8 +328,7 @@ type Stream struct {
 	message     llms.Message
 	lastText    string
 	lastThought *content.Thought
-	isJSONMode  bool // Flag to indicate if JSON mode was used for generation
-	debugger    llms.Debugger
+	debugger llms.Debugger
 
 	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
 }
@@ -358,7 +378,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
 		lastToolCallIndex := -1
-		var handlingJsonModeTool bool // Flag if we are inside the JSON mode tool block
 		var resetNextArgumentsDelta bool
 		// Track content block types by index so we can signal when a thinking block ends
 		contentBlockTypeByIndex := map[int]string{}
@@ -435,11 +454,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				contentBlockTypeByIndex[event.Index] = event.ContentBlock.Type
 				switch event.ContentBlock.Type {
 				case "tool_use":
-					if s.isJSONMode && event.ContentBlock.Name == jsonModeToolName {
-						// Start handling the JSON mode tool.
-						handlingJsonModeTool = true
-						continue // Don't process as regular tool call.
-					}
 					lastToolCallIndex = event.Index
 					resetNextArgumentsDelta = true
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
@@ -494,15 +508,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					if event.Delta.PartialJSON == "" {
 						continue
 					}
-					if handlingJsonModeTool {
-						// Accumulate JSON delta as if it was text (because we're in JSON mode).
-						s.lastText = event.Delta.PartialJSON
-						s.message.Content.Append(s.lastText)
-						if !yield(llms.StreamStatusText) {
-							return
-						}
-						continue // Don't process as regular tool call.
-					}
 					index := len(s.message.ToolCalls) - 1
 					if resetNextArgumentsDelta {
 						s.message.ToolCalls[index].Arguments = json.RawMessage(event.Delta.PartialJSON)
@@ -532,11 +537,6 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					continue
 				}
 			case "content_block_stop":
-				if handlingJsonModeTool {
-					// Stop handling the JSON mode tool.
-					handlingJsonModeTool = false
-					continue // Don't process as regular tool.
-				}
 				// Signal the end of a content block
 				// For tool calls, signal that the tool call is ready
 				if event.Index == lastToolCallIndex {
