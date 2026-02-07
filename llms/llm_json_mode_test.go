@@ -108,7 +108,6 @@ func TestLLM_JSONMode_PassesSchemaToProvider(t *testing.T) {
 	assert.True(t, provider.generateCalled, "Provider should be called")
 	assert.Equal(t, schema, provider.receivedSchema, "Schema should be passed to provider")
 	assert.NoError(t, llm.Err())
-	// Should get a text update with JSON string
 	require.Len(t, updates, 1)
 	text, ok := updates[0].(TextUpdate)
 	require.True(t, ok)

@@ -169,25 +169,18 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 	// Check that the LLM itself didn't encounter an error (like cancellation)
 	assert.NoError(t, llm.Err(), "LLM should not report an error in this scenario")
 
-	// Check received updates: We expect Text, ToolStart, 2x ToolDelta, ToolDone, and the final Text
+	// Check received updates: We expect Text, ToolStart, 2x ToolDelta, ToolDone, and final Text
 	// because the sends are now blocking.
 	require.Len(t, updates, 6, "Expected exactly 6 updates (Text, ToolStart, 2x ToolDelta, ToolDone, Final Text)")
 
-	foundText := false
+	textUpdates := []string{}
 	foundToolStart := false
 	foundToolDone := false
-	foundFinalText := false
-	finalTextContent := ""
 
-	for i, update := range updates {
+	for _, update := range updates {
 		switch u := update.(type) {
 		case TextUpdate:
-			if i == 0 { // Initial text
-				foundText = true
-			} else { // Final text
-				foundFinalText = true
-				finalTextContent = u.Text // Capture the final text
-			}
+			textUpdates = append(textUpdates, u.Text)
 		case ToolStartUpdate:
 			foundToolStart = true
 			assert.Equal(t, "fast_tool", u.Tool.FuncName())
@@ -196,10 +189,10 @@ func TestSlowReceiverLosesToolDoneUpdate(t *testing.T) {
 		}
 	}
 
-	assert.True(t, foundText, "Should have received the initial TextUpdate")
+	require.Len(t, textUpdates, 2, "Should have initial and final TextUpdate")
+	assert.Equal(t, "This is a test message.", textUpdates[0], "Initial text mismatch")
 	assert.True(t, foundToolStart, "Should have received the ToolStartUpdate")
 	assert.True(t, foundToolDone, "Should have received the ToolDoneUpdate")
-	assert.True(t, foundFinalText, "Should have received the final TextUpdate after the tool sequence")
 	// The final text will be the default mock response after processing tool results
-	assert.Equal(t, "I've processed the results from the tool.", finalTextContent, "Final text content mismatch")
+	assert.Equal(t, "I've processed the results from the tool.", textUpdates[1], "Final text content mismatch")
 }

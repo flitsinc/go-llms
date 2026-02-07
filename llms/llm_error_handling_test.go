@@ -64,6 +64,7 @@ func TestTurnToolNotFound(t *testing.T) {
 
 	// Assert: Should get text update, then an error
 	require.NotEmpty(t, updates, "Should receive at least one update before error")
+	require.Len(t, updates, 1)
 	_, isText := updates[0].(TextUpdate)
 	assert.True(t, isText, "First update should be text")
 
@@ -87,7 +88,9 @@ func TestRunToolCallWithError(t *testing.T) {
 	// Assert: No LLM-level error (tool error shouldn't stop the flow)
 	assert.NoError(t, llm.Err(), "LLM should not error just because a tool failed")
 
-	// Assert: Correct updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
+	// Assert: Correct updates received.
+	// Turn 1: Text, ToolStart, 2xToolDelta, ToolDone
+	// Turn 2: Final Text
 	require.Equal(t, 6, len(updates), "Should receive 6 updates")
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")

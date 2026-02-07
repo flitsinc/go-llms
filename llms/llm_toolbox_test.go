@@ -122,9 +122,10 @@ func TestAddExternalTools(t *testing.T) {
 	// Assert: No LLM error during the flow
 	assert.NoError(t, llm.Err(), "Chat flow should complete without LLM error")
 
-	// Assert: Updates received for the full flow (Text -> Search Tool Sequence -> Database Tool Sequence -> Text)
-	// Expected: Text, Start(S), 2xDelta(S), Done(S), Start(DB), 2xDelta(DB), Done(DB), Text(Final)
-	// 1 + (1+2+1) + (1+2+1) + 1 = 1 + 4 + 4 + 1 = 10
+	// Assert: Updates received for the full flow.
+	// Turn 1: Text, Search tool sequence, Database tool sequence
+	// Turn 2: Final text
+	// 1 + 4 + 4 + 1 = 10
 	require.Equal(t, 10, len(updates), "Should receive 10 updates for the full flow")
 
 	_, ok = updates[0].(TextUpdate)
@@ -136,7 +137,7 @@ func TestAddExternalTools(t *testing.T) {
 	assert.Equal(t, "search", searchStart.Tool.FuncName())
 	assert.Equal(t, "search-id-0", searchStart.ToolCallID)
 
-	searchDone, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	searchDone, ok := updates[4].(ToolDoneUpdate)
 	require.True(t, ok, "Update 4 should be ToolDoneUpdate (search)")
 	assert.Equal(t, "search", searchDone.Tool.FuncName())
 	assert.Equal(t, searchStart.ToolCallID, searchDone.ToolCallID)
@@ -145,12 +146,12 @@ func TestAddExternalTools(t *testing.T) {
 	assert.JSONEq(t, `{"results":["result1","result2"]}`, string(resultJSON))
 
 	// Database tool: TS at 5, TD at 8
-	dbStart, ok := updates[5].(ToolStartUpdate) // Was updates[3]
+	dbStart, ok := updates[5].(ToolStartUpdate)
 	require.True(t, ok, "Update 5 should be ToolStartUpdate (database)")
 	assert.Equal(t, "database", dbStart.Tool.FuncName())
 	assert.Equal(t, "database-id-1", dbStart.ToolCallID)
 
-	dbDone, ok := updates[8].(ToolDoneUpdate) // Was updates[4]
+	dbDone, ok := updates[8].(ToolDoneUpdate)
 	require.True(t, ok, "Update 8 should be ToolDoneUpdate (database)")
 	assert.Equal(t, "database", dbDone.Tool.FuncName())
 	assert.Equal(t, dbStart.ToolCallID, dbDone.ToolCallID)
@@ -158,7 +159,7 @@ func TestAddExternalTools(t *testing.T) {
 	resultJSON = extractJSONFromResult(t, dbDone.Result)
 	assert.JSONEq(t, `{"rows":10}`, string(resultJSON))
 
-	finalText, ok := updates[9].(TextUpdate) // Was updates[5]
+	finalText, ok := updates[9].(TextUpdate)
 	require.True(t, ok, "Update 9 should be TextUpdate (final)")
 	assert.Equal(t, "I've processed the results from the tool.", finalText.Text)
 

@@ -56,8 +56,8 @@ func TestMaxTurnsAllowsCompletion(t *testing.T) {
 	defer cancel()
 	updates := runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: Updates received (Turn1: Text, TS, 2xTDelta, TD; Turn2: Text)
-	// Total 5 + 1 = 6 updates
+	// Assert: Updates received.
+	// Turn1: Text, TS, 2xTDelta, TD; Turn2: Text
 	require.Equal(t, 6, len(updates), "Should receive exactly 6 updates")
 
 	// Individual checks for T1 Text, TS, TD could be added if needed, but the key is the final text

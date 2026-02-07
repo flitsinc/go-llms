@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -412,7 +411,6 @@ func setupTestLLM(t *testing.T, provider Provider, tools ...tools.Tool) (*LLM, *
 func runTestChat(ctx context.Context, t *testing.T, llm *LLM, message string) []Update {
 	t.Helper()
 	var updates []Update
-	var updatesMutex sync.Mutex
 
 	chatChan := llm.ChatWithContext(ctx, message)
 
@@ -423,9 +421,7 @@ func runTestChat(ctx context.Context, t *testing.T, llm *LLM, message string) []
 			if !ok { // Channel closed, chat finished
 				return updates
 			}
-			updatesMutex.Lock()
 			updates = append(updates, update)
-			updatesMutex.Unlock()
 		case <-ctx.Done():
 			// Context was cancelled or timed out. This might be expected by the test.
 			// Simply return the updates collected so far. The calling test

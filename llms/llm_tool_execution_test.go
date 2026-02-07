@@ -51,14 +51,15 @@ func TestToolCallIDsFlow(t *testing.T) {
 	// Assert: No error
 	assert.NoError(t, llm.Err(), "No error should occur in this test")
 
-	// Assert: Correct number and type of updates
-	// Initial Text + 3 * (ToolStart + 2*ToolDelta + ToolDone) + Final Text = 1 + 3*4 + 1 = 14
-	require.Equal(t, 14, len(updates), "Should receive exactly 14 updates") // Adjusted from 8
+	// Assert: Correct number and type of updates.
+	// Turn 1: Initial Text + 3 * (ToolStart + 2*ToolDelta + ToolDone) = 13
+	// Turn 2: Final Text = 1
+	require.Equal(t, 14, len(updates), "Should receive exactly 14 updates")
 	textUpdate0, ok := updates[0].(TextUpdate)
-	require.True(t, ok, "First update should be TextUpdate")
+	require.True(t, ok, "Update 0 should be TextUpdate")
 	assert.Equal(t, "This is a test message.", textUpdate0.Text) // Corrected from previous attempt
 
-	textUpdateFinal, ok := updates[13].(TextUpdate) // Was updates[7]
+	textUpdateFinal, ok := updates[13].(TextUpdate)
 	require.True(t, ok, "Final update (index 13) should be TextUpdate")
 	assert.Equal(t, "I've processed the results from the tool.", textUpdateFinal.Text)
 
@@ -117,15 +118,13 @@ func TestRunToolCallImageHandling(t *testing.T) {
 	// Assert: No error
 	assert.NoError(t, llm.Err(), "Should not return an error")
 
-	// Assert: ToolDoneUpdate has the correct content
-	require.Len(t, updates, 6, "Should have 6 updates") // Adjusted from 4
+	// Assert: ToolDoneUpdate has the correct content.
+	// Turn 1: Text, ToolStart, 2xToolDelta, ToolDone
+	// Turn 2: Final Text
+	require.Len(t, updates, 6, "Should have 6 updates")
 
-	// updates[0] is initial TextUpdate
-	// updates[1] is ToolStartUpdate
-	// updates[2] and updates[3] are ToolDeltaUpdates
-
-	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
-	require.True(t, ok, "Update at index 4 should be ToolDoneUpdate")
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
 	assert.Equal(t, "Generated test image", doneUpdate.Result.Label())
 	require.NoError(t, doneUpdate.Result.Error())
 	require.NotNil(t, doneUpdate.Result.Content())
@@ -171,8 +170,10 @@ func TestToolStatusUpdates(t *testing.T) {
 	// Assert: No LLM-level error
 	assert.NoError(t, llm.Err())
 
-	// Assert: Correct basic updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
-	require.Equal(t, 6, len(updates), "Should receive 6 standard updates") // Adjusted from 4
+	// Assert: Correct basic updates received.
+	// Turn 1: Text, ToolStart, 2xToolDelta, ToolDone
+	// Turn 2: Final Text
+	require.Equal(t, 6, len(updates), "Should receive 6 standard updates")
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 	startUpdate, ok := updates[1].(ToolStartUpdate)
@@ -180,9 +181,9 @@ func TestToolStatusUpdates(t *testing.T) {
 
 	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
 
-	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
 	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
-	_, ok = updates[5].(TextUpdate) // Was updates[3]
+	_, ok = updates[5].(TextUpdate)
 	require.True(t, ok, "Update 5 should be TextUpdate")
 
 	// Assert: ToolDoneUpdate is correct (uses startUpdate and doneUpdate vars)
@@ -211,8 +212,10 @@ func TestToolCallInContext(t *testing.T) {
 	// Assert: No LLM-level error
 	assert.NoError(t, llm.Err())
 
-	// Assert: Correct updates received (Text, ToolStart, 2xToolDelta, ToolDone, Final Text)
-	require.Equal(t, 6, len(updates), "Should receive 6 standard updates") // Adjusted from 4
+	// Assert: Correct updates received.
+	// Turn 1: Text, ToolStart, 2xToolDelta, ToolDone
+	// Turn 2: Final Text
+	require.Equal(t, 6, len(updates), "Should receive 6 standard updates")
 	_, ok := updates[0].(TextUpdate)
 	require.True(t, ok, "Update 0 should be TextUpdate")
 	startUpdate, ok := updates[1].(ToolStartUpdate)
@@ -221,9 +224,9 @@ func TestToolCallInContext(t *testing.T) {
 
 	// ToolDeltaUpdates at index 2 and 3 are skipped by these checks
 
-	doneUpdate, ok := updates[4].(ToolDoneUpdate) // Was updates[2]
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
 	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
-	_, ok = updates[5].(TextUpdate) // Was updates[3]
+	_, ok = updates[5].(TextUpdate)
 	require.True(t, ok, "Update 5 should be TextUpdate")
 
 	// Assert: ToolDoneUpdate contains the correct ToolCallID extracted from the context
@@ -259,7 +262,9 @@ func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	// Assert: No LLM-level error
 	assert.NoError(t, llm.Err())
 
-	// Assert: Correct number of updates (InitialText, ToolStart, Delta1, Delta2, ToolDone, FinalText)
+	// Assert: Correct number of updates.
+	// Turn 1: InitialText, ToolStart, Delta1, Delta2, ToolDone
+	// Turn 2: FinalText
 	require.Len(t, updates, 6, "Should receive exactly 6 updates for a single tool call with deltas")
 
 	// Define expected arguments based on mockStream behavior
