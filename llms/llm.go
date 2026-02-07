@@ -60,6 +60,11 @@ type LLM struct {
 	// TrackUsage is a function that will be called with the token usage
 	// information after each LLM turn completes.
 	TrackUsage func(ctx context.Context, usage Usage, success bool)
+
+	// BeforeResponse, if set, is called synchronously before each provider
+	// request. It may mutate outbound messages through the provided state.
+	// Returning an error aborts the request and ends the chat.
+	BeforeResponse func(ctx context.Context, state BeforeResponseState) error
 }
 
 // New creates a new LLM instance with the specified provider and optional
@@ -237,7 +242,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// This will hold results from tool calls, to be sent back to the LLM.
 	var toolMessages []Message
 
-	stream := l.provider.Generate(ctx, systemPrompt, l.lastSentMessages, l.toolbox, l.JSONOutputSchema)
+	systemPrompt, outboundMessages, err := l.prepareBeforeResponse(ctx, systemPrompt, l.lastSentMessages)
+	if err != nil {
+		return false, err
+	}
+	stream := l.provider.Generate(ctx, systemPrompt, outboundMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
 	}
@@ -396,4 +405,22 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 		ToolCallID:   toolCall.ID,
 		ToolCallName: toolCall.Name,
 	}
+}
+
+func (l *LLM) prepareBeforeResponse(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []Message,
+) (content.Content, []Message, error) {
+	if l.BeforeResponse == nil {
+		return systemPrompt, messages, nil
+	}
+
+	state := newBeforeResponseState(l.turns, systemPrompt, messages)
+	if err := l.BeforeResponse(ctx, state); err != nil {
+		return nil, nil, err
+	}
+
+	nextSystemPrompt, nextMessages := state.freeze()
+	return nextSystemPrompt, nextMessages, nil
 }
