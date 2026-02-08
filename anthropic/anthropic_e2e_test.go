@@ -47,6 +47,7 @@ func TestAnthropicE2E(t *testing.T) {
 		toolbox          *tools.Toolbox
 		jsonOutputSchema *tools.ValueSchema
 		maxTokens        int
+		effort           Effort
 		// verifyRequest is called after the server handler has sent its response.
 		verifyRequest func(t *testing.T, headers http.Header, body map[string]any)
 		// customResponse allows custom SSE responses from the mock server.
@@ -172,6 +173,35 @@ func TestAnthropicE2E(t *testing.T) {
 				require.True(t, ok)
 				assert.Contains(t, required, "data")
 				assert.Equal(t, float64(200), body["max_tokens"])
+			},
+		},
+		{
+			name: "With JSON mode and effort",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Output JSON with low effort")},
+			},
+			jsonOutputSchema: func() *tools.ValueSchema {
+				props := jsonmap.New()
+				props.Set("data", tools.ValueSchema{Type: "string", Description: "The data"})
+				return &tools.ValueSchema{
+					Type:       "object",
+					Properties: props,
+					Required:   []string{"data"},
+				}
+			}(),
+			maxTokens: 200,
+			effort:    EffortLow,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				assert.NotNil(t, body["output_config"], "output_config should be present for JSON mode and effort")
+				outputConfig, ok := body["output_config"].(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "low", outputConfig["effort"])
+				format, ok := outputConfig["format"].(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "json_schema", format["type"])
+				schema, ok := format["schema"].(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "object", schema["type"])
 			},
 		},
 		{
@@ -396,6 +426,9 @@ func TestAnthropicE2E(t *testing.T) {
 			client := New(mockAPIKey, mockModel).
 				WithEndpoint(mockServer.URL+"/v1/messages", mockCompany).
 				WithMaxTokens(tc.maxTokens)
+			if tc.effort != "" {
+				client = client.WithEffort(tc.effort)
+			}
 
 			stream := client.Generate(context.Background(), tc.systemPrompt, tc.messages, tc.toolbox, tc.jsonOutputSchema)
 
