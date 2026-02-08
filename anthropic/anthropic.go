@@ -262,8 +262,15 @@ func (m *Model) Generate(
 	}
 
 	outputConfig := map[string]any{}
+	syncOutputConfigFromPayload := func() {
+		payloadOutputConfig, ok := payload["output_config"].(map[string]any)
+		if ok && payloadOutputConfig != nil {
+			outputConfig = payloadOutputConfig
+		}
+	}
 
 	if jsonOutputSchema != nil {
+		syncOutputConfigFromPayload()
 		schema, err := normalizeOutputSchemaForAnthropic(jsonOutputSchema)
 		if err != nil {
 			return &Stream{err: fmt.Errorf("anthropic: failed to normalize JSON output schema: %w", err)}
@@ -371,6 +378,7 @@ func (m *Model) Generate(
 	}
 
 	if m.effort != "" {
+		syncOutputConfigFromPayload()
 		outputConfig["effort"] = m.effort
 	}
 
