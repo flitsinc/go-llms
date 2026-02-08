@@ -371,9 +371,12 @@ func (m *Model) Generate(
 	}
 
 	if m.effort != "" {
-		payload["output_config"] = map[string]any{
-			"effort": m.effort,
+		outputConfig, ok := payload["output_config"].(map[string]any)
+		if !ok || outputConfig == nil {
+			outputConfig = map[string]any{}
 		}
+		outputConfig["effort"] = m.effort
+		payload["output_config"] = outputConfig
 	}
 
 	jsonData, err := json.Marshal(payload)
