@@ -261,16 +261,16 @@ func (m *Model) Generate(
 		payload["system"] = contentFromLLM(systemPrompt)
 	}
 
+	outputConfig := map[string]any{}
+
 	if jsonOutputSchema != nil {
 		schema, err := normalizeOutputSchemaForAnthropic(jsonOutputSchema)
 		if err != nil {
 			return &Stream{err: fmt.Errorf("anthropic: failed to normalize JSON output schema: %w", err)}
 		}
-		payload["output_config"] = map[string]any{
-			"format": map[string]any{
-				"type":   "json_schema",
-				"schema": schema,
-			},
+		outputConfig["format"] = map[string]any{
+			"type":   "json_schema",
+			"schema": schema,
 		}
 	}
 
@@ -371,11 +371,10 @@ func (m *Model) Generate(
 	}
 
 	if m.effort != "" {
-		outputConfig, ok := payload["output_config"].(map[string]any)
-		if !ok || outputConfig == nil {
-			outputConfig = map[string]any{}
-		}
 		outputConfig["effort"] = m.effort
+	}
+
+	if len(outputConfig) > 0 {
 		payload["output_config"] = outputConfig
 	}
 
