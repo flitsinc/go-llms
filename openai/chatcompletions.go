@@ -382,35 +382,46 @@ func (s *ChatCompletionsStream) Usage() llms.Usage {
 }
 
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {
-	scanner := bufio.NewScanner(s.stream)
+	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
 
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
-		// Add a loop to handle both context cancellation and scanner operations.
 		for {
 			select {
 			case <-s.ctx.Done():
 				s.err = s.ctx.Err()
-				return // Exit if context is cancelled
+				return
 			default:
-				// Context OK, keep scanning.
+				// Context OK, keep reading.
 			}
-			// Try to scan the next line.
-			if !scanner.Scan() {
-				// If scanning fails (e.g., EOF or error), check for scanner error.
-				if err := scanner.Err(); err != nil {
-					s.err = fmt.Errorf("error scanning stream: %w", err)
+
+			// Read a full logical line using ReadLine to support very long lines.
+			var lineBuilder strings.Builder
+			for {
+				part, isPrefix, err := reader.ReadLine()
+				if err != nil {
+					if err == io.EOF {
+						if lineBuilder.Len() == 0 {
+							return
+						}
+						break
+					}
+					s.err = fmt.Errorf("error reading stream: %w", err)
+					return
 				}
-				return // Exit loop on scan failure or EOF
+				lineBuilder.Write(part)
+				if !isPrefix {
+					break
+				}
 			}
 
-			if s.debugger != nil && strings.TrimSpace(scanner.Text()) != "" {
-				s.debugger.RawEvent([]byte(scanner.Text()))
+			rawLine := lineBuilder.String()
+			if s.debugger != nil && strings.TrimSpace(rawLine) != "" {
+				s.debugger.RawEvent([]byte(rawLine))
 			}
 
-			// Process the scanned line.
-			line, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			line, ok := strings.CutPrefix(rawLine, "data: ")
 			if !ok {
 				continue
 			}
