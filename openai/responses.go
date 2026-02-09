@@ -27,7 +27,7 @@ type ResponsesAPI struct {
 	reasoningEffort    Effort
 	verbosity          Verbosity
 	temperature        float64
-	topP               float64
+	topP               *float64
 	topLogprobs        int
 	parallelToolCalls  bool
 	serviceTier        string
@@ -48,7 +48,6 @@ func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
 		endpoint:          "https://api.openai.com/v1/responses",
 		company:           "OpenAI",
 		temperature:       1.0,
-		topP:              1.0,
 		parallelToolCalls: true,
 		store:             true,
 		truncation:        "disabled",
@@ -84,7 +83,7 @@ func (m *ResponsesAPI) WithTool(tool ResponseTool) *ResponsesAPI {
 }
 
 func (m *ResponsesAPI) WithTopP(topP float64) *ResponsesAPI {
-	m.topP = topP
+	m.topP = &topP
 	return m
 }
 
@@ -198,10 +197,13 @@ func (m *ResponsesAPI) Generate(
 		"input":               input,
 		"stream":              true,
 		"temperature":         m.temperature,
-		"top_p":               m.topP,
 		"parallel_tool_calls": m.parallelToolCalls,
 		"store":               m.store,
 		"truncation":          m.truncation,
+	}
+
+	if m.topP != nil {
+		payload["top_p"] = *m.topP
 	}
 
 	if instructions != "" {
