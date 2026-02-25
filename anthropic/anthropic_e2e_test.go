@@ -57,6 +57,9 @@ func TestAnthropicE2E(t *testing.T) {
 		expectedStreamStatuses []llms.StreamStatus
 		// verifyStreamOutput verifies the stream output.
 		verifyStreamOutput func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream)
+		// expectStreamErr, when true, skips the generic NoError check so
+		// verifyStreamOutput can assert a specific error.
+		expectStreamErr bool
 	}{
 		{
 			name: "Basic text generation",
@@ -375,6 +378,101 @@ func TestAnthropicE2E(t *testing.T) {
 				assert.Equal(t, "Okay, I have performed the Anthropic search.", finalText, "Final text content mismatch")
 			},
 		},
+		{
+			name: "Interleaved thinking with tool call (Opus pattern)",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Use the search tool to find something")},
+			},
+			toolbox:   tools.Box(webSearchTool),
+			maxTokens: 200,
+			customResponse: func(t *testing.T, w http.ResponseWriter) {
+				// Simulate Opus with interleaved thinking: thinking block appears
+				// BEFORE and AFTER the tool call block. This is the pattern that
+				// caused the original bug where ToolCallReady was never emitted.
+				responses := []string{
+					fmt.Sprintf(`data: {"type": "message_start", "message": {"id": "msg_opus_001", "type": "message", "role": "assistant", "model": "%s", "usage": {"input_tokens": 10, "output_tokens": 1}}}`, mockModel),
+					// First thinking block (index 0)
+					`data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}`,
+					`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me search for that."}}`,
+					`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig123"}}`,
+					`data: {"type": "content_block_stop", "index": 0}`,
+					// Tool call (index 1)
+					`data: {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tool_opus_001", "name": "web_search", "input": {}}}`,
+					`data: {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"test\"}"}}`,
+					`data: {"type": "content_block_stop", "index": 1}`,
+					// Second thinking block after tool call (index 2) - interleaved thinking
+					`data: {"type": "content_block_start", "index": 2, "content_block": {"type": "thinking", "thinking": ""}}`,
+					`data: {"type": "content_block_delta", "index": 2, "delta": {"type": "thinking_delta", "thinking": "Processing result..."}}`,
+					`data: {"type": "content_block_delta", "index": 2, "delta": {"type": "signature_delta", "signature": "sig456"}}`,
+					`data: {"type": "content_block_stop", "index": 2}`,
+					`data: {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, "usage": {"output_tokens": 30}}`,
+					`data: {"type": "message_stop"}`,
+				}
+				for _, res := range responses {
+					_, err := fmt.Fprintln(w, res)
+					require.NoError(t, err)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				}
+			},
+			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
+				llms.StreamStatusThinking,           // thinking block start
+				llms.StreamStatusThinking,           // thinking delta
+				llms.StreamStatusThinking,           // signature delta
+				llms.StreamStatusThinkingDone,       // thinking block stop (index 0)
+				llms.StreamStatusToolCallBegin,      // tool_use block start (index 1)
+				llms.StreamStatusToolCallDelta,      // input_json_delta
+				llms.StreamStatusToolCallReady,      // tool_use block stop (index 1) — this was the missing event
+				llms.StreamStatusThinking,           // second thinking block start (index 2)
+				llms.StreamStatusThinking,           // second thinking delta
+				llms.StreamStatusThinking,           // second signature delta
+				llms.StreamStatusThinkingDone,       // second thinking block stop (index 2)
+			},
+			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
+				assert.Equal(t, "tool_opus_001", finalToolCall.ID)
+				assert.Equal(t, "web_search", finalToolCall.Name)
+				assert.JSONEq(t, `{"query":"test"}`, string(finalToolCall.Arguments))
+			},
+		},
+		{
+			name: "Stream ends with pending tool call reports error",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Use the search tool")},
+			},
+			toolbox:   tools.Box(webSearchTool),
+			maxTokens: 200,
+			customResponse: func(t *testing.T, w http.ResponseWriter) {
+				// Simulate a stream where a tool call starts but the
+				// content_block_stop for it is never received before message_stop.
+				responses := []string{
+					fmt.Sprintf(`data: {"type": "message_start", "message": {"id": "msg_broken_001", "type": "message", "role": "assistant", "model": "%s", "usage": {"input_tokens": 10, "output_tokens": 1}}}`, mockModel),
+					`data: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "tool_broken_001", "name": "web_search", "input": {}}}`,
+					`data: {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"test\"}"}}`,
+					// No content_block_stop for index 0!
+					`data: {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 10}}`,
+					`data: {"type": "message_stop"}`,
+				}
+				for _, res := range responses {
+					_, err := fmt.Fprintln(w, res)
+					require.NoError(t, err)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				}
+			},
+			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
+				llms.StreamStatusToolCallBegin,
+				llms.StreamStatusToolCallDelta,
+			},
+			expectStreamErr: true,
+			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
+				require.Error(t, stream.Err())
+				assert.Contains(t, stream.Err().Error(), "tool call(s) that never received content_block_stop")
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -457,7 +555,9 @@ func TestAnthropicE2E(t *testing.T) {
 			// Wait for the server handler to finish processing the request and sending the response
 			<-requestHandled
 
-			require.NoError(t, stream.Err(), "Stream iteration failed")
+			if !tc.expectStreamErr {
+				require.NoError(t, stream.Err(), "Stream iteration failed")
+			}
 
 			// Perform request verification now that the server has responded
 			if tc.verifyRequest != nil {
