@@ -418,17 +418,17 @@ func TestAnthropicE2E(t *testing.T) {
 			},
 			expectedStreamStatuses: []llms.StreamStatus{
 				llms.StreamStatusMessageStart,
-				llms.StreamStatusThinking,           // thinking block start
-				llms.StreamStatusThinking,           // thinking delta
-				llms.StreamStatusThinking,           // signature delta
-				llms.StreamStatusThinkingDone,       // thinking block stop (index 0)
-				llms.StreamStatusToolCallBegin,      // tool_use block start (index 1)
-				llms.StreamStatusToolCallDelta,      // input_json_delta
-				llms.StreamStatusToolCallReady,      // tool_use block stop (index 1) — this was the missing event
-				llms.StreamStatusThinking,           // second thinking block start (index 2)
-				llms.StreamStatusThinking,           // second thinking delta
-				llms.StreamStatusThinking,           // second signature delta
-				llms.StreamStatusThinkingDone,       // second thinking block stop (index 2)
+				llms.StreamStatusThinking,      // thinking block start
+				llms.StreamStatusThinking,      // thinking delta
+				llms.StreamStatusThinking,      // signature delta
+				llms.StreamStatusThinkingDone,  // thinking block stop (index 0)
+				llms.StreamStatusToolCallBegin, // tool_use block start (index 1)
+				llms.StreamStatusToolCallDelta, // input_json_delta
+				llms.StreamStatusToolCallReady, // tool_use block stop (index 1) — this was the missing event
+				llms.StreamStatusThinking,      // second thinking block start (index 2)
+				llms.StreamStatusThinking,      // second thinking delta
+				llms.StreamStatusThinking,      // second signature delta
+				llms.StreamStatusThinkingDone,  // second thinking block stop (index 2)
 			},
 			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
 				assert.Equal(t, "tool_opus_001", finalToolCall.ID)
