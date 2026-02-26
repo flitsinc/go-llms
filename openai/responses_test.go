@@ -35,15 +35,18 @@ func TestResponsesStream_ReasoningSummaries_DeltaAndAggregate(t *testing.T) {
 		t.Fatalf("stream error: %v", err)
 	}
 
-	// Expect two deltas: "Hello" then " world"
-	if len(deltas) != 2 {
-		t.Fatalf("expected 2 thinking deltas, got %d (%v)", len(deltas), deltas)
+	// Expect three deltas: initial empty (from output_item.added), "Hello", then " world"
+	if len(deltas) != 3 {
+		t.Fatalf("expected 3 thinking deltas, got %d (%v)", len(deltas), deltas)
 	}
-	if deltas[0] != "Hello" {
-		t.Fatalf("expected first delta 'Hello', got %q", deltas[0])
+	if deltas[0] != "" {
+		t.Fatalf("expected first delta '' (initial reasoning), got %q", deltas[0])
 	}
-	if deltas[1] != " world" {
-		t.Fatalf("expected second delta ' world', got %q", deltas[1])
+	if deltas[1] != "Hello" {
+		t.Fatalf("expected second delta 'Hello', got %q", deltas[1])
+	}
+	if deltas[2] != " world" {
+		t.Fatalf("expected third delta ' world', got %q", deltas[2])
 	}
 
 	// Verify the aggregated thought in the final message content is full text
@@ -142,6 +145,59 @@ func TestResponsesStream_ReasoningOutputDoneSummaryFallback(t *testing.T) {
 	}
 	if !summary.Summary {
 		t.Fatalf("expected reasoning thought to be marked summary")
+	}
+}
+
+
+// Test that reasoning without summary text still emits Thinking + ThinkingDone
+// so callers always see the reasoning ID for round-tripping with OpenAI.
+func TestResponsesStream_ReasoningWithoutSummary(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_nosummary"},"output_index":0}`,
+		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_nosummary","summary":[]},"output_index":0}`,
+		`data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_123","name":"test_tool","call_id":"call_1","arguments":"{}"},"output_index":1}`,
+		`data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_123","name":"test_tool","call_id":"call_1","arguments":"{}"},"output_index":1}`,
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
+
+	var thinkingCount, thinkingDoneCount int
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusThinking:
+			thinkingCount++
+		case llms.StreamStatusThinkingDone:
+			thinkingDoneCount++
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	if thinkingCount != 1 {
+		t.Fatalf("expected 1 thinking event (from output_item.added), got %d", thinkingCount)
+	}
+	if thinkingDoneCount != 1 {
+		t.Fatalf("expected 1 thinking done event (from output_item.done), got %d", thinkingDoneCount)
+	}
+
+	// Verify the thought exists in the message with the ID
+	msg := stream.Message()
+	var found *content.Thought
+	for _, it := range msg.Content {
+		if th, ok := it.(*content.Thought); ok && th.ID == "rs_nosummary" {
+			found = th
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected thought with ID rs_nosummary in message content")
+	}
+	if !found.Summary {
+		t.Fatalf("expected thought to be marked as summary")
 	}
 }
 
