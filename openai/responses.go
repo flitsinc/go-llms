@@ -896,7 +896,8 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 							if summaryBuilder.Len() > 0 {
 								thought.Text = summaryBuilder.String()
 							}
-							thought.Summary = true
+							// Summary is already true from AppendThoughtWithID; this is a no-op
+							// but kept for clarity — reasoning items are always summaries.
 							// Only emit ThinkingDone here if reasoning_summary_text.done
 							// didn't already emit it (s.lastThought is cleared by that handler).
 							if s.lastThought != nil {
