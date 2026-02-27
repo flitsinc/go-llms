@@ -688,9 +688,15 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 							return
 						}
 					case "reasoning":
-						// Initialize an aggregated thought in message content; lastThought will carry only deltas
+						// Initialize an aggregated thought in message content; lastThought will carry only deltas.
+						// Emit a ThinkingUpdate immediately so callers see the reasoning ID
+						// even when the model produces no summary text. OpenAI still requires
+						// the reasoning item to be round-tripped alongside its function_call.
 						s.message.Content.AppendThoughtWithID(item.ID, "", true)
 						s.lastThought = &content.Thought{ID: item.ID, Summary: true}
+						if !yield(llms.StreamStatusThinking) {
+							return
+						}
 					}
 				}
 
@@ -871,6 +877,9 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 							s.usage = event.Usage
 						}
 					case "reasoning":
+						// Finalize reasoning item with full summary text (if any).
+						// Only emit ThinkingDone if reasoning_summary_text.done didn't
+						// already handle it (indicated by s.lastThought still being set).
 						var reasoningItem Reasoning
 						if err := json.Unmarshal(event.Item, &reasoningItem); err == nil {
 							var summaryBuilder strings.Builder
@@ -883,10 +892,19 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 								}
 								summaryBuilder.WriteString(part.Text)
 							}
+							thought := s.message.Content.AppendThoughtWithID(reasoningItem.ID, "", true)
 							if summaryBuilder.Len() > 0 {
-								thought := s.message.Content.AppendThoughtWithID(reasoningItem.ID, "", true)
 								thought.Text = summaryBuilder.String()
-								thought.Summary = true
+							}
+							// Summary is already true from AppendThoughtWithID; this is a no-op
+							// but kept for clarity — reasoning items are always summaries.
+							// Only emit ThinkingDone here if reasoning_summary_text.done
+							// didn't already emit it (s.lastThought is cleared by that handler).
+							if s.lastThought != nil {
+								s.lastThought = nil
+								if !yield(llms.StreamStatusThinkingDone) {
+									return
+								}
 							}
 						}
 					}
