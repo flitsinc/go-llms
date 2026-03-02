@@ -499,10 +499,14 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	reader := bufio.NewReader(s.stream)
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
-		lastToolCallIndex := -1
 		var resetNextArgumentsDelta bool
-		// Track content block types by index so we can signal when a thinking block ends
+		// Track content block types by index so we can detect when blocks stop.
+		// This is used for both tool_use blocks (to emit ToolCallReady) and
+		// thinking blocks (to emit ThinkingDone).
 		contentBlockTypeByIndex := map[int]string{}
+		// Track whether we have any in-progress (started but not stopped) tool calls.
+		// This lets us detect when the stream ends without properly completing a tool call.
+		pendingToolCallCount := 0
 		// The Anthropic SSE stream follows this pattern:
 		// 1. message_start - contains initial message metadata
 		// 2. For each content block:
@@ -592,7 +596,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 				contentBlockTypeByIndex[event.Index] = event.ContentBlock.Type
 				switch event.ContentBlock.Type {
 				case "tool_use":
-					lastToolCallIndex = event.Index
+					pendingToolCallCount++
 					resetNextArgumentsDelta = true
 					s.message.ToolCalls = append(s.message.ToolCalls, llms.ToolCall{
 						ID:        event.ContentBlock.ID,
@@ -675,16 +679,19 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					continue
 				}
 			case "content_block_stop":
-				// Signal the end of a content block
-				// For tool calls, signal that the tool call is ready
-				if event.Index == lastToolCallIndex {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
-					}
-				}
-				// For thinking blocks, signal that thinking has finished
+				// Use the contentBlockTypeByIndex map to determine what kind of
+				// block just ended. This is more robust than tracking a single
+				// "last tool call index" because it correctly handles interleaved
+				// thinking blocks (from the interleaved-thinking beta) and
+				// multiple sequential tool calls.
 				if blockType, ok := contentBlockTypeByIndex[event.Index]; ok {
-					if blockType == "thinking" || blockType == "redacted_thinking" {
+					switch blockType {
+					case "tool_use":
+						pendingToolCallCount--
+						if !yield(llms.StreamStatusToolCallReady) {
+							return
+						}
+					case "thinking", "redacted_thinking":
 						if !yield(llms.StreamStatusThinkingDone) {
 							return
 						}
@@ -709,15 +716,26 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						s.outputTokens = *u.OutputTokens
 					}
 				}
-				// Check stop reason, but allow tool_use and end_turn
+				// Record the stop reason for later validation.
+				// We don't abort here because content_block_stop events
+				// (which may carry ToolCallReady) can arrive before
+				// message_delta when the API terminates early (e.g.
+				// max_tokens). Aborting here would silently swallow
+				// those events. Instead we validate at message_stop.
 				if event.Delta.StopReason != "" &&
 					event.Delta.StopReason != "tool_use" &&
 					event.Delta.StopReason != "end_turn" {
 					s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
-					return
+					// Don't return yet — let the loop continue so that any
+					// remaining content_block_stop events can be processed.
 				}
 			case "message_stop":
-				// End of the message stream
+				// If any tool calls were started but never received a
+				// content_block_stop, report that as an error so callers
+				// don't silently miss ToolCallReady events.
+				if s.err == nil && pendingToolCallCount > 0 {
+					s.err = fmt.Errorf("stream ended with %d tool call(s) that never received content_block_stop", pendingToolCallCount)
+				}
 				return
 			case "ping":
 				// Ignore ping events
