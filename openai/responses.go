@@ -553,6 +553,9 @@ func (s *ResponsesStream) Usage() llms.Usage {
 }
 
 func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
+	if s.err != nil {
+		return func(yield func(llms.StreamStatus) bool) {}
+	}
 	reader := bufio.NewReader(s.stream)
 
 	return func(yield func(llms.StreamStatus) bool) {

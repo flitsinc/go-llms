@@ -216,6 +216,9 @@ func (m *WebSocketResponsesAPI) ResetChain() {
 // pre-loads tools and instructions on the server side. Returns the response ID
 // that can be used for faster first turns. The provided context should have a
 // timeout to avoid blocking indefinitely.
+//
+// Warmup must not be called concurrently with Generate or while a stream from
+// Generate is being iterated, as they share the same WebSocket connection.
 func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string, toolbox *tools.Toolbox) (string, error) {
 	m.mu.Lock()
 	if err := m.ensureConnected(ctx); err != nil {
@@ -300,6 +303,9 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	}
 }
 
+// Generate sends a request over the WebSocket and returns a stream of events.
+// Callers must fully iterate (or abandon via context cancellation) one stream
+// before calling Generate again, as they share the same WebSocket connection.
 func (m *WebSocketResponsesAPI) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
