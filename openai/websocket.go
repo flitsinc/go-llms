@@ -213,7 +213,10 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 		return "", err
 	}
 
-	// Build warmup payload with generate:false.
+	// Build warmup payload with generate:false. We pass nil input here
+	// because warmup doesn't send conversation messages; the empty input
+	// is set explicitly below. tool_choice may be included alongside
+	// tools, which is harmless since generate:false skips generation.
 	payload, err := m.buildResponsesPayload(nil, instructions, toolbox, nil)
 	if err != nil {
 		m.mu.Unlock()

@@ -380,11 +380,11 @@ Each provider can be initialized with their respective configuration:
 llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-6"))
 
 // Google Gemini
-llm := llms.New(google.New("gemini-3-flash").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")))
+llm := llms.New(google.New("gemini-3-flash-preview").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")))
 
 // Google Vertex AI
 ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
-llm := llms.New(google.New("gemini-3-flash").WithVertexAI(ts, projectID, "global"))
+llm := llms.New(google.New("gemini-3-flash-preview").WithVertexAI(ts, projectID, "global"))
 
 // OpenAI (Responses API)
 llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"))

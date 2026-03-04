@@ -73,7 +73,7 @@ func main() {
 			fmt.Println("Error: GEMINI_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = google.New("gemini-3-flash").
+		llmProvider = google.New("gemini-3-flash-preview").
 			WithThinkingLevel(google.ThinkingLevelLow).
 			WithGeminiAPI(apiKey)
 	case "groq":
@@ -123,6 +123,12 @@ func main() {
 	var prevUpdate llms.UpdateType
 	chatStart := time.Now()
 	turnStart := chatStart
+	// lastActivity tracks when the last "boundary" occurred for TTFT:
+	// starts at chatStart, updated after each tool completes. This way
+	// TTFT measures from request-sent (turn 1) or tool-done (turn 2+)
+	// to first content, not from MessageStartUpdate which is already
+	// part of the response stream.
+	lastActivity := chatStart
 	turn := 0
 	turnFirstToken := false
 
@@ -151,7 +157,7 @@ func main() {
 		case llms.ThinkingUpdate:
 			if !turnFirstToken {
 				turnFirstToken = true
-				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
 			}
 			if prevUpdate != llms.UpdateTypeThinking {
 				fmt.Print("\033[2m💭 ")
@@ -162,17 +168,18 @@ func main() {
 		case llms.TextUpdate:
 			if !turnFirstToken {
 				turnFirstToken = true
-				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
 			}
 			fmt.Print(update.Text)
 		case llms.ToolStartUpdate:
 			if !turnFirstToken {
 				turnFirstToken = true
-				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
 			}
 			fmt.Printf("(%s: ", update.Tool.Label())
 		case llms.ToolDoneUpdate:
 			fmt.Printf("%s)", update.Result.Label())
+			lastActivity = time.Now()
 		}
 		prevUpdate = update.Type()
 	}
