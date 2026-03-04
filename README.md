@@ -4,7 +4,7 @@ A powerful and flexible Go library for interacting with Large Language Models (L
 
 ## Features
 
-- Supports Anthropic, Google (Gemini + Vertex), and OpenAI (Chat Completions + Responses)
+- Supports Anthropic, Google (Gemini + Vertex), and OpenAI (Chat Completions + Responses + WebSocket)
 - Also supports using custom endpoints compatible with any of the APIs above
 - Streaming responses (including thinking) for real-time interaction
 - Built-in tool calling with Go generics to generate JSON schemas automatically
@@ -43,9 +43,9 @@ import (
 )
 
 func main() {
-    // Create a new LLM instance with OpenAI's o4-mini model
+    // Create a new LLM instance with OpenAI's gpt-5.2 model
     llm := llms.New(
-        openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "o4-mini"),
+        openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"),
     )
 
     // Optional: Set a system prompt
@@ -68,13 +68,13 @@ func main() {
 }
 ```
 
-## Generating images with Gemini 2.5 Flash Image (aka Nano Banana)
+## Generating images with Gemini 3.1 Flash Image
 
 You must specify modalities for this model to work (and you cannot use `WithThinking`):
 
 ```go
 func main() {
-    provider := google.New("gemini-2.5-flash-image-preview").
+    provider := google.New("gemini-3.1-flash-image-preview").
         WithGeminiAPI(os.Getenv("GEMINI_API_KEY")).
         WithModalities("TEXT", "IMAGE")
     llm := llms.New(provider)
@@ -130,7 +130,7 @@ var RunCommand = tools.Func(
 func main() {
     // Create a new LLM instance using Anthropic's Claude with tools
     llm := llms.New(
-        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"),
+        anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-6"),
         RunCommand,
     )
 
@@ -176,7 +176,7 @@ var externalToolSchemas = []tools.FunctionSchema{
 }
 
 func main() {
-    llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
+    llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-6"))
 
     // Add external tools and their handler
     llm.AddExternalTools(externalToolSchemas, handleExternalTool)
@@ -339,7 +339,7 @@ var EmailValidator = tools.FuncGrammar(
 func main() {
     // Create LLM with grammar-based tools (OpenAI only)
     llm := llms.New(
-        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5"),
+        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"),
         MathTool,
         EmailValidator,
     )
@@ -371,26 +371,31 @@ The library currently supports:
 - Anthropic
 - Google (Gemini API and Vertex AI)
 - OpenAI and all compatible providers (you can customize the endpoint)
-- OpenAI’s newer Responses API
+- OpenAI’s newer Responses API (HTTP and WebSocket)
 
 Each provider can be initialized with their respective configuration:
 
 ```go
 // Anthropic
-llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-20250514"))
+llm := llms.New(anthropic.New(os.Getenv("ANTHROPIC_API_KEY"), "claude-sonnet-4-6"))
 
 // Google Gemini
-llm := llms.New(google.New("gemini-2.5-flash").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")))
+llm := llms.New(google.New("gemini-3-flash-preview").WithGeminiAPI(os.Getenv("GEMINI_API_KEY")))
 
 // Google Vertex AI
 ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
-llm := llms.New(google.New("gemini-2.5-flash").WithVertexAI(ts, projectID, "global"))
+llm := llms.New(google.New("gemini-3-flash-preview").WithVertexAI(ts, projectID, "global"))
 
 // OpenAI (Responses API)
-llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "o4-mini"))
+llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"))
+
+// OpenAI (Responses API over WebSocket — persistent connection, faster tool loops)
+provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2")
+defer provider.Close()
+llm := llms.New(provider)
 
 // OpenAI (Chat Completions API)
-llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-4.1"))
+llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"))
 
 // OpenAI-compatible endpoint (e.g., xAI)
 // You can use the OpenAI provider with compatible APIs by configuring the endpoint.
@@ -398,6 +403,37 @@ llm := llms.New(
     openai.New(os.Getenv("XAI_API_KEY"), "grok-3-latest").
         WithEndpoint("https://api.x.ai/v1/chat/completions", "xAI"),
 )
+```
+
+### WebSocket Provider (OpenAI)
+
+The WebSocket provider keeps a persistent connection to OpenAI's Responses API. Within multi-turn tool loops it automatically chains responses via `previous_response_id`, sending only new tool results instead of the full conversation history. This can significantly reduce latency in tool-heavy workflows.
+
+```go
+provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2")
+defer provider.Close() // closes the WebSocket when done
+```
+
+The connection is established lazily on the first call. All the same `With*` configuration methods from `ResponsesAPI` are available.
+
+**Warmup** pre-loads tools and instructions on the server before the first user message, making the first turn faster:
+
+```go
+_, err := provider.Warmup(ctx, "You are a helpful assistant.", toolbox)
+```
+
+**External connections** let you manage the WebSocket lifecycle yourself:
+
+```go
+conn, err := openai.DialResponsesWebSocket(ctx, accessToken)
+provider := openai.NewWebSocketResponsesAPI(accessToken, "gpt-5.2").WithConn(conn)
+// provider.Close() is a no-op — you own the connection
+```
+
+**ResetChain** clears the chaining state when starting a new conversation on the same connection:
+
+```go
+provider.ResetChain()
 ```
 
 You can easily implement new providers by implementing the `Provider` interface:

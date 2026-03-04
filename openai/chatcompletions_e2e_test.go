@@ -108,6 +108,7 @@ func TestOpenAIE2E(t *testing.T) {
 				}
 			},
 			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
 				llms.StreamStatusText,
 				llms.StreamStatusText,
 				llms.StreamStatusText,
@@ -383,6 +384,7 @@ func TestOpenAIE2E(t *testing.T) {
 				}
 			},
 			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
 				llms.StreamStatusToolCallBegin,
 				llms.StreamStatusToolCallDelta,
 				llms.StreamStatusToolCallReady,
@@ -465,6 +467,7 @@ func TestOpenAIE2E(t *testing.T) {
 				}
 			},
 			expectedStreamStatuses: []llms.StreamStatus{
+				llms.StreamStatusMessageStart,
 				llms.StreamStatusText,
 				llms.StreamStatusText,
 				llms.StreamStatusText,

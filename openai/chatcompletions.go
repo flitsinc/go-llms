@@ -384,6 +384,7 @@ func (s *ChatCompletionsStream) Usage() llms.Usage {
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
+	messageStartYielded := false
 
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
@@ -449,6 +450,13 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			delta := chunk.Choices[0].Delta
 			if delta.Role != "" {
 				s.message.Role = delta.Role
+			}
+			if !messageStartYielded {
+				messageStartYielded = true
+				s.message.ID = chunk.ID
+				if !yield(llms.StreamStatusMessageStart) {
+					return
+				}
 			}
 			// Content is nullable string in delta
 			if delta.Content != nil {

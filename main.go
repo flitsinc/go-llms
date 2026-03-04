@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,9 @@ func init() {
 	godotenv.Overload()
 }
 
+// dim prints text in faded/dim terminal style.
+func dim(format string, a ...any) { fmt.Printf("\033[2m"+format+"\033[0m", a...) }
+
 func main() {
 	// Check command-line arguments
 	if len(os.Args) < 2 {
@@ -32,19 +36,27 @@ func main() {
 	provider := os.Args[1]
 	var llmProvider llms.Provider
 
+	var cleanup func()
 	switch provider {
-	case "openai", "openai-responses":
+	case "openai", "openai-responses", "openai-ws", "openai-ws-warmup":
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			fmt.Println("Error: OPENAI_API_KEY environment variable is not set")
 			return
 		}
-		if provider == "openai-responses" {
-			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.1").
+		switch provider {
+		case "openai-responses":
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.2").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
-		} else {
-			llmProvider = openai.New(apiKey, "gpt-5.1").
+		case "openai-ws", "openai-ws-warmup":
+			wsProvider := openai.NewWebSocketResponsesAPI(apiKey, "gpt-5.2").
+				WithThinking(openai.EffortLow).
+				WithVerbosity(openai.VerbosityLow)
+			llmProvider = wsProvider
+			cleanup = func() { wsProvider.Close() }
+		default:
+			llmProvider = openai.New(apiKey, "gpt-5.2").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		}
@@ -54,14 +66,14 @@ func main() {
 			fmt.Println("Error: ANTHROPIC_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-5").WithBeta("extended-cache-ttl-2025-04-11")
+		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-6").WithBeta("extended-cache-ttl-2025-04-11")
 	case "google":
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
 			fmt.Println("Error: GEMINI_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = google.New("gemini-3-pro-preview").
+		llmProvider = google.New("gemini-3-flash-preview").
 			WithThinkingLevel(google.ThinkingLevelLow).
 			WithGeminiAPI(apiKey)
 	case "groq":
@@ -75,22 +87,57 @@ func main() {
 		printUsage()
 		return
 	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	llm := llms.New(llmProvider, RunShellCmd)
+
+	systemPrompt := "You're a helpful bot of few words. If at first you don't succeed, try again."
 
 	// System prompt is dynamic so it can always be up-to-date.
 	llm.SystemPrompt = func() content.Content {
 		return content.Content{
-			&content.Text{Text: "You're a helpful bot of few words. If at first you don't succeed, try again."},
+			&content.Text{Text: systemPrompt},
 			&content.CacheHint{Duration: "long"},
 			&content.Text{Text: fmt.Sprintf(" The time is %s.", time.Now().Format(time.RFC1123))},
 		}
 	}
 
+	// For WebSocket with warmup, connect + pre-load tools/instructions.
+	// This is timed separately since it happens before the chat starts.
+	if provider == "openai-ws-warmup" {
+		if wsProvider, ok := llmProvider.(*openai.WebSocketResponsesAPI); ok {
+			warmupStart := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_, err := wsProvider.Warmup(ctx, systemPrompt, llm.Toolbox())
+			cancel()
+			if err != nil {
+				fmt.Printf("Warmup error: %v\n", err)
+				return
+			}
+			dim("[connect+warmup %s]\n", time.Since(warmupStart).Round(time.Millisecond))
+		}
+	}
+
 	var prevUpdate llms.UpdateType
+	chatStart := time.Now()
+	turnStart := chatStart
+	// lastActivity tracks when the last "boundary" occurred for TTFT:
+	// starts at chatStart, updated after each tool completes. This way
+	// TTFT measures from request-sent (turn 1) or tool-done (turn 2+)
+	// to first content, not from MessageStartUpdate which is already
+	// part of the response stream.
+	lastActivity := chatStart
+	turn := 0
+	turnFirstToken := false
+
+	// Prompt designed to force at least 2 tool turns: one for listing files,
+	// one for counting lines, then a final text response.
+	prompt := "First, list the files in the current directory. Second, count the total lines of Go code (find . -name '*.go' | xargs wc -l). Finally, summarize what you found in 2 sentences."
 
 	// llm.Chat returns a channel of updates.
-	for update := range llm.Chat("List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names.") {
+	for update := range llm.Chat(prompt) {
 		// Output formatting: Add two newlines before new update types.
 		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
 			fmt.Println()
@@ -99,24 +146,40 @@ func main() {
 
 		// Handle the update.
 		switch update := update.(type) {
+		case llms.MessageStartUpdate:
+			if turn > 0 {
+				dim(" [turn %d: %s]", turn, time.Since(turnStart).Round(time.Millisecond))
+				fmt.Println()
+			}
+			turn++
+			turnStart = time.Now()
+			turnFirstToken = false
 		case llms.ThinkingUpdate:
-			// Show a thinking bubble and dim the text for thinking blocks.
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
+			}
 			if prevUpdate != llms.UpdateTypeThinking {
 				fmt.Print("\033[2m💭 ")
 			}
 			fmt.Print(update.Text)
 		case llms.ThinkingDoneUpdate:
-			// End of thinking; restore color and break line.
 			fmt.Print("\033[0m")
 		case llms.TextUpdate:
-			// Print each chunk of text from the LLM as they come in.
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
+			}
 			fmt.Print(update.Text)
 		case llms.ToolStartUpdate:
-			// Print the tool name when the LLM streams that it intends to use a tool.
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(lastActivity).Round(time.Millisecond))
+			}
 			fmt.Printf("(%s: ", update.Tool.Label())
 		case llms.ToolDoneUpdate:
-			// Print the tool result when the LLM finished sending arguments and the tool ran.
 			fmt.Printf("%s)", update.Result.Label())
+			lastActivity = time.Now()
 		}
 		prevUpdate = update.Type()
 	}
@@ -126,20 +189,23 @@ func main() {
 		panic(err)
 	}
 
+	totalDur := time.Since(chatStart).Round(time.Millisecond)
 	fmt.Println()
 	fmt.Println()
-	fmt.Printf("Usage: %+v\n", llm.TotalUsage)
+	dim("Total: %s | Turns: %d | Usage: %+v\n", totalDur, max(turn, 1), llm.TotalUsage)
 }
 
 func printUsage() {
 	fmt.Println("Usage: go run main.go <provider>")
 	fmt.Println()
 	fmt.Println("Supported providers:")
-	fmt.Println("  openai           - Uses OpenAI's gpt-5 (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-responses - Uses OpenAI's Responses API with gpt-5 (requires OPENAI_API_KEY)")
-	fmt.Println("  anthropic        - Uses Anthropic's Claude Sonnet 4 (requires ANTHROPIC_API_KEY)")
-	fmt.Println("  google           - Uses Google's Gemini 2.5 Flash (requires GEMINI_API_KEY)")
-	fmt.Println("  groq             - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
+	fmt.Println("  openai            - Uses OpenAI Chat Completions with gpt-5.2 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-responses  - Uses OpenAI Responses API with gpt-5.2 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws         - Uses OpenAI Responses API over WebSocket (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws-warmup  - Same as openai-ws but with Warmup pre-loading (requires OPENAI_API_KEY)")
+	fmt.Println("  anthropic         - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
+	fmt.Println("  google            - Uses Google's Gemini 3 Flash (requires GEMINI_API_KEY)")
+	fmt.Println("  groq              - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()
