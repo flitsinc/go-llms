@@ -561,7 +561,7 @@ func TestWebSocketStream_Warmup(t *testing.T) {
 		}
 		resp, _ := req["response"].(map[string]any)
 		if gen, ok := resp["generate"].(bool); !ok || gen {
-			t.Logf("expected generate:false in warmup request")
+			t.Errorf("expected generate:false in warmup request")
 		}
 
 		events := []string{

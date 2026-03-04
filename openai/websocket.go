@@ -283,10 +283,12 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 				responseID = resp.ID
 			}
 		case "response.completed":
-			m.mu.Lock()
-			if responseID != "" {
-				m.lastResponseID = responseID
+			if responseID == "" {
+				return "", fmt.Errorf("warmup: no response ID received")
 			}
+			m.mu.Lock()
+			m.lastResponseID = responseID
+			m.lastMessageCount = 0
 			m.mu.Unlock()
 			return responseID, nil
 		case "error":
@@ -362,51 +364,9 @@ func (m *WebSocketResponsesAPI) Generate(
 		input = append(systemInputs, input...)
 	}
 
-	payload := m.buildBasePayload(input, instructions)
-
-	if previousResponseID != "" {
-		payload["previous_response_id"] = previousResponseID
-	}
-
-	if jsonOutputSchema != nil {
-		text := map[string]any{}
-		if m.verbosity != "" {
-			text["verbosity"] = m.verbosity
-		}
-		text["format"] = TextResponseFormat{
-			Type:   "json_schema",
-			Name:   "structured_output",
-			Schema: jsonOutputSchema,
-			Strict: true,
-		}
-		payload["text"] = text
-	} else if m.verbosity != "" {
-		payload["text"] = map[string]any{"verbosity": m.verbosity}
-	}
-
-	// Handle tools
-	if toolbox != nil {
-		toolsArr := m.buildToolsArray(toolbox)
-		if len(toolsArr) > 0 {
-			payload["tools"] = toolsArr
-			choice := toolbox.Choice
-			tc, err := buildToolChoice(choice, toolsArr)
-			if err != nil {
-				return newWebSocketStreamError(err)
-			}
-			payload["tool_choice"] = tc
-		}
-	}
-
-	// Wrap in response.create envelope.
-	envelope := map[string]any{
-		"type":     "response.create",
-		"response": payload,
-	}
-
-	jsonData, err := json.Marshal(envelope)
+	jsonData, err := m.buildRequestEnvelope(input, instructions, previousResponseID, toolbox, jsonOutputSchema)
 	if err != nil {
-		return newWebSocketStreamError(fmt.Errorf("websocket: marshal: %w", err))
+		return newWebSocketStreamError(err)
 	}
 
 	if m.debugger != nil {
@@ -424,52 +384,28 @@ func (m *WebSocketResponsesAPI) Generate(
 			if reconnErr := m.ensureConnected(ctx); reconnErr != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect failed: %w", reconnErr))
 			}
-			// Rebuild payload without previous_response_id since chaining
-			// state was cleared.
-			reconnPayload := m.buildBasePayload(nil, instructions)
-			// Re-convert all messages for full payload.
-			var reconnInput []ResponseInput
+			// Rebuild full payload: re-convert all messages and include
+			// system prompt, without previous_response_id.
+			var fullInput []ResponseInput
 			for _, msg := range messages {
 				msgInputs, convErr := convertMessageToInput(msg)
 				if convErr != nil {
 					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect convert: %w", convErr))
 				}
-				reconnInput = append(reconnInput, msgInputs...)
+				fullInput = append(fullInput, msgInputs...)
 			}
-			reconnPayload["input"] = reconnInput
-			if jsonOutputSchema != nil {
-				text := map[string]any{}
-				if m.verbosity != "" {
-					text["verbosity"] = m.verbosity
+			// Re-apply non-text system prompt if needed.
+			if instructions == "" {
+				systemMsg := llms.Message{Role: "system", Content: systemPrompt}
+				systemInputs, sysErr := convertMessageToInput(systemMsg)
+				if sysErr != nil {
+					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect system: %w", sysErr))
 				}
-				text["format"] = TextResponseFormat{
-					Type:   "json_schema",
-					Name:   "structured_output",
-					Schema: jsonOutputSchema,
-					Strict: true,
-				}
-				reconnPayload["text"] = text
-			} else if m.verbosity != "" {
-				reconnPayload["text"] = map[string]any{"verbosity": m.verbosity}
+				fullInput = append(systemInputs, fullInput...)
 			}
-			if toolbox != nil {
-				toolsArr := m.buildToolsArray(toolbox)
-				if len(toolsArr) > 0 {
-					reconnPayload["tools"] = toolsArr
-					tc, tcErr := buildToolChoice(toolbox.Choice, toolsArr)
-					if tcErr != nil {
-						return newWebSocketStreamError(tcErr)
-					}
-					reconnPayload["tool_choice"] = tc
-				}
-			}
-			reconnEnvelope := map[string]any{
-				"type":     "response.create",
-				"response": reconnPayload,
-			}
-			jsonData, err = json.Marshal(reconnEnvelope)
+			jsonData, err = m.buildRequestEnvelope(fullInput, instructions, "", toolbox, jsonOutputSchema)
 			if err != nil {
-				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect marshal: %w", err))
+				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect: %w", err))
 			}
 			if m.debugger != nil {
 				m.debugger.RawRequest(m.endpoint, jsonData)
@@ -499,6 +435,61 @@ func (m *WebSocketResponsesAPI) Generate(
 			}
 		},
 	}
+}
+
+// buildRequestEnvelope builds the full response.create JSON envelope from the
+// given parameters. It handles text format, tools, tool choice, and wrapping.
+func (m *WebSocketResponsesAPI) buildRequestEnvelope(
+	input []ResponseInput,
+	instructions string,
+	previousResponseID string,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) ([]byte, error) {
+	payload := m.buildBasePayload(input, instructions)
+
+	if previousResponseID != "" {
+		payload["previous_response_id"] = previousResponseID
+	}
+
+	if jsonOutputSchema != nil {
+		text := map[string]any{}
+		if m.verbosity != "" {
+			text["verbosity"] = m.verbosity
+		}
+		text["format"] = TextResponseFormat{
+			Type:   "json_schema",
+			Name:   "structured_output",
+			Schema: jsonOutputSchema,
+			Strict: true,
+		}
+		payload["text"] = text
+	} else if m.verbosity != "" {
+		payload["text"] = map[string]any{"verbosity": m.verbosity}
+	}
+
+	if toolbox != nil {
+		toolsArr := m.buildToolsArray(toolbox)
+		if len(toolsArr) > 0 {
+			payload["tools"] = toolsArr
+			tc, err := buildToolChoice(toolbox.Choice, toolsArr)
+			if err != nil {
+				return nil, err
+			}
+			payload["tool_choice"] = tc
+		}
+	}
+
+	envelope := map[string]any{
+		"type":     "response.create",
+		"response": payload,
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("websocket: marshal: %w", err)
+	}
+	return data, nil
 }
 
 // ensureConnected dials the WebSocket if not already connected. Must be called
