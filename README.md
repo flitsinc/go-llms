@@ -405,6 +405,37 @@ llm := llms.New(
 )
 ```
 
+### WebSocket Provider (OpenAI)
+
+The WebSocket provider keeps a persistent connection to OpenAI's Responses API. Within multi-turn tool loops it automatically chains responses via `previous_response_id`, sending only new tool results instead of the full conversation history. This can significantly reduce latency in tool-heavy workflows.
+
+```go
+provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2")
+defer provider.Close() // closes the WebSocket when done
+```
+
+The connection is established lazily on the first call. All the same `With*` configuration methods from `ResponsesAPI` are available.
+
+**Warmup** pre-loads tools and instructions on the server before the first user message, making the first turn faster:
+
+```go
+_, err := provider.Warmup(ctx, "You are a helpful assistant.", toolbox)
+```
+
+**External connections** let you manage the WebSocket lifecycle yourself:
+
+```go
+conn, err := openai.DialResponsesWebSocket(ctx, accessToken)
+provider := openai.NewWebSocketResponsesAPI(accessToken, "gpt-5.2").WithConn(conn)
+// provider.Close() is a no-op — you own the connection
+```
+
+**ResetChain** clears the chaining state when starting a new conversation on the same connection:
+
+```go
+provider.ResetChain()
+```
+
 You can easily implement new providers by implementing the `Provider` interface:
 
 ```go
