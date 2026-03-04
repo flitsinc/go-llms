@@ -67,6 +67,10 @@ type LLM struct {
 	BeforeResponse func(ctx context.Context, state BeforeResponseState) error
 }
 
+// Toolbox returns the toolbox associated with this LLM, or nil if no tools
+// were provided.
+func (l *LLM) Toolbox() *tools.Toolbox { return l.toolbox }
+
 // New creates a new LLM instance with the specified provider and optional
 // tools. The provider handles communication with the actual LLM service. If
 // tools are provided, they will be available for the LLM to use during

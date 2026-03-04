@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -88,12 +89,22 @@ func main() {
 		defer cleanup()
 	}
 
-	llm := llms.New(llmProvider, RunShellCmd)
+	// If extra args provided, use them as a simple prompt without tools.
+	prompt := "List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names."
+	var llm *llms.LLM
+	if len(os.Args) > 2 {
+		prompt = strings.Join(os.Args[2:], " ")
+		llm = llms.New(llmProvider)
+	} else {
+		llm = llms.New(llmProvider, RunShellCmd)
+	}
+
+	systemPrompt := "You're a helpful bot of few words. If at first you don't succeed, try again."
 
 	// System prompt is dynamic so it can always be up-to-date.
 	llm.SystemPrompt = func() content.Content {
 		return content.Content{
-			&content.Text{Text: "You're a helpful bot of few words. If at first you don't succeed, try again."},
+			&content.Text{Text: systemPrompt},
 			&content.CacheHint{Duration: "long"},
 			&content.Text{Text: fmt.Sprintf(" The time is %s.", time.Now().Format(time.RFC1123))},
 		}
@@ -103,7 +114,7 @@ func main() {
 	if provider == "openai-ws-warmup" {
 		if wsProvider, ok := llmProvider.(*openai.WebSocketResponsesAPI); ok {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			respID, err := wsProvider.Warmup(ctx, "You're a helpful bot of few words.", tools.Box(RunShellCmd))
+			respID, err := wsProvider.Warmup(ctx, systemPrompt, llm.Toolbox())
 			cancel()
 			if err != nil {
 				fmt.Printf("Warmup error: %v\n", err)
@@ -122,7 +133,7 @@ func main() {
 	dim := func(s string) { fmt.Printf("\033[2m%s\033[0m", s) }
 
 	// llm.Chat returns a channel of updates.
-	for update := range llm.Chat("List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names.") {
+	for update := range llm.Chat(prompt) {
 		// Output formatting: Add two newlines before new update types.
 		if t := update.Type(); prevUpdate != "" && t != prevUpdate && (t == llms.UpdateTypeText || t == llms.UpdateTypeThinking || t == llms.UpdateTypeToolStart) {
 			fmt.Println()
