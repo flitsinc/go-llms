@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -417,6 +418,114 @@ func TestWebSocketStream_ContextCancellation(t *testing.T) {
 	err := <-done
 	if err == nil {
 		t.Fatal("expected context cancellation error")
+	}
+}
+
+func TestWebSocketStream_ErrorStreamIterNoPanic(t *testing.T) {
+	// Calling Iter() on an error stream (from a failed Generate) should not
+	// panic, even without checking Err() first.
+	stream := newWebSocketStreamError(fmt.Errorf("test error"))
+	for range stream.Iter() {
+		t.Fatal("should not yield any statuses")
+	}
+	if stream.Err() == nil || stream.Err().Error() != "test error" {
+		t.Fatalf("expected 'test error', got %v", stream.Err())
+	}
+}
+
+func TestWebSocketStream_WarmupChainsToFirstGenerate(t *testing.T) {
+	reqCh := make(chan json.RawMessage, 10)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			reqCh <- json.RawMessage(append([]byte{}, data...))
+
+			// Check if this is a warmup (generate:false) or regular request.
+			var envelope struct {
+				Response struct {
+					Generate *bool `json:"generate"`
+				} `json:"response"`
+			}
+			_ = json.Unmarshal(data, &envelope)
+
+			var respID string
+			if envelope.Response.Generate != nil && !*envelope.Response.Generate {
+				respID = "resp_warmup"
+			} else {
+				respID = "resp_gen"
+			}
+
+			events := []string{
+				`{"type":"response.created","response":{"id":"` + respID + `"}}`,
+				`{"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}`,
+				`{"type":"response.output_text.delta","delta":"ok"}`,
+				`{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+			}
+			for _, ev := range events {
+				if err := conn.Write(r.Context(), websocket.MessageText, []byte(ev)); err != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").
+		WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	// Warmup first.
+	respID, err := provider.Warmup(context.Background(), "sys", nil)
+	if err != nil {
+		t.Fatalf("warmup error: %v", err)
+	}
+	if respID != "resp_warmup" {
+		t.Fatalf("expected warmup resp ID 'resp_warmup', got %q", respID)
+	}
+
+	// First Generate should chain off the warmup response ID.
+	stream := provider.Generate(
+		context.Background(),
+		content.FromText("sys"),
+		[]llms.Message{{Role: "user", Content: content.FromText("Hi")}},
+		nil, nil,
+	)
+	for range stream.Iter() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("generate error: %v", err)
+	}
+
+	// Drain the request channel and check the second request (Generate).
+	var requests []json.RawMessage
+	for len(reqCh) > 0 {
+		requests = append(requests, <-reqCh)
+	}
+
+	if len(requests) < 2 {
+		t.Fatalf("expected at least 2 requests (warmup + generate), got %d", len(requests))
+	}
+
+	var genReq struct {
+		Response struct {
+			PreviousResponseID string `json:"previous_response_id"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(requests[1], &genReq); err != nil {
+		t.Fatalf("unmarshal generate request: %v", err)
+	}
+	if genReq.Response.PreviousResponseID != "resp_warmup" {
+		t.Fatalf("expected previous_response_id 'resp_warmup', got %q", genReq.Response.PreviousResponseID)
 	}
 }
 

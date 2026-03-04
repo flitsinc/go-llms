@@ -214,37 +214,35 @@ func (m *WebSocketResponsesAPI) ResetChain() {
 
 // Warmup sends a request with generate:false over the WebSocket, which
 // pre-loads tools and instructions on the server side. Returns the response ID
-// that can be used for faster first turns.
+// that can be used for faster first turns. The provided context should have a
+// timeout to avoid blocking indefinitely.
 func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string, toolbox *tools.Toolbox) (string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if err := m.ensureConnected(ctx); err != nil {
+		m.mu.Unlock()
 		return "", err
 	}
 
-	payload := m.buildBasePayload(nil, instructions)
-	payload["type"] = "response.create"
-	payload["response"] = map[string]any{
-		"model":        m.model,
-		"instructions": instructions,
-		"input":        []any{},
-		"stream":       true,
-	}
+	// Build warmup payload with generate:false.
+	responsePayload := m.buildBasePayload(nil, instructions)
+	responsePayload["input"] = []any{}
+	responsePayload["generate"] = false
 
-	// Add tools to the warmup response
 	if toolbox != nil {
 		toolsArr := m.buildToolsArray(toolbox)
 		if len(toolsArr) > 0 {
-			payload["response"].(map[string]any)["tools"] = toolsArr
+			responsePayload["tools"] = toolsArr
 		}
 	}
 
-	// Set generate to false for warmup
-	payload["response"].(map[string]any)["generate"] = false
+	envelope := map[string]any{
+		"type":     "response.create",
+		"response": responsePayload,
+	}
 
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(envelope)
 	if err != nil {
+		m.mu.Unlock()
 		return "", fmt.Errorf("warmup: marshal: %w", err)
 	}
 
@@ -253,17 +251,24 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	}
 
 	if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
+		m.mu.Unlock()
 		return "", fmt.Errorf("warmup: write: %w", err)
 	}
 
-	// Read events until response.completed
+	conn := m.conn
+	debugger := m.debugger
+	m.mu.Unlock()
+
+	// Read events until response.completed (mutex released so other calls
+	// are not blocked during the network round-trip).
+	var responseID string
 	for {
-		_, data, err := m.conn.Read(ctx)
+		_, data, err := conn.Read(ctx)
 		if err != nil {
 			return "", fmt.Errorf("warmup: read: %w", err)
 		}
-		if m.debugger != nil {
-			m.debugger.RawEvent(data)
+		if debugger != nil {
+			debugger.RawEvent(data)
 		}
 		var event ResponseStreamEvent
 		if err := json.Unmarshal(data, &event); err != nil {
@@ -275,10 +280,15 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 				ID string `json:"id"`
 			}
 			if err := json.Unmarshal(event.Response, &resp); err == nil {
-				m.lastResponseID = resp.ID
+				responseID = resp.ID
 			}
 		case "response.completed":
-			return m.lastResponseID, nil
+			m.mu.Lock()
+			if responseID != "" {
+				m.lastResponseID = responseID
+			}
+			m.mu.Unlock()
+			return responseID, nil
 		case "error":
 			if event.Error != nil {
 				return "", fmt.Errorf("warmup error (%s): %s", event.Error.Code, event.Error.Message)
@@ -306,10 +316,21 @@ func (m *WebSocketResponsesAPI) Generate(
 	var input []ResponseInput
 	var previousResponseID string
 
-	if m.lastResponseID != "" && len(messages) > m.lastMessageCount &&
-		m.lastMessageCount > 0 && messages[m.lastMessageCount].Role == "assistant" {
+	if m.lastResponseID != "" && m.lastMessageCount > 0 &&
+		len(messages) > m.lastMessageCount &&
+		messages[m.lastMessageCount].Role == "assistant" {
 		// Incremental: only send new messages after the last response.
 		for _, msg := range messages[m.lastMessageCount+1:] {
+			msgInputs, err := convertMessageToInput(msg)
+			if err != nil {
+				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
+			}
+			input = append(input, msgInputs...)
+		}
+		previousResponseID = m.lastResponseID
+	} else if m.lastResponseID != "" && m.lastMessageCount == 0 {
+		// Warmup case: send full messages but chain off the warmup response.
+		for _, msg := range messages {
 			msgInputs, err := convertMessageToInput(msg)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
@@ -395,11 +416,63 @@ func (m *WebSocketResponsesAPI) Generate(
 	if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
 		// If write fails and we manage the connection, try reconnect + retry.
 		if !m.externalConn {
+			// Close old connection to avoid leak.
+			m.conn.Close(websocket.StatusGoingAway, "reconnecting")
 			m.conn = nil
 			m.lastResponseID = ""
 			m.lastMessageCount = 0
 			if reconnErr := m.ensureConnected(ctx); reconnErr != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect failed: %w", reconnErr))
+			}
+			// Rebuild payload without previous_response_id since chaining
+			// state was cleared.
+			reconnPayload := m.buildBasePayload(nil, instructions)
+			// Re-convert all messages for full payload.
+			var reconnInput []ResponseInput
+			for _, msg := range messages {
+				msgInputs, convErr := convertMessageToInput(msg)
+				if convErr != nil {
+					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect convert: %w", convErr))
+				}
+				reconnInput = append(reconnInput, msgInputs...)
+			}
+			reconnPayload["input"] = reconnInput
+			if jsonOutputSchema != nil {
+				text := map[string]any{}
+				if m.verbosity != "" {
+					text["verbosity"] = m.verbosity
+				}
+				text["format"] = TextResponseFormat{
+					Type:   "json_schema",
+					Name:   "structured_output",
+					Schema: jsonOutputSchema,
+					Strict: true,
+				}
+				reconnPayload["text"] = text
+			} else if m.verbosity != "" {
+				reconnPayload["text"] = map[string]any{"verbosity": m.verbosity}
+			}
+			if toolbox != nil {
+				toolsArr := m.buildToolsArray(toolbox)
+				if len(toolsArr) > 0 {
+					reconnPayload["tools"] = toolsArr
+					tc, tcErr := buildToolChoice(toolbox.Choice, toolsArr)
+					if tcErr != nil {
+						return newWebSocketStreamError(tcErr)
+					}
+					reconnPayload["tool_choice"] = tc
+				}
+			}
+			reconnEnvelope := map[string]any{
+				"type":     "response.create",
+				"response": reconnPayload,
+			}
+			jsonData, err = json.Marshal(reconnEnvelope)
+			if err != nil {
+				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect marshal: %w", err))
+			}
+			if m.debugger != nil {
+				m.debugger.RawRequest(m.endpoint, jsonData)
 			}
 			if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: write after reconnect: %w", err))

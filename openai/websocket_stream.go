@@ -20,7 +20,10 @@ type WebSocketStream struct {
 }
 
 func newWebSocketStreamError(err error) *WebSocketStream {
-	return &WebSocketStream{responsesEventProcessor: responsesEventProcessor{err: err}}
+	return &WebSocketStream{
+		responsesEventProcessor: responsesEventProcessor{err: err},
+		ctx:                     context.Background(),
+	}
 }
 
 func (s *WebSocketStream) Err() error         { return s.err }
@@ -58,6 +61,9 @@ func (s *WebSocketStream) Usage() llms.Usage {
 
 func (s *WebSocketStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
+		if s.err != nil {
+			return
+		}
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -83,7 +89,7 @@ func (s *WebSocketStream) Iter() func(yield func(llms.StreamStatus) bool) {
 			}
 
 			if s.processEvent(event, data, yield) {
-				if s.onDone != nil {
+				if s.onDone != nil && s.err == nil {
 					s.onDone(s.responseID)
 				}
 				return
