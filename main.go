@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,19 +33,27 @@ func main() {
 	provider := os.Args[1]
 	var llmProvider llms.Provider
 
+	var cleanup func()
 	switch provider {
-	case "openai", "openai-responses":
+	case "openai", "openai-responses", "openai-ws", "openai-ws-warmup":
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		if apiKey == "" {
 			fmt.Println("Error: OPENAI_API_KEY environment variable is not set")
 			return
 		}
-		if provider == "openai-responses" {
-			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.1").
+		switch provider {
+		case "openai-responses":
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.2").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
-		} else {
-			llmProvider = openai.New(apiKey, "gpt-5.1").
+		case "openai-ws", "openai-ws-warmup":
+			wsProvider := openai.NewWebSocketResponsesAPI(apiKey, "gpt-5.2").
+				WithThinking(openai.EffortLow).
+				WithVerbosity(openai.VerbosityLow)
+			llmProvider = wsProvider
+			cleanup = func() { wsProvider.Close() }
+		default:
+			llmProvider = openai.New(apiKey, "gpt-5.2").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		}
@@ -54,14 +63,14 @@ func main() {
 			fmt.Println("Error: ANTHROPIC_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-5").WithBeta("extended-cache-ttl-2025-04-11")
+		llmProvider = anthropic.New(apiKey, "claude-sonnet-4-6").WithBeta("extended-cache-ttl-2025-04-11")
 	case "google":
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
 			fmt.Println("Error: GEMINI_API_KEY environment variable is not set")
 			return
 		}
-		llmProvider = google.New("gemini-3-pro-preview").
+		llmProvider = google.New("gemini-3-flash").
 			WithThinkingLevel(google.ThinkingLevelLow).
 			WithGeminiAPI(apiKey)
 	case "groq":
@@ -75,6 +84,9 @@ func main() {
 		printUsage()
 		return
 	}
+	if cleanup != nil {
+		defer cleanup()
+	}
 
 	llm := llms.New(llmProvider, RunShellCmd)
 
@@ -84,6 +96,20 @@ func main() {
 			&content.Text{Text: "You're a helpful bot of few words. If at first you don't succeed, try again."},
 			&content.CacheHint{Duration: "long"},
 			&content.Text{Text: fmt.Sprintf(" The time is %s.", time.Now().Format(time.RFC1123))},
+		}
+	}
+
+	// If using WebSocket with warmup, pre-load tools and instructions.
+	if provider == "openai-ws-warmup" {
+		if wsProvider, ok := llmProvider.(*openai.WebSocketResponsesAPI); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			respID, err := wsProvider.Warmup(ctx, "You're a helpful bot of few words.", tools.Box(RunShellCmd))
+			cancel()
+			if err != nil {
+				fmt.Printf("Warmup error: %v\n", err)
+				return
+			}
+			fmt.Printf("Warmup complete (response ID: %s)\n\n", respID)
 		}
 	}
 
@@ -135,11 +161,13 @@ func printUsage() {
 	fmt.Println("Usage: go run main.go <provider>")
 	fmt.Println()
 	fmt.Println("Supported providers:")
-	fmt.Println("  openai           - Uses OpenAI's gpt-5 (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-responses - Uses OpenAI's Responses API with gpt-5 (requires OPENAI_API_KEY)")
-	fmt.Println("  anthropic        - Uses Anthropic's Claude Sonnet 4 (requires ANTHROPIC_API_KEY)")
-	fmt.Println("  google           - Uses Google's Gemini 2.5 Flash (requires GEMINI_API_KEY)")
-	fmt.Println("  groq             - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
+	fmt.Println("  openai            - Uses OpenAI Chat Completions with gpt-5.2 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-responses  - Uses OpenAI Responses API with gpt-5.2 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws         - Uses OpenAI Responses API over WebSocket (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws-warmup  - Same as openai-ws but with Warmup pre-loading (requires OPENAI_API_KEY)")
+	fmt.Println("  anthropic         - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
+	fmt.Println("  google            - Uses Google's Gemini 3 Flash (requires GEMINI_API_KEY)")
+	fmt.Println("  groq              - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()

@@ -224,17 +224,15 @@ func TestWebSocketStream_ChainingWithPreviousResponseID(t *testing.T) {
 	}
 
 	var req2 struct {
-		Type     string `json:"type"`
-		Response struct {
-			PreviousResponseID string          `json:"previous_response_id"`
-			Input              json.RawMessage `json:"input"`
-		} `json:"response"`
+		Type               string          `json:"type"`
+		PreviousResponseID string          `json:"previous_response_id"`
+		Input              json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(receivedRequests[1], &req2); err != nil {
 		t.Fatalf("unmarshal second request: %v", err)
 	}
-	if req2.Response.PreviousResponseID != "resp_1" {
-		t.Fatalf("expected previous_response_id 'resp_1', got %q", req2.Response.PreviousResponseID)
+	if req2.PreviousResponseID != "resp_1" {
+		t.Fatalf("expected previous_response_id 'resp_1', got %q", req2.PreviousResponseID)
 	}
 }
 
@@ -452,14 +450,12 @@ func TestWebSocketStream_WarmupChainsToFirstGenerate(t *testing.T) {
 
 			// Check if this is a warmup (generate:false) or regular request.
 			var envelope struct {
-				Response struct {
-					Generate *bool `json:"generate"`
-				} `json:"response"`
+				Generate *bool `json:"generate"`
 			}
 			_ = json.Unmarshal(data, &envelope)
 
 			var respID string
-			if envelope.Response.Generate != nil && !*envelope.Response.Generate {
+			if envelope.Generate != nil && !*envelope.Generate {
 				respID = "resp_warmup"
 			} else {
 				respID = "resp_gen"
@@ -517,15 +513,13 @@ func TestWebSocketStream_WarmupChainsToFirstGenerate(t *testing.T) {
 	}
 
 	var genReq struct {
-		Response struct {
-			PreviousResponseID string `json:"previous_response_id"`
-		} `json:"response"`
+		PreviousResponseID string `json:"previous_response_id"`
 	}
 	if err := json.Unmarshal(requests[1], &genReq); err != nil {
 		t.Fatalf("unmarshal generate request: %v", err)
 	}
-	if genReq.Response.PreviousResponseID != "resp_warmup" {
-		t.Fatalf("expected previous_response_id 'resp_warmup', got %q", genReq.Response.PreviousResponseID)
+	if genReq.PreviousResponseID != "resp_warmup" {
+		t.Fatalf("expected previous_response_id 'resp_warmup', got %q", genReq.PreviousResponseID)
 	}
 }
 
@@ -559,8 +553,7 @@ func TestWebSocketStream_Warmup(t *testing.T) {
 			t.Logf("unmarshal warmup: %v", err)
 			return
 		}
-		resp, _ := req["response"].(map[string]any)
-		if gen, ok := resp["generate"].(bool); !ok || gen {
+		if gen, ok := req["generate"].(bool); !ok || gen {
 			t.Errorf("expected generate:false in warmup request")
 		}
 

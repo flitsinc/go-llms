@@ -227,23 +227,20 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	}
 
 	// Build warmup payload with generate:false.
-	responsePayload := m.buildBasePayload(nil, instructions)
-	responsePayload["input"] = []any{}
-	responsePayload["generate"] = false
+	payload := m.buildBasePayload(nil, instructions)
+	payload["type"] = "response.create"
+	payload["input"] = []any{}
+	payload["generate"] = false
+	delete(payload, "stream")
 
 	if toolbox != nil {
 		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
 		if len(toolsArr) > 0 {
-			responsePayload["tools"] = toolsArr
+			payload["tools"] = toolsArr
 		}
 	}
 
-	envelope := map[string]any{
-		"type":     "response.create",
-		"response": responsePayload,
-	}
-
-	jsonData, err := json.Marshal(envelope)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		m.mu.Unlock()
 		return "", fmt.Errorf("warmup: marshal: %w", err)
@@ -486,12 +483,12 @@ func (m *WebSocketResponsesAPI) buildRequestEnvelope(
 		}
 	}
 
-	envelope := map[string]any{
-		"type":     "response.create",
-		"response": payload,
-	}
+	// WebSocket format: all fields at top level alongside "type".
+	payload["type"] = "response.create"
+	// Remove transport fields not used in WebSocket mode.
+	delete(payload, "stream")
 
-	data, err := json.Marshal(envelope)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("websocket: marshal: %w", err)
 	}
