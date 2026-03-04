@@ -16,41 +16,29 @@ import (
 )
 
 type ResponsesAPI struct {
+	responsesConfig
+
 	accessToken string
-	model       string
 	endpoint    string
 	company     string
 	debugger    llms.Debugger
 	httpClient  *http.Client
 
-	maxOutputTokens    int
-	reasoningEffort    Effort
-	verbosity          Verbosity
-	temperature        float64
-	topP               *float64
-	topLogprobs        int
-	parallelToolCalls  bool
-	serviceTier        string
-	store              bool
-	truncation         string
-	user               string
-	metadata           map[string]string
 	previousResponseID string
-	promptCacheKey     string
-
-	specialTools []ResponseTool
 }
 
 func NewResponsesAPI(accessToken, model string) *ResponsesAPI {
 	return &ResponsesAPI{
-		accessToken:       accessToken,
-		model:             model,
-		endpoint:          "https://api.openai.com/v1/responses",
-		company:           "OpenAI",
-		temperature:       1.0,
-		parallelToolCalls: true,
-		store:             true,
-		truncation:        "disabled",
+		responsesConfig: responsesConfig{
+			model:             model,
+			temperature:       1.0,
+			parallelToolCalls: true,
+			store:             true,
+			truncation:        "disabled",
+		},
+		accessToken: accessToken,
+		endpoint:    "https://api.openai.com/v1/responses",
+		company:     "OpenAI",
 	}
 }
 
@@ -192,96 +180,13 @@ func (m *ResponsesAPI) Generate(
 		input = append(input, msgInputs...)
 	}
 
-	payload := map[string]any{
-		"model":               m.model,
-		"input":               input,
-		"stream":              true,
-		"temperature":         m.temperature,
-		"parallel_tool_calls": m.parallelToolCalls,
-		"store":               m.store,
-		"truncation":          m.truncation,
+	payload, err := m.buildResponsesPayload(input, instructions, toolbox, jsonOutputSchema)
+	if err != nil {
+		return newResponsesStreamError(err)
 	}
-
-	if m.topP != nil {
-		payload["top_p"] = *m.topP
-	}
-
-	if instructions != "" {
-		payload["instructions"] = instructions
-	}
-
-	if m.maxOutputTokens > 0 {
-		payload["max_output_tokens"] = m.maxOutputTokens
-	}
-
-	if m.topLogprobs > 0 {
-		payload["top_logprobs"] = m.topLogprobs
-	}
-
-	if m.reasoningEffort == "" {
-		payload["reasoning"] = map[string]any{
-			"summary": "auto",
-		}
-	} else {
-		payload["reasoning"] = map[string]any{
-			"effort":  m.reasoningEffort,
-			"summary": "auto",
-		}
-	}
-
-	// Set up .text related settings.
-	text := map[string]any{}
-
-	if m.verbosity != "" {
-		text["verbosity"] = m.verbosity
-	}
-
-	// Handle JSON output schema
-	if jsonOutputSchema != nil {
-		text["format"] = TextResponseFormat{
-			Type:   "json_schema",
-			Name:   "structured_output",
-			Schema: jsonOutputSchema,
-			Strict: true,
-		}
-	}
-
-	// Only include .text if there's anything configured.
-	if len(text) > 0 {
-		payload["text"] = text
-	}
-
-	if m.serviceTier != "" {
-		payload["service_tier"] = m.serviceTier
-	}
-
-	if m.user != "" {
-		payload["user"] = m.user
-	}
-
-	if m.metadata != nil {
-		payload["metadata"] = m.metadata
-	}
-
+	payload["stream"] = true
 	if m.previousResponseID != "" {
 		payload["previous_response_id"] = m.previousResponseID
-	}
-
-	if m.promptCacheKey != "" {
-		payload["prompt_cache_key"] = m.promptCacheKey
-	}
-
-	// Handle tools
-	if toolbox != nil {
-		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
-		if len(toolsArr) > 0 {
-			payload["tools"] = toolsArr
-			tc, err := buildToolChoice(toolbox.Choice, toolsArr)
-			if err != nil {
-				return newResponsesStreamError(err)
-			}
-			payload["tool_choice"] = tc
-		}
 	}
 
 	jsonData, err := json.Marshal(payload)

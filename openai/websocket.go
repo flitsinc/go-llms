@@ -19,27 +19,12 @@ import (
 // tool-heavy workflows by keeping a connection open and using
 // previous_response_id to send only incremental input.
 type WebSocketResponsesAPI struct {
+	responsesConfig
+
 	accessToken string
-	model       string
 	endpoint    string
 	company     string
 	debugger    llms.Debugger
-
-	maxOutputTokens   int
-	reasoningEffort   Effort
-	verbosity         Verbosity
-	temperature       float64
-	topP              *float64
-	topLogprobs       int
-	parallelToolCalls bool
-	serviceTier       string
-	store             bool
-	truncation        string
-	user              string
-	metadata          map[string]string
-	promptCacheKey    string
-
-	specialTools []ResponseTool
 
 	// WebSocket state
 	conn         *websocket.Conn
@@ -56,14 +41,16 @@ type WebSocketResponsesAPI struct {
 // first Generate() call. Call Close() when done.
 func NewWebSocketResponsesAPI(accessToken, model string) *WebSocketResponsesAPI {
 	return &WebSocketResponsesAPI{
-		accessToken:       accessToken,
-		model:             model,
-		endpoint:          "wss://api.openai.com/v1/responses",
-		company:           "OpenAI",
-		temperature:       1.0,
-		parallelToolCalls: true,
-		store:             true,
-		truncation:        "disabled",
+		responsesConfig: responsesConfig{
+			model:             model,
+			temperature:       1.0,
+			parallelToolCalls: true,
+			store:             true,
+			truncation:        "disabled",
+		},
+		accessToken: accessToken,
+		endpoint:    "wss://api.openai.com/v1/responses",
+		company:     "OpenAI",
 	}
 }
 
@@ -227,18 +214,14 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	}
 
 	// Build warmup payload with generate:false.
-	payload := m.buildBasePayload(nil, instructions)
+	payload, err := m.buildResponsesPayload(nil, instructions, toolbox, nil)
+	if err != nil {
+		m.mu.Unlock()
+		return "", fmt.Errorf("warmup: payload: %w", err)
+	}
 	payload["type"] = "response.create"
 	payload["input"] = []any{}
 	payload["generate"] = false
-	delete(payload, "stream")
-
-	if toolbox != nil {
-		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
-		if len(toolsArr) > 0 {
-			payload["tools"] = toolsArr
-		}
-	}
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -449,44 +432,17 @@ func (m *WebSocketResponsesAPI) buildRequestEnvelope(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) ([]byte, error) {
-	payload := m.buildBasePayload(input, instructions)
+	payload, err := m.buildResponsesPayload(input, instructions, toolbox, jsonOutputSchema)
+	if err != nil {
+		return nil, err
+	}
 
 	if previousResponseID != "" {
 		payload["previous_response_id"] = previousResponseID
 	}
 
-	if jsonOutputSchema != nil {
-		text := map[string]any{}
-		if m.verbosity != "" {
-			text["verbosity"] = m.verbosity
-		}
-		text["format"] = TextResponseFormat{
-			Type:   "json_schema",
-			Name:   "structured_output",
-			Schema: jsonOutputSchema,
-			Strict: true,
-		}
-		payload["text"] = text
-	} else if m.verbosity != "" {
-		payload["text"] = map[string]any{"verbosity": m.verbosity}
-	}
-
-	if toolbox != nil {
-		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
-		if len(toolsArr) > 0 {
-			payload["tools"] = toolsArr
-			tc, err := buildToolChoice(toolbox.Choice, toolsArr)
-			if err != nil {
-				return nil, err
-			}
-			payload["tool_choice"] = tc
-		}
-	}
-
 	// WebSocket format: all fields at top level alongside "type".
 	payload["type"] = "response.create"
-	// Remove transport fields not used in WebSocket mode.
-	delete(payload, "stream")
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -507,65 +463,6 @@ func (m *WebSocketResponsesAPI) ensureConnected(ctx context.Context) error {
 	}
 	m.conn = conn
 	return nil
-}
-
-// buildBasePayload builds the common payload fields shared by all requests.
-func (m *WebSocketResponsesAPI) buildBasePayload(input []ResponseInput, instructions string) map[string]any {
-	payload := map[string]any{
-		"model":               m.model,
-		"stream":              true,
-		"temperature":         m.temperature,
-		"parallel_tool_calls": m.parallelToolCalls,
-		"store":               m.store,
-		"truncation":          m.truncation,
-	}
-
-	if input != nil {
-		payload["input"] = input
-	}
-
-	if m.topP != nil {
-		payload["top_p"] = *m.topP
-	}
-
-	if instructions != "" {
-		payload["instructions"] = instructions
-	}
-
-	if m.maxOutputTokens > 0 {
-		payload["max_output_tokens"] = m.maxOutputTokens
-	}
-
-	if m.topLogprobs > 0 {
-		payload["top_logprobs"] = m.topLogprobs
-	}
-
-	if m.reasoningEffort == "" {
-		payload["reasoning"] = map[string]any{"summary": "auto"}
-	} else {
-		payload["reasoning"] = map[string]any{
-			"effort":  m.reasoningEffort,
-			"summary": "auto",
-		}
-	}
-
-	if m.serviceTier != "" {
-		payload["service_tier"] = m.serviceTier
-	}
-
-	if m.user != "" {
-		payload["user"] = m.user
-	}
-
-	if m.metadata != nil {
-		payload["metadata"] = m.metadata
-	}
-
-	if m.promptCacheKey != "" {
-		payload["prompt_cache_key"] = m.promptCacheKey
-	}
-
-	return payload
 }
 
 // buildResponsesToolsArray converts a toolbox and special tools into the
