@@ -114,6 +114,12 @@ func main() {
 	}
 
 	var prevUpdate llms.UpdateType
+	chatStart := time.Now()
+	turnStart := chatStart
+	turn := 1
+	gotFirstToken := false
+
+	dim := func(s string) { fmt.Printf("\033[2m%s\033[0m", s) }
 
 	// llm.Chat returns a channel of updates.
 	for update := range llm.Chat("List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names.") {
@@ -125,7 +131,18 @@ func main() {
 
 		// Handle the update.
 		switch update := update.(type) {
+		case llms.MessageStartUpdate:
+			turnStart = time.Now()
+			if turn > 1 {
+				dim(fmt.Sprintf(" [turn %d]", turn))
+				fmt.Println()
+			}
+			turn++
 		case llms.ThinkingUpdate:
+			if !gotFirstToken {
+				gotFirstToken = true
+				dim(fmt.Sprintf("[TTFT %s] ", time.Since(chatStart).Round(time.Millisecond)))
+			}
 			// Show a thinking bubble and dim the text for thinking blocks.
 			if prevUpdate != llms.UpdateTypeThinking {
 				fmt.Print("\033[2m💭 ")
@@ -135,6 +152,10 @@ func main() {
 			// End of thinking; restore color and break line.
 			fmt.Print("\033[0m")
 		case llms.TextUpdate:
+			if !gotFirstToken {
+				gotFirstToken = true
+				dim(fmt.Sprintf("[TTFT %s] ", time.Since(chatStart).Round(time.Millisecond)))
+			}
 			// Print each chunk of text from the LLM as they come in.
 			fmt.Print(update.Text)
 		case llms.ToolStartUpdate:
@@ -143,6 +164,7 @@ func main() {
 		case llms.ToolDoneUpdate:
 			// Print the tool result when the LLM finished sending arguments and the tool ran.
 			fmt.Printf("%s)", update.Result.Label())
+			_ = turnStart // used by MessageStartUpdate
 		}
 		prevUpdate = update.Type()
 	}
@@ -152,9 +174,10 @@ func main() {
 		panic(err)
 	}
 
+	totalDur := time.Since(chatStart).Round(time.Millisecond)
 	fmt.Println()
 	fmt.Println()
-	fmt.Printf("Usage: %+v\n", llm.TotalUsage)
+	dim(fmt.Sprintf("Total: %s | Turns: %d | Usage: %+v\n", totalDur, max(turn-1, 1), llm.TotalUsage))
 }
 
 func printUsage() {
