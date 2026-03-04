@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -23,6 +22,9 @@ func init() {
 	// Put your API keys in .env and this will load them.
 	godotenv.Overload()
 }
+
+// dim prints text in faded/dim terminal style.
+func dim(format string, a ...any) { fmt.Printf("\033[2m"+format+"\033[0m", a...) }
 
 func main() {
 	// Check command-line arguments
@@ -89,15 +91,7 @@ func main() {
 		defer cleanup()
 	}
 
-	// If extra args provided, use them as a simple prompt without tools.
-	prompt := "List the files in the current directory as well as the Go packages used. Then tell me a poem trying to rhyme with the most interesting names."
-	var llm *llms.LLM
-	if len(os.Args) > 2 {
-		prompt = strings.Join(os.Args[2:], " ")
-		llm = llms.New(llmProvider)
-	} else {
-		llm = llms.New(llmProvider, RunShellCmd)
-	}
+	llm := llms.New(llmProvider, RunShellCmd)
 
 	systemPrompt := "You're a helpful bot of few words. If at first you don't succeed, try again."
 
@@ -110,27 +104,31 @@ func main() {
 		}
 	}
 
-	// If using WebSocket with warmup, pre-load tools and instructions.
+	// For WebSocket with warmup, connect + pre-load tools/instructions.
+	// This is timed separately since it happens before the chat starts.
 	if provider == "openai-ws-warmup" {
 		if wsProvider, ok := llmProvider.(*openai.WebSocketResponsesAPI); ok {
+			warmupStart := time.Now()
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			respID, err := wsProvider.Warmup(ctx, systemPrompt, llm.Toolbox())
+			_, err := wsProvider.Warmup(ctx, systemPrompt, llm.Toolbox())
 			cancel()
 			if err != nil {
 				fmt.Printf("Warmup error: %v\n", err)
 				return
 			}
-			fmt.Printf("Warmup complete (response ID: %s)\n\n", respID)
+			dim("[connect+warmup %s]\n", time.Since(warmupStart).Round(time.Millisecond))
 		}
 	}
 
 	var prevUpdate llms.UpdateType
 	chatStart := time.Now()
 	turnStart := chatStart
-	turn := 1
-	gotFirstToken := false
+	turn := 0
+	turnFirstToken := false
 
-	dim := func(s string) { fmt.Printf("\033[2m%s\033[0m", s) }
+	// Prompt designed to force at least 2 tool turns: one for listing files,
+	// one for counting lines, then a final text response.
+	prompt := "First, list the files in the current directory. Second, count the total lines of Go code (find . -name '*.go' | xargs wc -l). Finally, summarize what you found in 2 sentences."
 
 	// llm.Chat returns a channel of updates.
 	for update := range llm.Chat(prompt) {
@@ -143,39 +141,38 @@ func main() {
 		// Handle the update.
 		switch update := update.(type) {
 		case llms.MessageStartUpdate:
-			turnStart = time.Now()
-			if turn > 1 {
-				dim(fmt.Sprintf(" [turn %d]", turn))
+			if turn > 0 {
+				dim(" [turn %d: %s]", turn, time.Since(turnStart).Round(time.Millisecond))
 				fmt.Println()
 			}
 			turn++
+			turnStart = time.Now()
+			turnFirstToken = false
 		case llms.ThinkingUpdate:
-			if !gotFirstToken {
-				gotFirstToken = true
-				dim(fmt.Sprintf("[TTFT %s] ", time.Since(chatStart).Round(time.Millisecond)))
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
 			}
-			// Show a thinking bubble and dim the text for thinking blocks.
 			if prevUpdate != llms.UpdateTypeThinking {
 				fmt.Print("\033[2m💭 ")
 			}
 			fmt.Print(update.Text)
 		case llms.ThinkingDoneUpdate:
-			// End of thinking; restore color and break line.
 			fmt.Print("\033[0m")
 		case llms.TextUpdate:
-			if !gotFirstToken {
-				gotFirstToken = true
-				dim(fmt.Sprintf("[TTFT %s] ", time.Since(chatStart).Round(time.Millisecond)))
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
 			}
-			// Print each chunk of text from the LLM as they come in.
 			fmt.Print(update.Text)
 		case llms.ToolStartUpdate:
-			// Print the tool name when the LLM streams that it intends to use a tool.
+			if !turnFirstToken {
+				turnFirstToken = true
+				dim("[TTFT %s] ", time.Since(turnStart).Round(time.Millisecond))
+			}
 			fmt.Printf("(%s: ", update.Tool.Label())
 		case llms.ToolDoneUpdate:
-			// Print the tool result when the LLM finished sending arguments and the tool ran.
 			fmt.Printf("%s)", update.Result.Label())
-			_ = turnStart // used by MessageStartUpdate
 		}
 		prevUpdate = update.Type()
 	}
@@ -188,7 +185,7 @@ func main() {
 	totalDur := time.Since(chatStart).Round(time.Millisecond)
 	fmt.Println()
 	fmt.Println()
-	dim(fmt.Sprintf("Total: %s | Turns: %d | Usage: %+v\n", totalDur, max(turn-1, 1), llm.TotalUsage))
+	dim("Total: %s | Turns: %d | Usage: %+v\n", totalDur, max(turn, 1), llm.TotalUsage)
 }
 
 func printUsage() {
