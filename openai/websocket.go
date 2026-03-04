@@ -232,7 +232,7 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	responsePayload["generate"] = false
 
 	if toolbox != nil {
-		toolsArr := m.buildToolsArray(toolbox)
+		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
 		if len(toolsArr) > 0 {
 			responsePayload["tools"] = toolsArr
 		}
@@ -475,7 +475,7 @@ func (m *WebSocketResponsesAPI) buildRequestEnvelope(
 	}
 
 	if toolbox != nil {
-		toolsArr := m.buildToolsArray(toolbox)
+		toolsArr := buildResponsesToolsArray(m.specialTools, toolbox)
 		if len(toolsArr) > 0 {
 			payload["tools"] = toolsArr
 			tc, err := buildToolChoice(toolbox.Choice, toolsArr)
@@ -571,10 +571,12 @@ func (m *WebSocketResponsesAPI) buildBasePayload(input []ResponseInput, instruct
 	return payload
 }
 
-// buildToolsArray converts a toolbox into the JSON-serializable tool array.
-func (m *WebSocketResponsesAPI) buildToolsArray(toolbox *tools.Toolbox) []any {
+// buildResponsesToolsArray converts a toolbox and special tools into the
+// JSON-serializable tool array used by the Responses API. Shared by both
+// the SSE and WebSocket providers.
+func buildResponsesToolsArray(specialTools []ResponseTool, toolbox *tools.Toolbox) []any {
 	var toolsArr []any
-	for _, t := range m.specialTools {
+	for _, t := range specialTools {
 		toolsArr = append(toolsArr, t)
 	}
 	for _, t := range toolbox.All() {
