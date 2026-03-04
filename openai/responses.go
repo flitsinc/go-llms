@@ -178,7 +178,7 @@ func (m *ResponsesAPI) Generate(
 		}
 		systemInputs, err := convertMessageToInput(systemMsg)
 		if err != nil {
-			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert system message: %w", err)}
+			return newResponsesStreamError(fmt.Errorf("responses: failed to convert system message: %w", err))
 		}
 		input = append(input, systemInputs...)
 	}
@@ -187,7 +187,7 @@ func (m *ResponsesAPI) Generate(
 	for _, msg := range messages {
 		msgInputs, err := convertMessageToInput(msg)
 		if err != nil {
-			return &ResponsesStream{err: fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err)}
+			return newResponsesStreamError(fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err))
 		}
 		input = append(input, msgInputs...)
 	}
@@ -357,7 +357,7 @@ func (m *ResponsesAPI) Generate(
 						}
 					}
 					if !exists {
-						return &ResponsesStream{err: fmt.Errorf("openai responses: no allowed tools found in toolbox")}
+						return newResponsesStreamError(fmt.Errorf("openai responses: no allowed tools found in toolbox"))
 					}
 					// Use allowed_tools with mode:auto
 					var allowedEntries []any
@@ -390,7 +390,7 @@ func (m *ResponsesAPI) Generate(
 						}
 					}
 					if !exists {
-						return &ResponsesStream{err: fmt.Errorf("openai responses: required tool %q not found in toolbox", name)}
+						return newResponsesStreamError(fmt.Errorf("openai responses: required tool %q not found in toolbox", name))
 					}
 					payload["tool_choice"] = map[string]any{
 						"type": "function",
@@ -421,7 +421,7 @@ func (m *ResponsesAPI) Generate(
 						}
 					}
 					if !exists {
-						return &ResponsesStream{err: fmt.Errorf("openai responses: none of the required tools are present in toolbox")}
+						return newResponsesStreamError(fmt.Errorf("openai responses: none of the required tools are present in toolbox"))
 					}
 					var allowedEntries []any
 					for _, n := range choice.AllowedTools {
@@ -437,7 +437,7 @@ func (m *ResponsesAPI) Generate(
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return &ResponsesStream{err: fmt.Errorf("error encoding JSON: %w", err)}
+		return newResponsesStreamError(fmt.Errorf("error encoding JSON: %w", err))
 	}
 
 	if m.debugger != nil {
@@ -446,7 +446,7 @@ func (m *ResponsesAPI) Generate(
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
-		return &ResponsesStream{err: fmt.Errorf("error creating request: %w", err)}
+		return newResponsesStreamError(fmt.Errorf("error creating request: %w", err))
 	}
 	if m.accessToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.accessToken))
@@ -460,7 +460,7 @@ func (m *ResponsesAPI) Generate(
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return &ResponsesStream{err: fmt.Errorf("error making request: %w", err)}
+		return newResponsesStreamError(fmt.Errorf("error making request: %w", err))
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
@@ -475,38 +475,40 @@ func (m *ResponsesAPI) Generate(
 			}
 
 			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
-				// Successfully parsed the OpenAI error format
-				return &ResponsesStream{err: &llms.HTTPError{
+				return newResponsesStreamError(&llms.HTTPError{
 					StatusCode: resp.StatusCode,
 					Status:     resp.Status,
 					ErrorType:  openAIError.Error.Type,
 					Message:    openAIError.Error.Message,
-				}}
+				})
 			}
-			// Body read okay, but JSON parsing failed or structure mismatch.
-			// Fall through to return status only.
 		}
-		// Default fallback: Read error, empty body, or failed/unexpected JSON parse.
-		return &ResponsesStream{err: &llms.HTTPError{
+		return newResponsesStreamError(&llms.HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
-		}}
+		})
 	}
 
-	return &ResponsesStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger, lastThought: &content.Thought{}}
+	return &ResponsesStream{
+		responsesEventProcessor: responsesEventProcessor{
+			debugger:    m.debugger,
+			lastThought: &content.Thought{},
+		},
+		ctx:    ctx,
+		model:  m.model,
+		stream: resp.Body,
+	}
 }
 
 type ResponsesStream struct {
-	ctx         context.Context
-	model       string
-	stream      io.Reader
-	debugger    llms.Debugger
-	err         error
-	message     llms.Message
-	lastText    string
-	lastImage   struct{ URL, MIME string }
-	usage       *responsesUsage
-	lastThought *content.Thought
+	responsesEventProcessor // shared event processing state
+	ctx    context.Context
+	model  string
+	stream io.Reader
+}
+
+func newResponsesStreamError(err error) *ResponsesStream {
+	return &ResponsesStream{responsesEventProcessor: responsesEventProcessor{err: err}}
 }
 
 func (s *ResponsesStream) Err() error {
@@ -552,7 +554,6 @@ func (s *ResponsesStream) Usage() llms.Usage {
 
 func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	reader := bufio.NewReader(s.stream)
-	var activeToolCall *llms.ToolCall
 
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
@@ -591,11 +592,11 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				continue
 			}
 			if line == "[DONE]" {
-				if activeToolCall != nil {
+				if s.activeToolCall != nil {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
 					}
-					activeToolCall = nil
+					s.activeToolCall = nil
 				}
 				continue
 			}
@@ -610,334 +611,7 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 				return
 			}
 
-			// Handle different chunk types
-			switch event.Type {
-			case "response.created":
-				s.message.Role = "assistant"
-
-			case "response.output_item.added":
-				// TODO: We may want to handle other types like "image_generation_call" here.
-				var item struct {
-					Type string `json:"type"`
-					ID   string `json:"id"`
-				}
-				if err := json.Unmarshal(event.Item, &item); err == nil {
-					switch item.Type {
-					case "message":
-						// Capture the assistant message ID so it can be replayed later
-						s.message.ID = item.ID
-						if !yield(llms.StreamStatusMessageStart) {
-							return
-						}
-					case "function_call":
-						if activeToolCall != nil {
-							if !yield(llms.StreamStatusToolCallReady) {
-								return
-							}
-						}
-						var fc FunctionCall
-						if err := json.Unmarshal(event.Item, &fc); err == nil {
-							metadata := map[string]string{
-								"openai:item_id":   fc.ID,
-								"openai:item_type": item.Type,
-							}
-							llmToolCall := llms.ToolCall{
-								ID:        fc.CallID,
-								Name:      fc.Name,
-								Arguments: json.RawMessage{},
-								Metadata:  metadata,
-							}
-							s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
-							activeToolCall = &s.message.ToolCalls[len(s.message.ToolCalls)-1]
-							if !yield(llms.StreamStatusToolCallBegin) {
-								return
-							}
-						}
-					case "custom_tool_call":
-						// Start of a custom tool call. Capture name and call_id so we can route to the correct tool.
-						if activeToolCall != nil {
-							if !yield(llms.StreamStatusToolCallReady) {
-								return
-							}
-						}
-						var ctc struct {
-							Type   string `json:"type"`
-							ID     string `json:"id"`
-							Name   string `json:"name"`
-							CallID string `json:"call_id"`
-							Input  string `json:"input"`
-						}
-						if err := json.Unmarshal(event.Item, &ctc); err != nil {
-							// Fallback to minimal fields if shape differs
-							ctc.ID = item.ID
-							ctc.Name = "custom"
-						}
-						metadata := map[string]string{
-							"openai:item_id":   ctc.ID,
-							"openai:item_type": item.Type,
-						}
-						llmToolCall := llms.ToolCall{
-							ID:        ctc.CallID,
-							Name:      ctc.Name,
-							Arguments: json.RawMessage(ctc.Input),
-							Metadata:  metadata,
-						}
-						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
-						activeToolCall = &s.message.ToolCalls[len(s.message.ToolCalls)-1]
-						if !yield(llms.StreamStatusToolCallBegin) {
-							return
-						}
-					case "reasoning":
-						// Initialize an aggregated thought in message content; lastThought will carry only deltas.
-						// Emit a ThinkingUpdate immediately so callers see the reasoning ID
-						// even when the model produces no summary text. OpenAI still requires
-						// the reasoning item to be round-tripped alongside its function_call.
-						s.message.Content.AppendThoughtWithID(item.ID, "", true)
-						s.lastThought = &content.Thought{ID: item.ID, Summary: true}
-						if !yield(llms.StreamStatusThinking) {
-							return
-						}
-					}
-				}
-
-			case "response.output_text.delta":
-				var delta struct {
-					Delta string `json:"delta"`
-				}
-				if err := json.Unmarshal([]byte(line), &delta); err == nil {
-					s.lastText = delta.Delta
-					s.message.Content.Append(s.lastText)
-					if s.lastText != "" {
-						if !yield(llms.StreamStatusText) {
-							return
-						}
-					}
-				}
-
-			case "response.function_call_arguments.delta":
-				if activeToolCall != nil {
-					var delta struct {
-						Delta string `json:"delta"`
-					}
-					if err := json.Unmarshal([]byte(line), &delta); err == nil {
-						activeToolCall.Arguments = append(activeToolCall.Arguments, []byte(delta.Delta)...)
-						if !yield(llms.StreamStatusToolCallDelta) {
-							return
-						}
-					}
-				}
-
-			case "response.function_call_arguments.done":
-				if activeToolCall != nil {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
-					}
-					activeToolCall = nil
-				}
-
-				// Support custom tool calling input streaming using the events from the docs
-				// https://platform.openai.com/docs/guides/function-calling#custom-tools
-			case "response.custom_tool_call_input.delta":
-				if activeToolCall != nil {
-					var delta struct {
-						Delta string `json:"delta"`
-					}
-					if err := json.Unmarshal([]byte(line), &delta); err == nil {
-						// The delta is a plain string chunk; append
-						activeToolCall.Arguments = append(activeToolCall.Arguments, []byte(delta.Delta)...)
-						if !yield(llms.StreamStatusToolCallDelta) {
-							return
-						}
-					}
-				}
-
-			case "response.custom_tool_call_input.done":
-				if activeToolCall != nil {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
-					}
-					activeToolCall = nil
-				}
-
-			case "response.reasoning_summary_part.added":
-				// This event contains initial text for a reasoning summary part
-				var partEvent struct {
-					Part struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"part"`
-					ItemID string `json:"item_id"`
-				}
-				if err := json.Unmarshal([]byte(line), &partEvent); err == nil && partEvent.Part.Text != "" {
-					// Update aggregated thought
-					s.message.Content.AppendThoughtWithID(partEvent.ItemID, partEvent.Part.Text, true)
-					// Set lastThought delta
-					s.lastThought = &content.Thought{ID: partEvent.ItemID, Text: partEvent.Part.Text, Summary: true}
-					if !yield(llms.StreamStatusThinking) {
-						return
-					}
-				}
-
-			case "response.reasoning_summary_part.done":
-				// This event contains the complete text for a reasoning summary part
-				var partEvent struct {
-					Part struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"part"`
-					ItemID string `json:"item_id"`
-				}
-				if err := json.Unmarshal([]byte(line), &partEvent); err == nil {
-					// The done event contains the complete text, but we've been streaming it
-					// via delta events, so we don't need to append it again
-				}
-
-			case "response.reasoning_summary_text.delta":
-				var deltaEvent struct {
-					Delta  string `json:"delta"`
-					ItemID string `json:"item_id"`
-				}
-				if err := json.Unmarshal([]byte(line), &deltaEvent); err == nil && deltaEvent.Delta != "" {
-					// Update aggregated thought
-					s.message.Content.AppendThoughtWithID(deltaEvent.ItemID, deltaEvent.Delta, true)
-					// Set lastThought delta
-					s.lastThought = &content.Thought{ID: deltaEvent.ItemID, Text: deltaEvent.Delta, Summary: true}
-					if !yield(llms.StreamStatusThinking) {
-						return
-					}
-				}
-
-			case "response.reasoning_summary_text.done":
-				// The thought is already marked as complete summary, just reset our tracking
-				var doneEvent struct {
-					Text   string `json:"text"`
-					ItemID string `json:"item_id"`
-				}
-				if err := json.Unmarshal([]byte(line), &doneEvent); err == nil {
-					thought := s.message.Content.AppendThoughtWithID(doneEvent.ItemID, "", true)
-					if doneEvent.Text != "" {
-						thought.Text = doneEvent.Text
-					}
-					thought.Summary = true
-					s.lastThought = nil // Reset for next reasoning item
-					if !yield(llms.StreamStatusThinkingDone) {
-						return
-					}
-				}
-
-			case "response.output_item.done":
-				// Images are finalized on output_item.done for image_generation_call
-				var itemHdr struct {
-					Type   string `json:"type"`
-					Status string `json:"status"`
-				}
-				if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
-					switch itemHdr.Type {
-					case "image_generation_call":
-						if itemHdr.Status != "completed" {
-							break
-						}
-						var img struct {
-							ID            string `json:"id"`
-							Background    string `json:"background"`
-							OutputFormat  string `json:"output_format"`
-							Quality       string `json:"quality"`
-							Result        string `json:"result"`
-							RevisedPrompt string `json:"revised_prompt"`
-							Size          string `json:"size"`
-						}
-						err := json.Unmarshal(event.Item, &img)
-						if err != nil {
-							s.err = fmt.Errorf("failed to parse image generation result: %w", s.err)
-							return
-						}
-						if img.Result == "" {
-							continue
-						}
-						mime := "image/png"
-						switch img.OutputFormat {
-						case "png":
-							mime = "image/png"
-						case "jpeg", "jpg":
-							mime = "image/jpeg"
-						case "webp":
-							mime = "image/webp"
-						case "gif":
-							mime = "image/gif"
-						}
-						dataURI := content.BuildDataURI(mime, img.Result)
-						s.lastImage.URL = dataURI
-						s.lastImage.MIME = mime
-						// Add to aggregated message content for history
-						s.message.Content = append(s.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
-						if !yield(llms.StreamStatusImage) {
-							return
-						}
-						if event.Usage != nil {
-							s.usage = event.Usage
-						}
-					case "reasoning":
-						// Finalize reasoning item with full summary text (if any).
-						// Only emit ThinkingDone if reasoning_summary_text.done didn't
-						// already handle it (indicated by s.lastThought still being set).
-						var reasoningItem Reasoning
-						if err := json.Unmarshal(event.Item, &reasoningItem); err == nil {
-							var summaryBuilder strings.Builder
-							for _, part := range reasoningItem.Summary {
-								if part.Text == "" {
-									continue
-								}
-								if summaryBuilder.Len() > 0 {
-									summaryBuilder.WriteString("\n")
-								}
-								summaryBuilder.WriteString(part.Text)
-							}
-							thought := s.message.Content.AppendThoughtWithID(reasoningItem.ID, "", true)
-							if summaryBuilder.Len() > 0 {
-								thought.Text = summaryBuilder.String()
-							}
-							// Summary is already true from AppendThoughtWithID; this is a no-op
-							// but kept for clarity — reasoning items are always summaries.
-							// Only emit ThinkingDone here if reasoning_summary_text.done
-							// didn't already emit it (s.lastThought is cleared by that handler).
-							if s.lastThought != nil {
-								s.lastThought = nil
-								if !yield(llms.StreamStatusThinkingDone) {
-									return
-								}
-							}
-						}
-					}
-				}
-
-			case "response.image_generation_call.in_progress":
-			case "response.image_generation_call.generating":
-			case "response.image_generation_call.partial_image":
-				// TODO: Support streaming partial image frames during generation.
-				// For now, ignore partial frames; we'll only emit on completed.
-
-			case "response.completed":
-				if event.Response != nil {
-					var response struct {
-						Usage *responsesUsage `json:"usage"`
-					}
-					if err := json.Unmarshal(event.Response, &response); err == nil && response.Usage != nil {
-						s.usage = response.Usage
-					}
-				}
-
-				if activeToolCall != nil {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return
-					}
-					activeToolCall = nil
-				}
-				return
-
-			case "error":
-				if event.Error != nil {
-					s.err = fmt.Errorf("stream error (%s): %s", event.Error.Code, event.Error.Message)
-				}
+			if s.processEvent(event, []byte(line), yield) {
 				return
 			}
 		}
