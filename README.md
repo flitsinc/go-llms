@@ -43,9 +43,9 @@ import (
 )
 
 func main() {
-    // Create a new LLM instance with OpenAI's gpt-5.2 model
+    // Create a new LLM instance with OpenAI's gpt-5.4 model
     llm := llms.New(
-        openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"),
+        openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.4"),
     )
 
     // Optional: Set a system prompt
@@ -339,7 +339,7 @@ var EmailValidator = tools.FuncGrammar(
 func main() {
     // Create LLM with grammar-based tools (OpenAI only)
     llm := llms.New(
-        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"),
+        openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.4"),
         MathTool,
         EmailValidator,
     )
@@ -387,15 +387,15 @@ ts, err := googleoauth.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/
 llm := llms.New(google.New("gemini-3-flash-preview").WithVertexAI(ts, projectID, "global"))
 
 // OpenAI (Responses API)
-llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"))
+llm := llms.New(openai.NewResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.4"))
 
 // OpenAI (Responses API over WebSocket — persistent connection, faster tool loops)
-provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2")
+provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.4")
 defer provider.Close()
 llm := llms.New(provider)
 
 // OpenAI (Chat Completions API)
-llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.2"))
+llm := llms.New(openai.New(os.Getenv("OPENAI_API_KEY"), "gpt-5.4"))
 
 // OpenAI-compatible endpoint (e.g., xAI)
 // You can use the OpenAI provider with compatible APIs by configuring the endpoint.
@@ -410,7 +410,7 @@ llm := llms.New(
 The WebSocket provider keeps a persistent connection to OpenAI's Responses API. Within multi-turn tool loops it automatically chains responses via `previous_response_id`, sending only new tool results instead of the full conversation history. This can significantly reduce latency in tool-heavy workflows.
 
 ```go
-provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.2")
+provider := openai.NewWebSocketResponsesAPI(os.Getenv("OPENAI_API_KEY"), "gpt-5.4")
 defer provider.Close() // closes the WebSocket when done
 ```
 
@@ -426,7 +426,7 @@ _, err := provider.Warmup(ctx, "You are a helpful assistant.", toolbox)
 
 ```go
 conn, err := openai.DialResponsesWebSocket(ctx, accessToken)
-provider := openai.NewWebSocketResponsesAPI(accessToken, "gpt-5.2").WithConn(conn)
+provider := openai.NewWebSocketResponsesAPI(accessToken, "gpt-5.4").WithConn(conn)
 // provider.Close() is a no-op — you own the connection
 ```
 
