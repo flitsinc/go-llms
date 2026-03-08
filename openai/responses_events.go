@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -249,6 +250,9 @@ func (p *responsesEventProcessor) processEvent(
 					p.err = fmt.Errorf("failed to parse image generation result: %w", err)
 					return true
 				}
+				// Debug: log the image generation result details
+				fmt.Fprintf(os.Stderr, "[go-llms] image_generation_call done: id=%s status=%s output_format=%s background=%s quality=%s size=%s result_len=%d revised_prompt=%q\n",
+					img.ID, itemHdr.Status, img.OutputFormat, img.Background, img.Quality, img.Size, len(img.Result), img.RevisedPrompt)
 				if img.Result == "" {
 					break
 				}
@@ -299,6 +303,14 @@ func (p *responsesEventProcessor) processEvent(
 				}
 			}
 		}
+
+	case "response.image_generation_call.completed":
+		itemStr := string(event.Item)
+		truncLen := len(itemStr)
+		if truncLen > 200 {
+			truncLen = 200
+		}
+		fmt.Fprintf(os.Stderr, "[go-llms] image_generation_call.completed event received: %s\n", itemStr[:truncLen])
 
 	case "response.image_generation_call.in_progress",
 		"response.image_generation_call.generating",
