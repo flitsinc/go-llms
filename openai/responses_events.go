@@ -336,7 +336,10 @@ func (p *responsesEventProcessor) processEvent(
 					p.usage = response.Usage
 				}
 				// Extract images from output items that weren't delivered
-				// via response.output_item.done (e.g. result was empty there).
+				// via response.output_item.done. OpenAI requires partial_images > 0
+				// in the ImageGenerationTool config for streaming to include image
+				// data in output_item.done; without it, result is empty there and
+				// only available here in the completed response.
 				for _, raw := range response.Output {
 					var hdr struct {
 						Type string `json:"type"`
