@@ -13,15 +13,72 @@ import (
 // Responses API streaming events. It is embedded by both ResponsesStream (SSE)
 // and WebSocketStream (WebSocket) to avoid duplicating event-handling code.
 type responsesEventProcessor struct {
-	message        llms.Message
-	lastText       string
-	lastImage      struct{ URL, MIME string }
-	usage          *responsesUsage
-	lastThought    *content.Thought
-	activeToolCall *llms.ToolCall
-	responseID     string
-	debugger       llms.Debugger
-	err            error
+	message           llms.Message
+	lastText          string
+	lastImage         struct{ URL, MIME string }
+	usage             *responsesUsage
+	lastThought       *content.Thought
+	activeToolCall    *llms.ToolCall
+	responseID        string
+	debugger          llms.Debugger
+	err               error
+	processedImageIDs map[string]bool
+}
+
+
+// processImageItem processes a single image_generation_call item and yields
+// StreamStatusImage. It returns (yielded, stop): yielded=true if an image was
+// emitted, stop=true if the yield callback returned false (caller should stop).
+func (p *responsesEventProcessor) processImageItem(
+	raw json.RawMessage,
+	yield func(llms.StreamStatus) bool,
+) (yielded bool, stop bool) {
+	var img struct {
+		ID            string `json:"id"`
+		Type          string `json:"type"`
+		Status        string `json:"status"`
+		Background    string `json:"background"`
+		OutputFormat  string `json:"output_format"`
+		Quality       string `json:"quality"`
+		Result        string `json:"result"`
+		RevisedPrompt string `json:"revised_prompt"`
+		Size          string `json:"size"`
+	}
+	if err := json.Unmarshal(raw, &img); err != nil {
+		p.err = fmt.Errorf("failed to parse image generation result: %w", err)
+		return false, true
+	}
+	if img.Status != "completed" || img.Result == "" {
+		return false, false
+	}
+	// Skip if already processed via response.output_item.done.
+	if p.processedImageIDs[img.ID] {
+		return false, false
+	}
+	if p.processedImageIDs == nil {
+		p.processedImageIDs = make(map[string]bool)
+	}
+	p.processedImageIDs[img.ID] = true
+
+	mime := "image/png"
+	switch img.OutputFormat {
+	case "png":
+		mime = "image/png"
+	case "jpeg", "jpg":
+		mime = "image/jpeg"
+	case "webp":
+		mime = "image/webp"
+	case "gif":
+		mime = "image/gif"
+	}
+	dataURI := content.BuildDataURI(mime, img.Result)
+	p.lastImage.URL = dataURI
+	p.lastImage.MIME = mime
+	p.message.Content = append(p.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
+	if !yield(llms.StreamStatusImage) {
+		return true, true
+	}
+	return true, false
 }
 
 // processEvent handles a single parsed ResponseStreamEvent.
@@ -232,42 +289,7 @@ func (p *responsesEventProcessor) processEvent(
 		if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
 			switch itemHdr.Type {
 			case "image_generation_call":
-				if itemHdr.Status != "completed" {
-					break
-				}
-				var img struct {
-					ID            string `json:"id"`
-					Background    string `json:"background"`
-					OutputFormat  string `json:"output_format"`
-					Quality       string `json:"quality"`
-					Result        string `json:"result"`
-					RevisedPrompt string `json:"revised_prompt"`
-					Size          string `json:"size"`
-				}
-				err := json.Unmarshal(event.Item, &img)
-				if err != nil {
-					p.err = fmt.Errorf("failed to parse image generation result: %w", err)
-					return true
-				}
-				if img.Result == "" {
-					break
-				}
-				mime := "image/png"
-				switch img.OutputFormat {
-				case "png":
-					mime = "image/png"
-				case "jpeg", "jpg":
-					mime = "image/jpeg"
-				case "webp":
-					mime = "image/webp"
-				case "gif":
-					mime = "image/gif"
-				}
-				dataURI := content.BuildDataURI(mime, img.Result)
-				p.lastImage.URL = dataURI
-				p.lastImage.MIME = mime
-				p.message.Content = append(p.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
-				if !yield(llms.StreamStatusImage) {
+				if _, stop := p.processImageItem(event.Item, yield); stop {
 					return true
 				}
 				if event.Usage != nil {
@@ -308,10 +330,26 @@ func (p *responsesEventProcessor) processEvent(
 	case "response.completed":
 		if event.Response != nil {
 			var response struct {
-				Usage *responsesUsage `json:"usage"`
+				Usage  *responsesUsage   `json:"usage"`
+				Output []json.RawMessage `json:"output"`
 			}
-			if err := json.Unmarshal(event.Response, &response); err == nil && response.Usage != nil {
-				p.usage = response.Usage
+			if err := json.Unmarshal(event.Response, &response); err == nil {
+				if response.Usage != nil {
+					p.usage = response.Usage
+				}
+				// Extract images from output items that weren't delivered
+				// via response.output_item.done (e.g. result was empty there).
+				for _, raw := range response.Output {
+					var hdr struct {
+						Type string `json:"type"`
+					}
+					if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Type != "image_generation_call" {
+						continue
+					}
+					if _, stop := p.processImageItem(raw, yield); stop {
+						return true
+					}
+				}
 			}
 		}
 
