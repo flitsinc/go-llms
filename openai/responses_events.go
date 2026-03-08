@@ -25,17 +25,15 @@ type responsesEventProcessor struct {
 	processedImageIDs map[string]bool
 }
 
-
 // processImageItem processes a single image_generation_call item and yields
-// StreamStatusImage. It returns (yielded, stop): yielded=true if an image was
-// emitted, stop=true if the yield callback returned false (caller should stop).
+// StreamStatusImage. It returns true when the caller should stop processing
+// (i.e. the yield callback returned false).
 func (p *responsesEventProcessor) processImageItem(
 	raw json.RawMessage,
 	yield func(llms.StreamStatus) bool,
-) (yielded bool, stop bool) {
+) (stop bool) {
 	var img struct {
 		ID            string `json:"id"`
-		Type          string `json:"type"`
 		Status        string `json:"status"`
 		Background    string `json:"background"`
 		OutputFormat  string `json:"output_format"`
@@ -46,14 +44,14 @@ func (p *responsesEventProcessor) processImageItem(
 	}
 	if err := json.Unmarshal(raw, &img); err != nil {
 		p.err = fmt.Errorf("failed to parse image generation result: %w", err)
-		return false, true
+		return true
 	}
 	if img.Status != "completed" || img.Result == "" {
-		return false, false
+		return false
 	}
 	// Skip if already processed via response.output_item.done.
 	if p.processedImageIDs[img.ID] {
-		return false, false
+		return false
 	}
 	if p.processedImageIDs == nil {
 		p.processedImageIDs = make(map[string]bool)
@@ -76,9 +74,9 @@ func (p *responsesEventProcessor) processImageItem(
 	p.lastImage.MIME = mime
 	p.message.Content = append(p.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
 	if !yield(llms.StreamStatusImage) {
-		return true, true
+		return true
 	}
-	return true, false
+	return false
 }
 
 // processEvent handles a single parsed ResponseStreamEvent.
@@ -289,7 +287,7 @@ func (p *responsesEventProcessor) processEvent(
 		if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
 			switch itemHdr.Type {
 			case "image_generation_call":
-				if _, stop := p.processImageItem(event.Item, yield); stop {
+				if p.processImageItem(event.Item, yield) {
 					return true
 				}
 				if event.Usage != nil {
@@ -346,7 +344,7 @@ func (p *responsesEventProcessor) processEvent(
 					if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Type != "image_generation_call" {
 						continue
 					}
-					if _, stop := p.processImageItem(raw, yield); stop {
+					if p.processImageItem(raw, yield) {
 						return true
 					}
 				}
