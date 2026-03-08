@@ -476,6 +476,9 @@ func buildResponsesToolsArray(specialTools []ResponseTool, toolbox *tools.Toolbo
 	for _, t := range specialTools {
 		toolsArr = append(toolsArr, t)
 	}
+	if toolbox == nil {
+		return toolsArr
+	}
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
 		case tools.JSONGrammar:

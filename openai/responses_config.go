@@ -107,15 +107,17 @@ func (c *responsesConfig) buildResponsesPayload(
 		payload["prompt_cache_key"] = c.promptCacheKey
 	}
 
-	if toolbox != nil {
+	if toolbox != nil || len(c.specialTools) > 0 {
 		toolsArr := buildResponsesToolsArray(c.specialTools, toolbox)
 		if len(toolsArr) > 0 {
 			payload["tools"] = toolsArr
-			tc, err := buildToolChoice(toolbox.Choice, toolsArr)
-			if err != nil {
-				return nil, err
+			if toolbox != nil {
+				tc, err := buildToolChoice(toolbox.Choice, toolsArr)
+				if err != nil {
+					return nil, err
+				}
+				payload["tool_choice"] = tc
 			}
-			payload["tool_choice"] = tc
 		}
 	}
 
