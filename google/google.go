@@ -243,10 +243,16 @@ func (m *Model) Generate(
 
 	flushPending := func() {
 		if pendingFunctionMsg != nil {
+			// Merge any deferred secondary content (text/image parts from tool results)
+			// into the pending function message to avoid consecutive "user" messages,
+			// which Gemini rejects.
+			for _, deferred := range deferredAfterFunction {
+				pendingFunctionMsg.Parts = append(pendingFunctionMsg.Parts, deferred.Parts...)
+			}
+			deferredAfterFunction = nil
 			apiMessages = append(apiMessages, *pendingFunctionMsg)
 			pendingFunctionMsg = nil
-		}
-		if len(deferredAfterFunction) > 0 {
+		} else if len(deferredAfterFunction) > 0 {
 			apiMessages = append(apiMessages, deferredAfterFunction...)
 			deferredAfterFunction = nil
 		}
@@ -258,9 +264,9 @@ func (m *Model) Generate(
 			return &Stream{err: fmt.Errorf("failed to convert message for Google: %w", err)}
 		}
 		if msg.Role == "tool" {
-			if len(convertedMsgs) > 0 && convertedMsgs[0].Role == "function" {
+			if len(convertedMsgs) > 0 && convertedMsgs[0].Role == "user" {
 				if pendingFunctionMsg == nil {
-					pendingFunctionMsg = &message{Role: "function"}
+					pendingFunctionMsg = &message{Role: "user"}
 				}
 				pendingFunctionMsg.Parts = append(pendingFunctionMsg.Parts, convertedMsgs[0].Parts...)
 				if len(convertedMsgs) > 1 {

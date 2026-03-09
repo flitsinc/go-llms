@@ -229,7 +229,7 @@ func TestGemini3AggregatesFunctionResponses(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if role, _ := msg["role"].(string); role == "function" {
+		if role, _ := msg["role"].(string); role == "user" {
 			functionMsg = msg
 			functionCount++
 		}
@@ -277,6 +277,101 @@ func TestGemini3AggregatesFunctionResponses(t *testing.T) {
 		if !names[expected] {
 			t.Fatalf("missing functionResponse for %q", expected)
 		}
+	}
+}
+
+
+func TestGemini3MergesSecondaryContentIntoFunctionMessage(t *testing.T) {
+	// When a tool result has secondary content (e.g., text after JSON),
+	// it should be merged into the same "user" message as the function response,
+	// not create a separate consecutive "user" message which Gemini rejects.
+	toolCalls := []llms.ToolCall{
+		{ID: "t1", Name: "search", Arguments: json.RawMessage(`{}`)},
+	}
+	history := []llms.Message{
+		{Role: "assistant", ToolCalls: toolCalls},
+		{
+			Role:         "tool",
+			ToolCallID:   "t1",
+			ToolCallName: "search",
+			Content: content.Content{
+				&content.JSON{Data: json.RawMessage(`{"results": 3}`)},
+				&content.Text{Text: "Here are the search results in detail..."},
+			},
+		},
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode request body: %v", err)
+		}
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "done"}]}}]}` + "\n\n"))
+	}))
+	defer server.Close()
+
+	model := New("gemini-3-pro-preview").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, history, nil, nil)
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	payload := <-payloadCh
+	contents, ok := payload["contents"].([]any)
+	if !ok {
+		t.Fatalf("expected contents array, got %T", payload["contents"])
+	}
+
+	// Count user messages - there should be exactly one (function response + secondary text merged).
+	userMsgCount := 0
+	for _, raw := range contents {
+		msg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if role, _ := msg["role"].(string); role == "user" {
+			userMsgCount++
+
+			// Verify the single user message contains both function response and text parts.
+			parts, ok := msg["parts"].([]any)
+			if !ok {
+				t.Fatalf("expected parts array, got %T", msg["parts"])
+			}
+			hasFunctionResponse := false
+			hasText := false
+			for _, partRaw := range parts {
+				part, ok := partRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if _, ok := part["functionResponse"]; ok {
+					hasFunctionResponse = true
+				}
+				if text, ok := part["text"]; ok {
+					if text == "Here are the search results in detail..." {
+						hasText = true
+					}
+				}
+			}
+			if !hasFunctionResponse {
+				t.Error("expected user message to contain functionResponse part")
+			}
+			if !hasText {
+				t.Error("expected user message to contain text part from secondary content")
+			}
+		}
+	}
+
+	if userMsgCount != 1 {
+		t.Fatalf("expected exactly 1 user message (merged), got %d - consecutive user messages would be rejected by Gemini", userMsgCount)
 	}
 }
 

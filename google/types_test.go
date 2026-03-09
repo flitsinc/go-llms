@@ -92,7 +92,7 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 			expected: []message{
 				{
-					Role: "function", // Tool maps to function role
+					Role: "user", // Tool maps to user role (Gemini 3.x only accepts user/model)
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
@@ -114,7 +114,7 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 			expected: []message{
 				{
-					Role: "function",
+					Role: "user",
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
@@ -136,7 +136,7 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 			expected: []message{
 				{
-					Role: "function",
+					Role: "user",
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
@@ -165,7 +165,7 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 			expected: []message{
 				{
-					Role: "function",
+					Role: "user",
 					Parts: parts{
 						{
 							FunctionResponse: &functionResponse{
