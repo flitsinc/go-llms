@@ -34,7 +34,6 @@ func (p *responsesEventProcessor) processImageItem(
 ) (stop bool) {
 	var img struct {
 		ID            string `json:"id"`
-		Status        string `json:"status"`
 		Background    string `json:"background"`
 		OutputFormat  string `json:"output_format"`
 		Quality       string `json:"quality"`
@@ -46,7 +45,10 @@ func (p *responsesEventProcessor) processImageItem(
 		p.err = fmt.Errorf("failed to parse image generation result: %w", err)
 		return true
 	}
-	if img.Status != "completed" || img.Result == "" {
+	// Only check that result is non-empty. OpenAI may report status as
+	// "generating" even when the full image result is included (observed
+	// with partial_images >= 1 in output_item.done and response.completed).
+	if img.Result == "" {
 		return false
 	}
 	// Skip if already processed via response.output_item.done.
