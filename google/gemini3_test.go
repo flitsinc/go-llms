@@ -229,7 +229,7 @@ func TestGemini3AggregatesFunctionResponses(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if role, _ := msg["role"].(string); role == "function" {
+		if role, _ := msg["role"].(string); role == "user" {
 			functionMsg = msg
 			functionCount++
 		}

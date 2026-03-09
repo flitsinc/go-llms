@@ -247,7 +247,7 @@ func messagesFromLLM(m llms.Message) ([]message, error) {
 		}
 
 		primaryMessage := message{
-			Role: "function", // Google uses "function" role for function responses.
+			Role: "user", // Gemini 3.x models only accept "user" and "model" roles.
 			Parts: parts{
 				{
 					FunctionResponse: &functionResponse{

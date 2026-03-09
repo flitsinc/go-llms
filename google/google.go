@@ -258,9 +258,9 @@ func (m *Model) Generate(
 			return &Stream{err: fmt.Errorf("failed to convert message for Google: %w", err)}
 		}
 		if msg.Role == "tool" {
-			if len(convertedMsgs) > 0 && convertedMsgs[0].Role == "function" {
+			if len(convertedMsgs) > 0 && convertedMsgs[0].Role == "user" {
 				if pendingFunctionMsg == nil {
-					pendingFunctionMsg = &message{Role: "function"}
+					pendingFunctionMsg = &message{Role: "user"}
 				}
 				pendingFunctionMsg.Parts = append(pendingFunctionMsg.Parts, convertedMsgs[0].Parts...)
 				if len(convertedMsgs) > 1 {
