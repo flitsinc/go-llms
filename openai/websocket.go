@@ -24,7 +24,6 @@ type WebSocketResponsesAPI struct {
 	accessToken string
 	endpoint    string
 	company     string
-	debugger    llms.Debugger
 
 	// WebSocket state
 	conn         *websocket.Conn
@@ -174,8 +173,7 @@ func (m *WebSocketResponsesAPI) WithVerbosity(verbosity Verbosity) *WebSocketRes
 func (m *WebSocketResponsesAPI) Company() string { return m.company }
 func (m *WebSocketResponsesAPI) Model() string   { return m.model }
 
-func (m *WebSocketResponsesAPI) SetDebugger(d llms.Debugger)       { m.debugger = d }
-func (m *WebSocketResponsesAPI) SetHTTPClient(_ *http.Client)      {} // no-op for WebSocket
+func (m *WebSocketResponsesAPI) SetHTTPClient(_ *http.Client) {} // no-op for WebSocket
 
 // Close closes the WebSocket connection. If the connection was provided
 // externally via WithConn, this is a no-op.
@@ -207,6 +205,8 @@ func (m *WebSocketResponsesAPI) ResetChain() {
 // Warmup must not be called concurrently with Generate or while a stream from
 // Generate is being iterated, as they share the same WebSocket connection.
 func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string, toolbox *tools.Toolbox) (string, error) {
+	debugger := llms.GetDebugger(ctx)
+
 	m.mu.Lock()
 	if err := m.ensureConnected(ctx); err != nil {
 		m.mu.Unlock()
@@ -232,8 +232,8 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 		return "", fmt.Errorf("warmup: marshal: %w", err)
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
@@ -242,7 +242,6 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	}
 
 	conn := m.conn
-	debugger := m.debugger
 	m.mu.Unlock()
 
 	// Read events until response.completed (mutex released so other calls
@@ -296,6 +295,8 @@ func (m *WebSocketResponsesAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -358,8 +359,8 @@ func (m *WebSocketResponsesAPI) Generate(
 		return newWebSocketStreamError(err)
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
@@ -396,8 +397,8 @@ func (m *WebSocketResponsesAPI) Generate(
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect: %w", err))
 			}
-			if m.debugger != nil {
-				m.debugger.RawRequest(m.endpoint, jsonData)
+			if debugger != nil {
+				debugger.RawRequest(m.endpoint, jsonData)
 			}
 			if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: write after reconnect: %w", err))
@@ -410,7 +411,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	msgCount := len(messages)
 	return &WebSocketStream{
 		responsesEventProcessor: responsesEventProcessor{
-			debugger:    m.debugger,
+			debugger:    debugger,
 			lastThought: &content.Thought{},
 		},
 		ctx:  ctx,

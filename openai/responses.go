@@ -21,7 +21,6 @@ type ResponsesAPI struct {
 	accessToken string
 	endpoint    string
 	company     string
-	debugger    llms.Debugger
 	httpClient  *http.Client
 
 	previousResponseID string
@@ -137,10 +136,6 @@ func (m *ResponsesAPI) Model() string {
 	return m.model
 }
 
-func (m *ResponsesAPI) SetDebugger(d llms.Debugger) {
-	m.debugger = d
-}
-
 func (m *ResponsesAPI) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -148,6 +143,8 @@ func (m *ResponsesAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
+
 	// Build the input array
 	var input []ResponseInput
 
@@ -194,8 +191,8 @@ func (m *ResponsesAPI) Generate(
 		return newResponsesStreamError(fmt.Errorf("error encoding JSON: %w", err))
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -245,7 +242,7 @@ func (m *ResponsesAPI) Generate(
 
 	return &ResponsesStream{
 		responsesEventProcessor: responsesEventProcessor{
-			debugger:    m.debugger,
+			debugger:    debugger,
 			lastThought: &content.Thought{},
 		},
 		ctx:    ctx,

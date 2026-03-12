@@ -442,7 +442,6 @@ You can easily implement new providers by implementing the `Provider` interface:
 type Provider interface {
     Company() string
     Model() string
-    SetDebugger(d Debugger)
     // Generate takes a system prompt, message history, and optional toolbox,
     // returning a stream for the LLM's response. The provided context should
     // be respected for cancellation.

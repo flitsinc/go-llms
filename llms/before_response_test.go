@@ -20,11 +20,9 @@ type beforeResponseCaptureProvider struct {
 	calls [][]Message
 }
 
-func (p *beforeResponseCaptureProvider) Company() string      { return "BeforeResponseCapture" }
-func (p *beforeResponseCaptureProvider) Model() string        { return "before-response-model" }
-func (p *beforeResponseCaptureProvider) SetDebugger(Debugger) {}
-func (p *beforeResponseCaptureProvider) SetHTTPClient(_ *http.Client) {
-}
+func (p *beforeResponseCaptureProvider) Company() string              { return "BeforeResponseCapture" }
+func (p *beforeResponseCaptureProvider) Model() string                { return "before-response-model" }
+func (p *beforeResponseCaptureProvider) SetHTTPClient(_ *http.Client) {}
 
 func (p *beforeResponseCaptureProvider) Generate(
 	ctx context.Context,

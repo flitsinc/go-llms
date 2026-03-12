@@ -20,15 +20,10 @@ type mockJSONProvider struct {
 	generateCalled   bool
 	receivedSchema   *tools.ValueSchema
 	receivedMessages []Message
-	debugger         Debugger
 }
 
-func (m *mockJSONProvider) Company() string { return "MockJSON" }
-func (m *mockJSONProvider) Model() string   { return "json-model" }
-func (m *mockJSONProvider) SetDebugger(d Debugger) {
-	m.debugger = d
-}
-
+func (m *mockJSONProvider) Company() string              { return "MockJSON" }
+func (m *mockJSONProvider) Model() string                { return "json-model" }
 func (m *mockJSONProvider) SetHTTPClient(_ *http.Client) {}
 func (m *mockJSONProvider) Generate(
 	ctx context.Context,
@@ -70,7 +65,6 @@ type errorProvider struct{}
 
 func (e *errorProvider) Company() string              { return "err" }
 func (e *errorProvider) Model() string                { return "err-model" }
-func (e *errorProvider) SetDebugger(d Debugger)       {}
 func (e *errorProvider) SetHTTPClient(_ *http.Client) {}
 func (e *errorProvider) Generate(ctx context.Context, systemPrompt content.Content, messages []Message, toolbox *tools.Toolbox, jsonOutputSchema *tools.ValueSchema) ProviderStream {
 	return &mockJSONStreamWithError{}

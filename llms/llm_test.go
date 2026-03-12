@@ -50,7 +50,6 @@ type mockProvider struct {
 	toolboxToolsCount      int
 	toolCallsToMake        []string // Names of tools to simulate calls for on the *first* Generate call
 	processedToolResponses bool     // Tracks if we've seen tool responses in messages
-	debugger               Debugger
 }
 
 func (m *mockProvider) Company() string {
@@ -59,10 +58,6 @@ func (m *mockProvider) Company() string {
 
 func (m *mockProvider) Model() string {
 	return "test-model"
-}
-
-func (m *mockProvider) SetDebugger(d Debugger) {
-	m.debugger = d
 }
 
 func (m *mockProvider) SetHTTPClient(_ *http.Client) {}
@@ -204,8 +199,6 @@ func (m *errorMockProvider) Model() string {
 	return "test-model"
 }
 
-func (m *errorMockProvider) SetDebugger(d Debugger) {}
-
 func (m *errorMockProvider) SetHTTPClient(_ *http.Client) {}
 
 // Updated signature
@@ -246,8 +239,6 @@ func (m *mockEmptyIDProvider) Company() string {
 func (m *mockEmptyIDProvider) Model() string {
 	return "test-model"
 }
-
-func (m *mockEmptyIDProvider) SetDebugger(d Debugger) {}
 
 func (m *mockEmptyIDProvider) SetHTTPClient(_ *http.Client) {}
 
@@ -328,8 +319,6 @@ func (m *mockCancellingProvider) Company() string { return "Mock Cancelling Prov
 func (m *mockCancellingProvider) Model() string {
 	return "test-model"
 }
-
-func (m *mockCancellingProvider) SetDebugger(d Debugger) {}
 
 func (m *mockCancellingProvider) SetHTTPClient(_ *http.Client) {}
 
