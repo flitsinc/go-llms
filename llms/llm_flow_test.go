@@ -46,7 +46,6 @@ type messageStartProvider struct{}
 
 func (p *messageStartProvider) Company() string              { return "Message Start Provider" }
 func (p *messageStartProvider) Model() string                { return "message-start-model" }
-func (p *messageStartProvider) SetDebugger(d Debugger)       {}
 func (p *messageStartProvider) SetHTTPClient(_ *http.Client) {}
 func (p *messageStartProvider) Generate(
 	ctx context.Context,

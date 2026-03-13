@@ -93,7 +93,6 @@ type Model struct {
 	thinkingBudget  int
 	thinkingLevel   ThinkingLevel
 	mediaResolution MediaResolution
-	debugger        llms.Debugger
 	modalities      []string
 	httpClient      *http.Client
 
@@ -222,10 +221,6 @@ func (m *Model) Model() string {
 	return m.model
 }
 
-func (m *Model) SetDebugger(d llms.Debugger) {
-	m.debugger = d
-}
-
 func (m *Model) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -233,6 +228,8 @@ func (m *Model) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
+
 	if m.endpoint == "" {
 		return &Stream{err: fmt.Errorf("must call either WithVertexAI(…) or WithGenerativeLanguageAPI(…) first")}
 	}
@@ -419,8 +416,8 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -473,7 +470,7 @@ func (m *Model) Generate(
 		ctx:            ctx,
 		model:          m.model,
 		stream:         resp.Body,
-		debugger:       m.debugger,
+		debugger:       debugger,
 		toolCallsByID:  make(map[string]int),
 		toolArgsByID:   make(map[string]json.RawMessage),
 		toolArgStreams: make(map[string]*streamingArgsBuilder),

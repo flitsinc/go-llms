@@ -34,6 +34,7 @@ func cloneMetadata(src map[string]string) map[string]string {
 type LLM struct {
 	provider Provider
 	toolbox  *tools.Toolbox
+	debugger Debugger
 
 	turns, maxTurns  int
 	lastSentMessages []Message
@@ -205,7 +206,7 @@ func (l *LLM) String() string {
 }
 
 func (l *LLM) WithDebugger(d Debugger) *LLM {
-	l.provider.SetDebugger(d)
+	l.debugger = d
 	return l
 }
 
@@ -249,6 +250,9 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	systemPrompt, outboundMessages, err := l.prepareBeforeResponse(ctx, systemPrompt, l.lastSentMessages)
 	if err != nil {
 		return false, err
+	}
+	if l.debugger != nil && GetDebugger(ctx) == nil {
+		ctx = WithDebugger(ctx, l.debugger)
 	}
 	stream := l.provider.Generate(ctx, systemPrompt, outboundMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {

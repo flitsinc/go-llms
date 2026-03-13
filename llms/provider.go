@@ -59,7 +59,6 @@ var StdOutDebugger = &stdOutDebugger{}
 type Provider interface {
 	Company() string
 	Model() string
-	SetDebugger(d Debugger)
 	SetHTTPClient(client *http.Client)
 	// Generate takes a system prompt, message history, and optional toolbox,
 	// returning a stream for the LLM's response. The provided context should

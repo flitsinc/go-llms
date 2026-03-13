@@ -23,7 +23,6 @@ type Model struct {
 	model             string
 	endpoint          string
 	company           string
-	debugger          llms.Debugger
 	maxTokens         int
 	maxThinkingTokens int
 	adaptiveThinking  bool
@@ -92,10 +91,6 @@ func (m *Model) Company() string {
 
 func (m *Model) Model() string {
 	return m.model
-}
-
-func (m *Model) SetDebugger(d llms.Debugger) {
-	m.debugger = d
 }
 
 func (m *Model) SetHTTPClient(client *http.Client) {
@@ -238,6 +233,8 @@ func (m *Model) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
+
 	var apiMessages []message
 	for _, msg := range messages {
 		apiMessages = append(apiMessages, messageFromLLM(msg))
@@ -383,8 +380,8 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -439,7 +436,7 @@ func (m *Model) Generate(
 		}}
 	}
 
-	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
+	return &Stream{ctx: ctx, model: m.model, stream: resp.Body, debugger: debugger}
 }
 
 type Stream struct {

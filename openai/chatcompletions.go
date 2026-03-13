@@ -20,7 +20,6 @@ type ChatCompletionsAPI struct {
 	model       string
 	endpoint    string
 	company     string
-	debugger    llms.Debugger
 	httpClient  *http.Client
 
 	maxCompletionTokens int
@@ -96,10 +95,6 @@ func (m *ChatCompletionsAPI) Model() string {
 	return m.model
 }
 
-func (m *ChatCompletionsAPI) SetDebugger(d llms.Debugger) {
-	m.debugger = d
-}
-
 func (m *ChatCompletionsAPI) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -107,6 +102,8 @@ func (m *ChatCompletionsAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
+
 	var apiMessages []message
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, message{
@@ -264,8 +261,8 @@ func (m *ChatCompletionsAPI) Generate(
 		return &ChatCompletionsStream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if m.debugger != nil {
-		m.debugger.RawRequest(m.endpoint, jsonData)
+	if debugger != nil {
+		debugger.RawRequest(m.endpoint, jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
@@ -326,7 +323,7 @@ func (m *ChatCompletionsAPI) Generate(
 		}}
 	}
 
-	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: m.debugger}
+	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: debugger}
 }
 
 type ChatCompletionsStream struct {
