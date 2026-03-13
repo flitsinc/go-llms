@@ -24,6 +24,7 @@ type WebSocketResponsesAPI struct {
 	accessToken string
 	endpoint    string
 	company     string
+	debugger    llms.Debugger
 
 	// WebSocket state
 	conn         *websocket.Conn
@@ -170,6 +171,17 @@ func (m *WebSocketResponsesAPI) WithVerbosity(verbosity Verbosity) *WebSocketRes
 	return m
 }
 
+// WithDebugger sets a default debugger for this provider. It is used by
+// Warmup and Generate as a fallback when the context does not already carry
+// a debugger (via llms.WithDebugger). When used through LLM.WithDebugger,
+// the debugger is injected into the context automatically, so calling this
+// method is only necessary when invoking Warmup or Generate directly on the
+// provider.
+func (m *WebSocketResponsesAPI) WithDebugger(d llms.Debugger) *WebSocketResponsesAPI {
+	m.debugger = d
+	return m
+}
+
 func (m *WebSocketResponsesAPI) Company() string { return m.company }
 func (m *WebSocketResponsesAPI) Model() string   { return m.model }
 
@@ -206,6 +218,9 @@ func (m *WebSocketResponsesAPI) ResetChain() {
 // Generate is being iterated, as they share the same WebSocket connection.
 func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string, toolbox *tools.Toolbox) (string, error) {
 	debugger := llms.GetDebugger(ctx)
+	if debugger == nil {
+		debugger = m.debugger
+	}
 
 	m.mu.Lock()
 	if err := m.ensureConnected(ctx); err != nil {
@@ -296,6 +311,9 @@ func (m *WebSocketResponsesAPI) Generate(
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
+	if debugger == nil {
+		debugger = m.debugger
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

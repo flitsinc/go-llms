@@ -422,6 +422,14 @@ The connection is established lazily on the first call. All the same `With*` con
 _, err := provider.Warmup(ctx, "You are a helpful assistant.", toolbox)
 ```
 
+**Debugging** — when calling `Warmup` or `Generate` directly on the provider (not through `LLM`), use `WithDebugger` to attach a debugger:
+
+```go
+provider.WithDebugger(llms.StdOutDebugger)
+```
+
+Alternatively, pass the debugger via context: `llms.WithDebugger(ctx, llms.StdOutDebugger)`.
+
 **External connections** let you manage the WebSocket lifecycle yourself:
 
 ```go
@@ -445,6 +453,9 @@ type Provider interface {
     // Generate takes a system prompt, message history, and optional toolbox,
     // returning a stream for the LLM's response. The provided context should
     // be respected for cancellation.
+    //
+    // Providers should check for a Debugger on the context via
+    // llms.GetDebugger(ctx) to support request/response logging.
     Generate(
         ctx context.Context,
         systemPrompt content.Content,
