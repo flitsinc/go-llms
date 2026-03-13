@@ -251,11 +251,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	generateCtx := ctx
 	if l.debugger != nil && GetDebugger(ctx) == nil {
-		generateCtx = WithDebugger(ctx, l.debugger)
+		ctx = WithDebugger(ctx, l.debugger)
 	}
-	stream := l.provider.Generate(generateCtx, systemPrompt, outboundMessages, l.toolbox, l.JSONOutputSchema)
+	stream := l.provider.Generate(ctx, systemPrompt, outboundMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
 	}
