@@ -26,10 +26,10 @@ type Model struct {
 	maxTokens         int
 	maxThinkingTokens int
 	adaptiveThinking  bool
-	effort            Effort
-	speed             Speed
-	betaFeatures      []string
-	httpClient        *http.Client
+	effort              Effort
+	customPayloadValues map[string]any
+	betaFeatures        []string
+	httpClient          *http.Client
 }
 
 func New(apiKey, model string) *Model {
@@ -86,12 +86,14 @@ func (m *Model) WithEffort(effort Effort) *Model {
 	return m
 }
 
-// WithSpeed sets the inference speed mode. Currently only SpeedFast is
-// supported, on Claude Opus 4.6. Fast mode provides significantly faster
-// output token generation at premium pricing. This automatically adds the
-// required beta header.
-func (m *Model) WithSpeed(speed Speed) *Model {
-	m.speed = speed
+// WithCustomPayloadValue sets a custom key-value pair in the request payload.
+// This is useful for setting provider-specific fields that are not directly
+// supported by the library (e.g. "speed": "fast" for Anthropic fast mode).
+func (m *Model) WithCustomPayloadValue(key string, value any) *Model {
+	if m.customPayloadValues == nil {
+		m.customPayloadValues = make(map[string]any)
+	}
+	m.customPayloadValues[key] = value
 	return m
 }
 
@@ -381,8 +383,8 @@ func (m *Model) Generate(
 		outputConfig["effort"] = m.effort
 	}
 
-	if m.speed != "" {
-		payload["speed"] = m.speed
+	for k, v := range m.customPayloadValues {
+		payload[k] = v
 	}
 
 	if len(outputConfig) > 0 {
@@ -410,10 +412,6 @@ func (m *Model) Generate(
 	for _, beta := range m.betaFeatures {
 		req.Header.Add("anthropic-beta", beta)
 	}
-	if m.speed != "" {
-		req.Header.Add("anthropic-beta", "fast-mode-2026-02-01")
-	}
-
 	client := m.httpClient
 	if client == nil {
 		client = http.DefaultClient

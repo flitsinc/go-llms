@@ -17,14 +17,6 @@ const (
 	EffortMax    Effort = "max" // Opus 4.6 only
 )
 
-// Speed controls the inference speed mode for compatible models.
-// Fast mode provides significantly faster output token generation at premium pricing.
-type Speed string
-
-const (
-	SpeedFast Speed = "fast" // Opus 4.6 only
-)
-
 type Tool struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
