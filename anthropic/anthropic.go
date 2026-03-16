@@ -27,6 +27,7 @@ type Model struct {
 	maxThinkingTokens int
 	adaptiveThinking  bool
 	effort            Effort
+	speed             Speed
 	betaFeatures      []string
 	httpClient        *http.Client
 }
@@ -82,6 +83,15 @@ func (m *Model) WithAdaptiveThinking() *Model {
 // available on Opus 4.6.
 func (m *Model) WithEffort(effort Effort) *Model {
 	m.effort = effort
+	return m
+}
+
+// WithSpeed sets the inference speed mode. Currently only SpeedFast is
+// supported, on Claude Opus 4.6. Fast mode provides significantly faster
+// output token generation at premium pricing. This automatically adds the
+// required beta header.
+func (m *Model) WithSpeed(speed Speed) *Model {
+	m.speed = speed
 	return m
 }
 
@@ -371,6 +381,10 @@ func (m *Model) Generate(
 		outputConfig["effort"] = m.effort
 	}
 
+	if m.speed != "" {
+		payload["speed"] = m.speed
+	}
+
 	if len(outputConfig) > 0 {
 		payload["output_config"] = outputConfig
 	}
@@ -395,6 +409,9 @@ func (m *Model) Generate(
 	// Add beta feature headers if any are configured
 	for _, beta := range m.betaFeatures {
 		req.Header.Add("anthropic-beta", beta)
+	}
+	if m.speed != "" {
+		req.Header.Add("anthropic-beta", "fast-mode-2026-02-01")
 	}
 
 	client := m.httpClient
