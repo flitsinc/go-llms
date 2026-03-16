@@ -26,9 +26,10 @@ type Model struct {
 	maxTokens         int
 	maxThinkingTokens int
 	adaptiveThinking  bool
-	effort            Effort
-	betaFeatures      []string
-	httpClient        *http.Client
+	effort              Effort
+	customPayloadValues map[string]any
+	betaFeatures        []string
+	httpClient          *http.Client
 }
 
 func New(apiKey, model string) *Model {
@@ -82,6 +83,19 @@ func (m *Model) WithAdaptiveThinking() *Model {
 // available on Opus 4.6.
 func (m *Model) WithEffort(effort Effort) *Model {
 	m.effort = effort
+	return m
+}
+
+// WithCustomPayloadValue sets a custom key-value pair in the request payload.
+// This is useful for setting provider-specific fields that are not directly
+// supported by the library (e.g. "speed": "fast" for Anthropic fast mode).
+// WARNING: Do not override core fields (stream, model, messages, max_tokens)
+// as this will break response parsing or cause unexpected behavior.
+func (m *Model) WithCustomPayloadValue(key string, value any) *Model {
+	if m.customPayloadValues == nil {
+		m.customPayloadValues = make(map[string]any)
+	}
+	m.customPayloadValues[key] = value
 	return m
 }
 
@@ -371,6 +385,10 @@ func (m *Model) Generate(
 		outputConfig["effort"] = m.effort
 	}
 
+	for k, v := range m.customPayloadValues {
+		payload[k] = v
+	}
+
 	if len(outputConfig) > 0 {
 		payload["output_config"] = outputConfig
 	}
@@ -396,7 +414,6 @@ func (m *Model) Generate(
 	for _, beta := range m.betaFeatures {
 		req.Header.Add("anthropic-beta", beta)
 	}
-
 	client := m.httpClient
 	if client == nil {
 		client = http.DefaultClient
