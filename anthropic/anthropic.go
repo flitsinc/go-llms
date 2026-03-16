@@ -89,6 +89,8 @@ func (m *Model) WithEffort(effort Effort) *Model {
 // WithCustomPayloadValue sets a custom key-value pair in the request payload.
 // This is useful for setting provider-specific fields that are not directly
 // supported by the library (e.g. "speed": "fast" for Anthropic fast mode).
+// WARNING: Do not override core fields (stream, model, messages, max_tokens)
+// as this will break response parsing or cause unexpected behavior.
 func (m *Model) WithCustomPayloadValue(key string, value any) *Model {
 	if m.customPayloadValues == nil {
 		m.customPayloadValues = make(map[string]any)
