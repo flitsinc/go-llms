@@ -71,10 +71,17 @@ func (m *Model) WithVertexAI(ts oauth2.TokenSource, projectID, location string) 
 	m.vertexAI = true
 	m.tokenSource = ts
 	m.company = "Google"
-	m.endpoint = fmt.Sprintf(
-		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/anthropic/models/%s:streamRawPredict",
-		location, projectID, location, m.model,
-	)
+	if location == "global" {
+		m.endpoint = fmt.Sprintf(
+			"https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/anthropic/models/%s:streamRawPredict",
+			projectID, m.model,
+		)
+	} else {
+		m.endpoint = fmt.Sprintf(
+			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/anthropic/models/%s:streamRawPredict",
+			location, projectID, location, m.model,
+		)
+	}
 	return m
 }
 
