@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/metalim/jsonmap"
+	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -19,17 +20,21 @@ import (
 )
 
 type Model struct {
-	apiKey            string
-	model             string
-	endpoint          string
-	company           string
-	maxTokens         int
-	maxThinkingTokens int
-	adaptiveThinking  bool
+	apiKey              string
+	model               string
+	endpoint            string
+	company             string
+	maxTokens           int
+	maxThinkingTokens   int
+	adaptiveThinking    bool
 	effort              Effort
 	customPayloadValues map[string]any
 	betaFeatures        []string
 	httpClient          *http.Client
+
+	// Vertex AI fields
+	vertexAI    bool
+	tokenSource oauth2.TokenSource
 }
 
 func New(apiKey, model string) *Model {
@@ -54,6 +59,29 @@ func (m *Model) WithBeta(betaFeature string) *Model {
 func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
 	m.company = company
+	return m
+}
+
+// WithVertexAI configures the model to use Google Cloud Vertex AI as the
+// endpoint for Anthropic Claude models. Authentication is handled via the
+// provided OAuth2 token source (typically from Google Application Default
+// Credentials). The model name is embedded in the URL path, and
+// anthropic_version is sent in the request body instead of as a header.
+func (m *Model) WithVertexAI(ts oauth2.TokenSource, projectID, location string) *Model {
+	m.vertexAI = true
+	m.tokenSource = ts
+	m.company = "Google"
+	if location == "global" {
+		m.endpoint = fmt.Sprintf(
+			"https://aiplatform.googleapis.com/v1/projects/%s/locations/global/publishers/anthropic/models/%s:streamRawPredict",
+			projectID, m.model,
+		)
+	} else {
+		m.endpoint = fmt.Sprintf(
+			"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/anthropic/models/%s:streamRawPredict",
+			location, projectID, location, m.model,
+		)
+	}
 	return m
 }
 
@@ -262,10 +290,17 @@ func (m *Model) Generate(
 	}
 
 	payload := map[string]any{
-		"model":      m.model,
 		"messages":   apiMessages,
 		"stream":     true,
 		"max_tokens": maxTokens,
+	}
+
+	if m.vertexAI {
+		// Vertex AI embeds the model in the URL path and requires
+		// anthropic_version in the request body.
+		payload["anthropic_version"] = "vertex-2023-10-16"
+	} else {
+		payload["model"] = m.model
 	}
 
 	if systemPrompt != nil {
@@ -407,10 +442,20 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", m.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 
-	// Add beta feature headers if any are configured
+	if m.vertexAI {
+		// Vertex AI uses OAuth2 Bearer tokens instead of API keys.
+		token, err := m.tokenSource.Token()
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: failed to get OAuth2 token: %w", err)}
+		}
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	} else {
+		req.Header.Set("X-API-Key", m.apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+
+	// Add beta feature headers if any are configured.
 	for _, beta := range m.betaFeatures {
 		req.Header.Add("anthropic-beta", beta)
 	}
