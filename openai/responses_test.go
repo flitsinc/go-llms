@@ -148,7 +148,6 @@ func TestResponsesStream_ReasoningOutputDoneSummaryFallback(t *testing.T) {
 	}
 }
 
-
 // Test that reasoning without summary text still emits Thinking + ThinkingDone
 // so callers always see the reasoning ID for round-tripping with OpenAI.
 func TestResponsesStream_ReasoningWithoutSummary(t *testing.T) {
@@ -471,5 +470,173 @@ func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.
 	}
 	if outMsg, ok := sequence[6].(OutputMessage); !ok || len(outMsg.Content) == 0 {
 		t.Fatalf("expected seventh item assistant OutputMessage, got %#v", sequence[6])
+	}
+}
+
+// Test that the phase field is parsed from streaming events and stored in message metadata.
+func TestResponsesStream_PhaseFieldParsed(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1"}}`,
+		`data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1","role":"assistant","phase":"commentary"},"output_index":0}`,
+		`data: {"type":"response.output_text.delta","delta":"I'll start by analyzing...","item_id":"msg_1","content_index":0}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5.4", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	msg := stream.Message()
+	if msg.Metadata == nil {
+		t.Fatalf("expected message metadata to be non-nil")
+	}
+	if got := msg.Metadata["openai:phase"]; got != "commentary" {
+		t.Fatalf("expected openai:phase='commentary', got %q", got)
+	}
+}
+
+// Test that phase is preserved through the full round-trip: stream -> Message -> convertMessageToInput -> OutputMessage.
+func TestConvertMessageToInput_PhasePreservedRoundTrip(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Text{Text: "Here's the refactored code..."},
+		},
+		Metadata: map[string]string{
+			"openai:phase": "final_answer",
+		},
+	}
+
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(inputs))
+	}
+
+	outMsg, ok := inputs[0].(OutputMessage)
+	if !ok {
+		t.Fatalf("expected OutputMessage, got %T", inputs[0])
+	}
+	if outMsg.Phase != "final_answer" {
+		t.Fatalf("expected Phase='final_answer', got %q", outMsg.Phase)
+	}
+}
+
+// Test that phase is correctly set to "commentary" on replay.
+func TestConvertMessageToInput_CommentaryPhase(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Text{Text: "I'll start by analyzing the auth module..."},
+		},
+		Metadata: map[string]string{
+			"openai:phase": "commentary",
+		},
+	}
+
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(inputs))
+	}
+
+	outMsg, ok := inputs[0].(OutputMessage)
+	if !ok {
+		t.Fatalf("expected OutputMessage, got %T", inputs[0])
+	}
+	if outMsg.Phase != "commentary" {
+		t.Fatalf("expected Phase='commentary', got %q", outMsg.Phase)
+	}
+}
+
+// Test that messages without phase metadata produce OutputMessage with empty Phase (omitted in JSON).
+func TestConvertMessageToInput_NoPhaseOmitted(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Text{Text: "Hello!"},
+		},
+	}
+
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
+	if len(inputs) != 1 {
+		t.Fatalf("expected 1 input, got %d", len(inputs))
+	}
+
+	outMsg, ok := inputs[0].(OutputMessage)
+	if !ok {
+		t.Fatalf("expected OutputMessage, got %T", inputs[0])
+	}
+	if outMsg.Phase != "" {
+		t.Fatalf("expected empty Phase for message without metadata, got %q", outMsg.Phase)
+	}
+
+	// Verify it's omitted from JSON
+	data, err := json.Marshal(outMsg)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+	if strings.Contains(string(data), "phase") {
+		t.Fatalf("expected 'phase' to be omitted from JSON when empty, got %s", data)
+	}
+}
+
+// Test that phase is preserved alongside reasoning and tool calls in a complex multi-item sequence.
+func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "rs_1", Text: "Planning...", Summary: true},
+			&content.Text{Text: "I'll run this command."},
+		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_1",
+				Name:      "run_cmd",
+				Arguments: json.RawMessage(`{"cmd":"ls"}`),
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_1",
+					"openai:item_type": "function_call",
+				},
+			},
+		},
+		Metadata: map[string]string{
+			"openai:phase": "commentary",
+		},
+	}
+
+	inputs, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("convertMessageToInput returned error: %v", err)
+	}
+
+	// Should be: Reasoning, OutputMessage (with phase), FunctionCall
+	if len(inputs) != 3 {
+		t.Fatalf("expected 3 inputs, got %d (%#v)", len(inputs), inputs)
+	}
+
+	if _, ok := inputs[0].(Reasoning); !ok {
+		t.Fatalf("expected first item to be Reasoning, got %T", inputs[0])
+	}
+	outMsg, ok := inputs[1].(OutputMessage)
+	if !ok {
+		t.Fatalf("expected second item to be OutputMessage, got %T", inputs[1])
+	}
+	if outMsg.Phase != "commentary" {
+		t.Fatalf("expected OutputMessage Phase='commentary', got %q", outMsg.Phase)
+	}
+	if _, ok := inputs[2].(FunctionCall); !ok {
+		t.Fatalf("expected third item to be FunctionCall, got %T", inputs[2])
 	}
 }

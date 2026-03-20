@@ -253,9 +253,9 @@ func (m *ResponsesAPI) Generate(
 
 type ResponsesStream struct {
 	responsesEventProcessor // shared event processing state
-	ctx    context.Context
-	model  string
-	stream io.Reader
+	ctx                     context.Context
+	model                   string
+	stream                  io.Reader
 }
 
 func newResponsesStreamError(err error) *ResponsesStream {
@@ -390,6 +390,7 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		seenReasoningIDs := map[string]bool{}
 		var pendingOutParts []OutputContent
 		firstOutputMessage := true
+		phase := msg.Metadata["openai:phase"]
 
 		flushOutput := func() {
 			if len(pendingOutParts) == 0 {
@@ -400,7 +401,7 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 				msgID = msg.ID
 				firstOutputMessage = false
 			}
-			items = append(items, OutputMessage{Type: "message", ID: msgID, Role: "assistant", Content: pendingOutParts})
+			items = append(items, OutputMessage{Type: "message", ID: msgID, Role: "assistant", Content: pendingOutParts, Phase: phase})
 			pendingOutParts = nil
 		}
 

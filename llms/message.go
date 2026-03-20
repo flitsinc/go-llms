@@ -27,6 +27,9 @@ type Message struct {
 	// ToolCallName is the function name corresponding to the ToolCallID when available.
 	// This is primarily used by providers (e.g., Gemini) that require function responses to reference the function name.
 	ToolCallName string `json:"tool_call_name,omitempty"`
+	// Metadata holds provider-specific metadata that should be forwarded unchanged.
+	// Keys are prefixed with the provider name, e.g. "openai:phase".
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for Message. It
