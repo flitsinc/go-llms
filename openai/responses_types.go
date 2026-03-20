@@ -78,6 +78,7 @@ type OutputMessage struct {
 	Role    string          `json:"role"`             // "assistant"
 	Status  string          `json:"status,omitempty"` // "in_progress", "completed", "incomplete"
 	Content []OutputContent `json:"content"`
+	Phase   string          `json:"phase,omitempty"` // "commentary", "final_answer"
 }
 
 func (OutputMessage) responseItem() {}

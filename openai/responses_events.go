@@ -101,13 +101,20 @@ func (p *responsesEventProcessor) processEvent(
 
 	case "response.output_item.added":
 		var item struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
+			Type  string `json:"type"`
+			ID    string `json:"id"`
+			Phase string `json:"phase"`
 		}
 		if err := json.Unmarshal(event.Item, &item); err == nil {
 			switch item.Type {
 			case "message":
 				p.message.ID = item.ID
+				if item.Phase != "" {
+					if p.message.Metadata == nil {
+						p.message.Metadata = make(map[string]string)
+					}
+					p.message.Metadata["openai:phase"] = item.Phase
+				}
 				if !yield(llms.StreamStatusMessageStart) {
 					return true
 				}
