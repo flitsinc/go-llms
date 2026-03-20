@@ -104,6 +104,7 @@ func cloneMessages(messages []Message) []Message {
 func cloneMessage(m Message) Message {
 	clone := m
 	clone.Content = cloneContent(m.Content)
+	clone.Metadata = cloneMetadata(m.Metadata)
 	if len(m.ToolCalls) > 0 {
 		clone.ToolCalls = make([]ToolCall, len(m.ToolCalls))
 		for i := range m.ToolCalls {
