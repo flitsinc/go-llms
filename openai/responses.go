@@ -186,6 +186,11 @@ func (m *ResponsesAPI) Generate(
 		payload["previous_response_id"] = m.previousResponseID
 	}
 
+	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
+	if hasLongCacheHint(systemPrompt, messages) {
+		payload["prompt_cache_retention"] = "24h"
+	}
+
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return newResponsesStreamError(fmt.Errorf("error encoding JSON: %w", err))

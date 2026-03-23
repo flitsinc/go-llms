@@ -58,7 +58,7 @@ func convertContent(c content.Content) contentList {
 			// OpenAI does not expect thinking tokens as input; ignore.
 			continue
 		case *content.CacheHint:
-			// OpenAI has implicit caching; ignore.
+			// Cache hints are handled at the request level via prompt_cache_retention.
 			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
@@ -325,4 +325,23 @@ type completionTokensDetails struct {
 type promptTokensDetails struct {
 	AudioTokens  int `json:"audio_tokens"`
 	CachedTokens int `json:"cached_tokens"`
+}
+
+// hasLongCacheHint reports whether any content item in the given system prompt
+// or messages contains a CacheHint with Duration "long". This is used to
+// decide whether to set prompt_cache_retention:"24h" on OpenAI requests.
+func hasLongCacheHint(systemPrompt content.Content, messages []llms.Message) bool {
+	for _, item := range systemPrompt {
+		if ch, ok := item.(*content.CacheHint); ok && ch.Duration == "long" {
+			return true
+		}
+	}
+	for _, msg := range messages {
+		for _, item := range msg.Content {
+			if ch, ok := item.(*content.CacheHint); ok && ch.Duration == "long" {
+				return true
+			}
+		}
+	}
+	return false
 }
