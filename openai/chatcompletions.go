@@ -140,6 +140,11 @@ func (m *ChatCompletionsAPI) Generate(
 		payload["verbosity"] = m.verbosity
 	}
 
+	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
+	if hasLongCacheHint(systemPrompt, messages) {
+		payload["prompt_cache_retention"] = "24h"
+	}
+
 	for k, v := range m.customPayloadValues {
 		payload[k] = v
 	}
