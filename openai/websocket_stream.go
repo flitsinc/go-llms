@@ -26,7 +26,7 @@ func newWebSocketStreamError(err error) *WebSocketStream {
 	}
 }
 
-func (s *WebSocketStream) Err() error         { return s.err }
+func (s *WebSocketStream) Err() error            { return s.err }
 func (s *WebSocketStream) Message() llms.Message { return s.message }
 func (s *WebSocketStream) Text() string          { return s.lastText }
 
@@ -55,7 +55,7 @@ func (s *WebSocketStream) Usage() llms.Usage {
 	return llms.Usage{
 		CachedInputTokens: s.usage.InputTokensDetails.CachedTokens,
 		InputTokens:       s.usage.InputTokens,
-		OutputTokens:       s.usage.OutputTokens,
+		OutputTokens:      s.usage.OutputTokens,
 	}
 }
 
