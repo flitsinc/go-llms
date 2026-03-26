@@ -334,6 +334,34 @@ func (p *responsesEventProcessor) processEvent(
 		"response.image_generation_call.partial_image":
 		// Ignored for now.
 
+	case "response.incomplete":
+		if event.Response != nil {
+			var response struct {
+				Usage             *responsesUsage `json:"usage"`
+				IncompleteDetails *struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
+			}
+			if err := json.Unmarshal(event.Response, &response); err == nil {
+				if response.Usage != nil {
+					p.usage = response.Usage
+				}
+				reason := "unknown"
+				if response.IncompleteDetails != nil {
+					reason = response.IncompleteDetails.Reason
+				}
+				p.err = fmt.Errorf("%w (reason=%q)", llms.ErrOutputTruncated, reason)
+			}
+		}
+
+		if p.activeToolCall != nil {
+			if !yield(llms.StreamStatusToolCallReady) {
+				return true
+			}
+			p.activeToolCall = nil
+		}
+		return true
+
 	case "response.completed":
 		if event.Response != nil {
 			var response struct {
