@@ -621,7 +621,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 						break
 					}
-					s.err = fmt.Errorf("error reading stream: %w", err)
+					if s.err == nil {
+						s.err = fmt.Errorf("error reading stream: %w", err)
+					}
 					return
 				}
 				lineBuilder.Write(part)
@@ -643,7 +645,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 
 			var chunk streamingResponse
 			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				if s.err == nil {
+					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				}
 				return
 			}
 			if chunk.UsageMetadata != nil {
@@ -916,6 +920,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 							return
 						}
 						lastEventWasThinking = false
+					}
+					if chunk.Candidates[0].FinishReason == "MAX_TOKENS" {
+						s.err = fmt.Errorf("%w (finishReason=%q)", llms.ErrOutputTruncated, chunk.Candidates[0].FinishReason)
+						// Do not return here. The stream may still deliver a usage
+						// chunk that populates s.usage.
 					}
 				}
 			}
