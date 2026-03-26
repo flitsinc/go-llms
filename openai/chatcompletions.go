@@ -525,13 +525,19 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				}
 			}
-			// Check if the overall message is finished (might indicate last tool call is ready)
-			if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
-				if activeToolCallIndex != -1 {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return // Abort if yield fails
+			// Check if the overall message is finished
+			if chunk.Choices[0].FinishReason != nil {
+				switch *chunk.Choices[0].FinishReason {
+				case "tool_calls":
+					if activeToolCallIndex != -1 {
+						if !yield(llms.StreamStatusToolCallReady) {
+							return // Abort if yield fails
+						}
+						activeToolCallIndex = -1 // Reset active tool call
 					}
-					activeToolCallIndex = -1 // Reset active tool call
+				case "length":
+					s.err = fmt.Errorf("output truncated: model reached max output token limit (finish_reason=%q)", *chunk.Choices[0].FinishReason)
+					return
 				}
 			}
 		}
