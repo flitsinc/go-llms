@@ -410,7 +410,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 						break
 					}
-					s.err = fmt.Errorf("error reading stream: %w", err)
+					if s.err == nil {
+						s.err = fmt.Errorf("error reading stream: %w", err)
+					}
 					return
 				}
 				lineBuilder.Write(part)
@@ -440,7 +442,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 			var chunk chatCompletionChunk
 			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				if s.err == nil {
+					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				}
 				return
 			}
 			if chunk.Usage != nil {
