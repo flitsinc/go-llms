@@ -410,7 +410,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 						break
 					}
-					s.err = fmt.Errorf("error reading stream: %w", err)
+					if s.err == nil {
+						s.err = fmt.Errorf("error reading stream: %w", err)
+					}
 					return
 				}
 				lineBuilder.Write(part)
@@ -440,7 +442,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 			var chunk chatCompletionChunk
 			if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-				s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				if s.err == nil {
+					s.err = fmt.Errorf("error unmarshalling chunk: %w", err)
+				}
 				return
 			}
 			if chunk.Usage != nil {
@@ -525,13 +529,21 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				}
 			}
-			// Check if the overall message is finished (might indicate last tool call is ready)
-			if chunk.Choices[0].FinishReason != nil && *chunk.Choices[0].FinishReason == "tool_calls" {
-				if activeToolCallIndex != -1 {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return // Abort if yield fails
+			// Check if the overall message is finished
+			if chunk.Choices[0].FinishReason != nil {
+				switch *chunk.Choices[0].FinishReason {
+				case "tool_calls":
+					if activeToolCallIndex != -1 {
+						if !yield(llms.StreamStatusToolCallReady) {
+							return // Abort if yield fails
+						}
+						activeToolCallIndex = -1 // Reset active tool call
 					}
-					activeToolCallIndex = -1 // Reset active tool call
+				case "length":
+					s.err = fmt.Errorf("%w (finish_reason=%q)", llms.ErrOutputTruncated, *chunk.Choices[0].FinishReason)
+					// Do not return here. The stream may still deliver a usage chunk
+					// (with empty choices) that populates s.usage. The loop will exit
+					// naturally when the stream ends, and s.err is returned via Err().
 				}
 			}
 		}

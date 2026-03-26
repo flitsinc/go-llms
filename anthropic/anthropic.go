@@ -768,11 +768,15 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						s.outputTokens = *u.OutputTokens
 					}
 				}
-				// Check stop reason, but allow tool_use and end_turn
+				// Check stop reason
 				if event.Delta.StopReason != "" &&
 					event.Delta.StopReason != "tool_use" &&
 					event.Delta.StopReason != "end_turn" {
-					s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
+					if event.Delta.StopReason == "max_tokens" {
+						s.err = fmt.Errorf("%w (stop_reason=%q)", llms.ErrOutputTruncated, event.Delta.StopReason)
+					} else {
+						s.err = fmt.Errorf("unexpected stop reason: %q", event.Delta.StopReason)
+					}
 					return
 				}
 			case "message_stop":

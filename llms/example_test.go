@@ -3,6 +3,7 @@ package llms_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -202,16 +203,18 @@ func ExampleLLM_WithMaxTurns() {
 	}
 	fmt.Println()
 
-	// If the conversation required more turns (e.g., complex tool use),
-	// llm.Err() might return llms.ErrMaxTurnsReached.
+	// After the chat loop, check for errors. Always use errors.Is for
+	// sentinel errors since they may be wrapped with additional context.
 	if err := llm.Err(); err != nil {
-		if err == llms.ErrMaxTurnsReached {
+		if errors.Is(err, llms.ErrMaxTurnsReached) {
 			fmt.Println("Max turns reached as expected.")
+		} else if errors.Is(err, llms.ErrOutputTruncated) {
+			fmt.Println("Output was truncated due to max token limit.")
 		} else {
 			log.Printf("Chat failed with unexpected error: %v", err)
 		}
 	} else {
-		fmt.Println("Chat completed within max turns.")
+		fmt.Println("Chat completed successfully.")
 	}
 
 	/*

@@ -1,6 +1,14 @@
 package llms
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrOutputTruncated is returned when a model's output is cut short because it
+// hit the max output token limit (e.g. finish_reason="length" in OpenAI,
+// stop_reason="max_tokens" in Anthropic).
+var ErrOutputTruncated = errors.New("output truncated: model reached max output token limit")
 
 // HTTPError represents an HTTP error response from an LLM provider.
 type HTTPError struct {
