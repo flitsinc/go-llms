@@ -537,7 +537,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				case "length":
 					s.err = fmt.Errorf("%w (finish_reason=%q)", llms.ErrOutputTruncated, *chunk.Choices[0].FinishReason)
-					return
+					// Do not return here. The stream may still deliver a usage chunk
+					// (with empty choices) that populates s.usage. The loop will exit
+					// naturally when the stream ends, and s.err is returned via Err().
 				}
 			}
 		}
