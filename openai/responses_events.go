@@ -335,14 +335,18 @@ func (p *responsesEventProcessor) processEvent(
 		// Ignored for now.
 
 	case "response.incomplete":
-		if event.Response != nil {
+		if event.Response == nil {
+			p.err = fmt.Errorf("response.incomplete event with no payload")
+		} else {
 			var response struct {
 				Usage             *responsesUsage `json:"usage"`
 				IncompleteDetails *struct {
 					Reason string `json:"reason"`
 				} `json:"incomplete_details"`
 			}
-			if err := json.Unmarshal(event.Response, &response); err == nil {
+			if err := json.Unmarshal(event.Response, &response); err != nil {
+				p.err = fmt.Errorf("response.incomplete: failed to parse payload: %w", err)
+			} else {
 				if response.Usage != nil {
 					p.usage = response.Usage
 				}
@@ -350,7 +354,12 @@ func (p *responsesEventProcessor) processEvent(
 				if response.IncompleteDetails != nil {
 					reason = response.IncompleteDetails.Reason
 				}
-				p.err = fmt.Errorf("%w (reason=%q)", llms.ErrOutputTruncated, reason)
+				switch reason {
+				case "max_output_tokens":
+					p.err = fmt.Errorf("%w (reason=%q)", llms.ErrOutputTruncated, reason)
+				default:
+					p.err = fmt.Errorf("response incomplete (reason=%q)", reason)
+				}
 			}
 		}
 
