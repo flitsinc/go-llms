@@ -15,6 +15,7 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 // Helper to create SSE data lines
@@ -565,6 +566,95 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 		assert.Equal(t, "toolB", apiMsg.Content[2].Name)
 		require.NotNil(t, apiMsg.Content[2].Input, "Input should not be nil for tool_use")
 		assert.JSONEq(t, `{}`, string(apiMsg.Content[2].Input))
+	})
+}
+
+// mockTokenSource returns a dummy OAuth2 token for testing Vertex AI code paths.
+type mockTokenSource struct{}
+
+func (m *mockTokenSource) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: "test-token"}, nil
+}
+
+func TestAnthropic_BetaPlacement(t *testing.T) {
+	betas := []string{
+		"fine-grained-tool-streaming-2025-05-14",
+		"interleaved-thinking-2025-05-14",
+		"extended-cache-ttl-2025-04-11",
+		"context-1m-2025-08-07",
+	}
+
+	// Capture both headers and body from the request.
+	type captured struct {
+		Headers http.Header
+		Body    map[string]any
+	}
+	captureCh := make(chan captured, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		captureCh <- captured{Headers: r.Header.Clone(), Body: body}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	t.Run("Direct Anthropic sends betas as HTTP headers", func(t *testing.T) {
+		m := New("test-key", "claude-sonnet-4-6").WithEndpoint(ts.URL, "Test")
+		for _, b := range betas {
+			m.WithBeta(b)
+		}
+		stream := m.Generate(context.Background(), nil, nil, nil, nil)
+		// Drain the stream.
+		iter := stream.Iter()
+		iter(func(_ llms.StreamStatus) bool { return true })
+		require.NoError(t, stream.Err())
+
+		cap := <-captureCh
+
+		// Headers should contain all betas.
+		headerBetas := cap.Headers.Values("Anthropic-Beta")
+		assert.ElementsMatch(t, betas, headerBetas, "All betas should be in HTTP headers for direct Anthropic")
+
+		// Body should NOT contain anthropic_beta.
+		_, hasBetaInBody := cap.Body["anthropic_beta"]
+		assert.False(t, hasBetaInBody, "Body should not contain anthropic_beta for direct Anthropic")
+	})
+
+	t.Run("Vertex AI sends betas as body param, not headers", func(t *testing.T) {
+		m := New("", "claude-sonnet-4-6").
+			WithVertexAI(&mockTokenSource{}, "test-project", "us-east5")
+		// Override endpoint to point to our test server.
+		m.endpoint = ts.URL
+		for _, b := range betas {
+			m.WithBeta(b)
+		}
+		stream := m.Generate(context.Background(), nil, nil, nil, nil)
+		iter := stream.Iter()
+		iter(func(_ llms.StreamStatus) bool { return true })
+		require.NoError(t, stream.Err())
+
+		cap := <-captureCh
+
+		// Headers should NOT contain any betas.
+		headerBetas := cap.Headers.Values("Anthropic-Beta")
+		assert.Empty(t, headerBetas, "Vertex AI should NOT send betas as HTTP headers")
+
+		// Body should contain anthropic_beta with all betas.
+		bodyBetas, ok := cap.Body["anthropic_beta"]
+		require.True(t, ok, "Vertex AI body should contain anthropic_beta")
+		betaSlice, ok := bodyBetas.([]any)
+		require.True(t, ok, "anthropic_beta should be an array")
+		var bodyBetaStrings []string
+		for _, b := range betaSlice {
+			bodyBetaStrings = append(bodyBetaStrings, b.(string))
+		}
+		assert.ElementsMatch(t, betas, bodyBetaStrings, "All betas should be in body for Vertex AI")
+
+		// Also verify anthropic_version is in the body (existing behavior).
+		assert.Equal(t, "vertex-2023-10-16", cap.Body["anthropic_version"], "Vertex should include anthropic_version in body")
 	})
 }
 

@@ -299,6 +299,12 @@ func (m *Model) Generate(
 		// Vertex AI embeds the model in the URL path and requires
 		// anthropic_version in the request body.
 		payload["anthropic_version"] = "vertex-2023-10-16"
+		// Vertex AI requires beta features as a body parameter rather than
+		// an HTTP header. Sending them as headers causes 400 errors for
+		// certain betas (e.g. context-1m-2025-08-07).
+		if len(m.betaFeatures) > 0 {
+			payload["anthropic_beta"] = m.betaFeatures
+		}
 	} else {
 		payload["model"] = m.model
 	}
@@ -456,8 +462,12 @@ func (m *Model) Generate(
 	}
 
 	// Add beta feature headers if any are configured.
-	for _, beta := range m.betaFeatures {
-		req.Header.Add("anthropic-beta", beta)
+	// For Vertex AI, betas are already included in the request body as
+	// anthropic_beta, so we only add them as headers for direct Anthropic.
+	if !m.vertexAI {
+		for _, beta := range m.betaFeatures {
+			req.Header.Add("anthropic-beta", beta)
+		}
 	}
 	client := m.httpClient
 	if client == nil {
