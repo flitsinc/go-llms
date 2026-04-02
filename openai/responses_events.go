@@ -74,7 +74,11 @@ func (p *responsesEventProcessor) processImageItem(
 	dataURI := content.BuildDataURI(mime, img.Result)
 	p.lastImage.URL = dataURI
 	p.lastImage.MIME = mime
-	p.message.Content = append(p.message.Content, &content.ImageURL{URL: dataURI, MimeType: mime})
+	p.message.Content = append(p.message.Content, &content.ImageURL{
+		URL:      dataURI,
+		MimeType: mime,
+		Metadata: map[string]string{"openai:item_id": img.ID},
+	})
 	if !yield(llms.StreamStatusImage) {
 		return true
 	}

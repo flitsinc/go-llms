@@ -27,14 +27,27 @@ func (t *Text) Type() Type {
 	return TypeText
 }
 
+// MetadataCarrier is implemented by content items that can carry
+// provider-specific metadata through the pipeline. Keys are prefixed
+// with the provider name, e.g. "openai:item_id".
+type MetadataCarrier interface {
+	GetMetadata() map[string]string
+}
+
 type ImageURL struct {
 	URL string `json:"image_url"`
 	// MimeType, if omitted, will be inferred from data URIs / URL path extensions.
 	MimeType string `json:"mime_type,omitempty"`
+	// Metadata holds provider-specific metadata that should be forwarded unchanged.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 func (iu *ImageURL) Type() Type {
 	return TypeImageURL
+}
+
+func (iu *ImageURL) GetMetadata() map[string]string {
+	return iu.Metadata
 }
 
 type JSON struct {

@@ -362,7 +362,8 @@ type ImageGenerationCall struct {
 	Result *string `json:"result,omitempty"` // base64 encoded image
 }
 
-func (ImageGenerationCall) responseItem() {}
+func (ImageGenerationCall) responseItem()  {}
+func (ImageGenerationCall) responseInput() {}
 
 // CodeInterpreterCall implements ResponseItem
 type CodeInterpreterCall struct {

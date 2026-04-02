@@ -416,6 +416,11 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: v.Text})
 			case *content.JSON:
 				pendingOutParts = append(pendingOutParts, OutputText{Type: "output_text", Text: string(v.Data)})
+			case *content.ImageURL:
+				if itemID := v.Metadata["openai:item_id"]; itemID != "" {
+					flushOutput()
+					items = append(items, ImageGenerationCall{Type: "image_generation_call", ID: itemID})
+				}
 			case *content.Thought:
 				if v.ID == "" || seenReasoningIDs[v.ID] {
 					continue

@@ -304,7 +304,15 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 
 		case StreamStatusImage:
 			url, mime := stream.Image()
-			updateChan <- ImageUpdate{URL: url, MimeType: mime}
+			update := ImageUpdate{URL: url, MimeType: mime}
+			// Propagate provider-specific metadata from the content item.
+			msg := stream.Message()
+			if len(msg.Content) > 0 {
+				if mc, ok := msg.Content[len(msg.Content)-1].(content.MetadataCarrier); ok {
+					update.Metadata = mc.GetMetadata()
+				}
+			}
+			updateChan <- update
 
 		case StreamStatusThinking:
 			updateChan <- ThinkingUpdate{stream.Thought()}

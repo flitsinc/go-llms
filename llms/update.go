@@ -76,6 +76,8 @@ func (u TextUpdate) Type() UpdateType {
 type ImageUpdate struct {
 	URL      string
 	MimeType string
+	// Metadata holds provider-specific metadata that should be forwarded unchanged.
+	Metadata map[string]string
 }
 
 func (u ImageUpdate) Type() UpdateType {
