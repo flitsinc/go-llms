@@ -280,7 +280,6 @@ func TestGemini3AggregatesFunctionResponses(t *testing.T) {
 	}
 }
 
-
 func TestGemini3MergesSecondaryContentIntoFunctionMessage(t *testing.T) {
 	// When a tool result has secondary content (e.g., text after JSON),
 	// it should be merged into the same "user" message as the function response,
