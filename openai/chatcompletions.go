@@ -33,6 +33,9 @@ type ChatCompletionsAPI struct {
 
 	// When true, emit cache_control on content parts from CacheHint items.
 	// Use for providers like OpenRouter that pass cache_control through to Anthropic.
+	// TODO: If we need more pass-through exceptions like this, create a dedicated
+	// openrouter Provider implementation instead of adding flags here, and remove
+	// cacheControl from ChatCompletionsAPI.
 	cacheControl bool
 }
 
