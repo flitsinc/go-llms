@@ -410,6 +410,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 
 	return func(yield func(llms.StreamStatus) bool) {
 		defer io.Copy(io.Discard, s.stream)
+		defer func() {
+			// Ensure ThinkingDone is emitted if the stream ends abnormally
+			// (e.g. EOF without [DONE]) while still in thinking state.
+			if s.lastThought != nil {
+				s.lastThought = nil
+				yield(llms.StreamStatusThinkingDone)
+			}
+		}()
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -505,7 +513,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 
 			// Content is nullable string in delta
-			if delta.Content != nil {
+			if delta.Content != nil && *delta.Content != "" {
 				// If we were thinking and now got content, emit ThinkingDone.
 				if s.lastThought != nil {
 					s.lastThought = nil
