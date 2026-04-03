@@ -27,15 +27,20 @@ type imageURL struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type cacheControl struct {
+	Type string `json:"type"`
+}
+
 type contentPart struct {
-	Type     string    `json:"type"`
-	Text     *string   `json:"text,omitempty"`
-	ImageURL *imageURL `json:"image_url,omitempty"`
+	Type         string        `json:"type"`
+	Text         *string       `json:"text,omitempty"`
+	ImageURL     *imageURL     `json:"image_url,omitempty"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type contentList []contentPart
 
-func convertContent(c content.Content) contentList {
+func convertContent(c content.Content, emitCacheControl bool) contentList {
 	cl := make(contentList, 0, len(c))
 	for _, item := range c {
 		var cp contentPart
@@ -58,7 +63,10 @@ func convertContent(c content.Content) contentList {
 			// OpenAI does not expect thinking tokens as input; ignore.
 			continue
 		case *content.CacheHint:
-			// Cache hints are handled at the request level via prompt_cache_retention.
+			// When cacheControl is enabled, attach cache_control to the preceding content part.
+			if emitCacheControl && len(cl) > 0 {
+				cl[len(cl)-1].CacheControl = &cacheControl{Type: "ephemeral"}
+			}
 			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
@@ -69,7 +77,7 @@ func convertContent(c content.Content) contentList {
 }
 
 func (cl contentList) MarshalJSON() ([]byte, error) {
-	if len(cl) == 1 && cl[0].Type == "text" && cl[0].Text != nil {
+	if len(cl) == 1 && cl[0].Type == "text" && cl[0].Text != nil && cl[0].CacheControl == nil {
 		return json.Marshal(*cl[0].Text)
 	}
 	return json.Marshal([]contentPart(cl))
@@ -98,7 +106,7 @@ type message struct {
 
 // messagesFromLLM converts an llms.Message to the OpenAI API message format.
 // It may return multiple messages if the input is a tool result with auxiliary content.
-func messagesFromLLM(m llms.Message) []message {
+func messagesFromLLM(m llms.Message, emitCacheControl bool) []message {
 	if m.Role == "tool" {
 		var messagesToReturn []message
 		var primaryResultString string
@@ -132,7 +140,7 @@ func messagesFromLLM(m llms.Message) []message {
 		messagesToReturn = append(messagesToReturn, primaryMessage)
 
 		if len(secondaryContent) > 0 {
-			secondaryAPIContent := convertContent(secondaryContent)
+			secondaryAPIContent := convertContent(secondaryContent, emitCacheControl)
 			if len(secondaryAPIContent) > 0 {
 				secondaryMessage := message{
 					Role:    "user",
@@ -145,7 +153,7 @@ func messagesFromLLM(m llms.Message) []message {
 	}
 
 	apiRole := m.Role
-	apiContent := convertContent(m.Content)
+	apiContent := convertContent(m.Content, emitCacheControl)
 
 	if len(apiContent) == 0 && len(m.ToolCalls) == 0 {
 		return []message{}

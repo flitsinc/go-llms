@@ -217,7 +217,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := messagesFromLLM(tc.input)
+			actual := messagesFromLLM(tc.input, false)
 			assert.Equal(t, len(tc.expected), len(actual), "Number of messages mismatch")
 
 			// Use require for slice length check before iterating

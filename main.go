@@ -15,6 +15,7 @@ import (
 	"github.com/flitsinc/go-llms/google"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/openai"
+	"github.com/flitsinc/go-llms/openrouter"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -83,6 +84,17 @@ func main() {
 			return
 		}
 		llmProvider = openai.New(apiKey, "moonshotai/kimi-k2-instruct").WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")
+	case "openrouter":
+		apiKey := os.Getenv("OPENROUTER_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: OPENROUTER_API_KEY environment variable is not set")
+			return
+		}
+		model := "anthropic/claude-sonnet-4"
+		if len(os.Args) > 2 {
+			model = os.Args[2]
+		}
+		llmProvider = openrouter.New(apiKey, model)
 	default:
 		printUsage()
 		return
@@ -206,6 +218,8 @@ func printUsage() {
 	fmt.Println("  anthropic         - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
 	fmt.Println("  google            - Uses Google's Gemini 3 Flash (requires GEMINI_API_KEY)")
 	fmt.Println("  groq              - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
+	fmt.Println("  openrouter        - Uses OpenRouter with any model (requires OPENROUTER_API_KEY)")
+	fmt.Println("                      Optional: pass model as second arg (default: anthropic/claude-sonnet-4)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()
