@@ -415,14 +415,25 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
 	messageStartYielded := false
 
-	return func(yield func(llms.StreamStatus) bool) {
+	return func(rawYield func(llms.StreamStatus) bool) {
+		stopped := false
+		yield := func(status llms.StreamStatus) bool {
+			if !rawYield(status) {
+				stopped = true
+				return false
+			}
+			return true
+		}
 		defer io.Copy(io.Discard, s.stream)
 		defer func() {
 			// Ensure ThinkingDone is emitted if the stream ends abnormally
 			// (e.g. EOF without [DONE]) while still in thinking state.
+			// Don't call yield if the consumer already stopped iterating.
 			if s.lastThought != nil {
 				s.lastThought = nil
-				yield(llms.StreamStatusThinkingDone)
+				if !stopped {
+					rawYield(llms.StreamStatusThinkingDone)
+				}
 			}
 		}()
 		for {
