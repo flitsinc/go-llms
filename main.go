@@ -15,6 +15,7 @@ import (
 	"github.com/flitsinc/go-llms/google"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/openai"
+	"github.com/flitsinc/go-llms/openrouter"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -93,9 +94,7 @@ func main() {
 		if len(os.Args) > 2 {
 			model = os.Args[2]
 		}
-		llmProvider = openai.New(apiKey, model).
-			WithEndpoint("https://openrouter.ai/api/v1/chat/completions", "OpenRouter").
-			WithCacheControl(true)
+		llmProvider = openrouter.New(apiKey, model)
 	default:
 		printUsage()
 		return
