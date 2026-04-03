@@ -451,7 +451,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				continue
 			}
 			if line == "[DONE]" {
-				// Stream ended. If a tool call was active, mark it as ready.
+				// Stream ended. If we were still thinking, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
+				// If a tool call was active, mark it as ready.
 				if activeToolCallIndex != -1 {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
@@ -491,6 +498,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					s.lastThought = &content.Thought{}
 				}
 				s.lastThought.Text = text
+				s.message.Content.AppendThought(text)
 				if !yield(llms.StreamStatusThinking) {
 					return
 				}
