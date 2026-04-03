@@ -30,6 +30,10 @@ type ChatCompletionsAPI struct {
 	includeUsage bool
 
 	customPayloadValues map[string]any
+
+	// When true, emit cache_control on content parts from CacheHint items.
+	// Use for providers like OpenRouter that pass cache_control through to Anthropic.
+	cacheControl bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -71,6 +75,14 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 	return m
 }
 
+// WithCacheControl enables emitting cache_control fields on content parts.
+// Use this for providers like OpenRouter that pass cache_control through to
+// upstream providers (e.g. Anthropic) for prompt caching.
+func (m *ChatCompletionsAPI) WithCacheControl(enable bool) *ChatCompletionsAPI {
+	m.cacheControl = enable
+	return m
+}
+
 // WithCustomPayloadValue sets a custom key-value pair in the request payload.
 // Use this for provider-specific parameters not covered by other methods.
 // WARNING: Do not override core fields (stream, model, messages) as this will
@@ -108,12 +120,12 @@ func (m *ChatCompletionsAPI) Generate(
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, message{
 			Role:    "system",
-			Content: convertContent(systemPrompt),
+			Content: convertContent(systemPrompt, m.cacheControl),
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := messagesFromLLM(msg)
+		convertedMsgs := messagesFromLLM(msg, m.cacheControl)
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
