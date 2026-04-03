@@ -30,13 +30,6 @@ type ChatCompletionsAPI struct {
 	includeUsage bool
 
 	customPayloadValues map[string]any
-
-	// When true, emit cache_control on content parts from CacheHint items.
-	// Use for providers like OpenRouter that pass cache_control through to Anthropic.
-	// TODO: If we need more pass-through exceptions like this, create a dedicated
-	// openrouter Provider implementation instead of adding flags here, and remove
-	// cacheControl from ChatCompletionsAPI.
-	cacheControl bool
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -78,14 +71,6 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 	return m
 }
 
-// WithCacheControl enables emitting cache_control fields on content parts.
-// Use this for providers like OpenRouter that pass cache_control through to
-// upstream providers (e.g. Anthropic) for prompt caching.
-func (m *ChatCompletionsAPI) WithCacheControl(enable bool) *ChatCompletionsAPI {
-	m.cacheControl = enable
-	return m
-}
-
 // WithCustomPayloadValue sets a custom key-value pair in the request payload.
 // Use this for provider-specific parameters not covered by other methods.
 // WARNING: Do not override core fields (stream, model, messages) as this will
@@ -110,25 +95,25 @@ func (m *ChatCompletionsAPI) Model() string {
 	return m.model
 }
 
-func (m *ChatCompletionsAPI) Generate(
-	ctx context.Context,
+// BuildPayload constructs the request payload without sending it.
+// This is exported so wrapper providers (e.g. OpenRouter) can modify the payload
+// before calling DoRequest.
+func (m *ChatCompletionsAPI) BuildPayload(
 	systemPrompt content.Content,
 	messages []llms.Message,
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
-) llms.ProviderStream {
-	debugger := llms.GetDebugger(ctx)
-
-	var apiMessages []message
+) (map[string]any, error) {
+	var apiMessages []Message
 	if systemPrompt != nil {
-		apiMessages = append(apiMessages, message{
+		apiMessages = append(apiMessages, Message{
 			Role:    "system",
-			Content: convertContent(systemPrompt, m.cacheControl),
+			Content: ConvertContent(systemPrompt),
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := messagesFromLLM(msg, m.cacheControl)
+		convertedMsgs := MessagesFromLLM(msg)
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
@@ -156,9 +141,8 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 
 	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
-	// Only send this for OpenAI's own endpoint; other providers don't support it
-	// (OpenRouter uses cache_control on content parts instead).
-	if !m.cacheControl && m.endpoint == "https://api.openai.com/v1/chat/completions" && hasLongCacheHint(systemPrompt, messages) {
+	// Only send for OpenAI's own endpoint; other providers reject this parameter.
+	if m.endpoint == "https://api.openai.com/v1/chat/completions" && hasLongCacheHint(systemPrompt, messages) {
 		payload["prompt_cache_retention"] = "24h"
 	}
 
@@ -201,7 +185,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: no allowed tools found in toolbox")}
+					return nil, fmt.Errorf("openai chat: no allowed tools found in toolbox")
 				}
 				// Build allowed_tools object
 				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
@@ -227,7 +211,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: required tool %q not found in toolbox", name)}
+					return nil, fmt.Errorf("openai chat: required tool %q not found in toolbox", name)
 				}
 				payload["tool_choice"] = ChatToolChoice{Type: "function", Function: &ChatToolChoiceFunc{Name: name}}
 			default:
@@ -252,7 +236,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: none of the required tools are present in toolbox")}
+					return nil, fmt.Errorf("openai chat: none of the required tools are present in toolbox")
 				}
 				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
 				for _, n := range choice.AllowedTools {
@@ -277,6 +261,29 @@ func (m *ChatCompletionsAPI) Generate(
 			},
 		}
 	}
+
+	return payload, nil
+}
+
+func (m *ChatCompletionsAPI) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) llms.ProviderStream {
+	payload, err := m.BuildPayload(systemPrompt, messages, toolbox, jsonOutputSchema)
+	if err != nil {
+		return &ChatCompletionsStream{err: err}
+	}
+	return m.DoRequest(ctx, payload)
+}
+
+// DoRequest sends a pre-built payload and returns a streaming response.
+// This is exported so wrapper providers (e.g. OpenRouter) can build/modify a
+// payload via BuildPayload and then send it.
+func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]any) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {

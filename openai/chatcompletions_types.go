@@ -27,23 +27,29 @@ type imageURL struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-type cacheControl struct {
+// CacheControl represents a cache control directive on a content part.
+type CacheControl struct {
 	Type string `json:"type"`
 }
 
-type contentPart struct {
+// ContentPart represents a single part of a message's content array.
+type ContentPart struct {
 	Type         string        `json:"type"`
 	Text         *string       `json:"text,omitempty"`
 	ImageURL     *imageURL     `json:"image_url,omitempty"`
-	CacheControl *cacheControl `json:"cache_control,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
-type contentList []contentPart
+// ContentList is a list of content parts with custom JSON marshaling.
+type ContentList []ContentPart
 
-func convertContent(c content.Content, emitCacheControl bool) contentList {
-	cl := make(contentList, 0, len(c))
+// ConvertContent converts content.Content to a ContentList for the OpenAI API.
+// CacheHint items are skipped; use openrouter.ConvertContentWithCacheControl
+// for providers that support cache_control on content parts.
+func ConvertContent(c content.Content) ContentList {
+	cl := make(ContentList, 0, len(c))
 	for _, item := range c {
-		var cp contentPart
+		var cp ContentPart
 		switch v := item.(type) {
 		case *content.Text:
 			cp.Type = "text"
@@ -63,10 +69,7 @@ func convertContent(c content.Content, emitCacheControl bool) contentList {
 			// OpenAI does not expect thinking tokens as input; ignore.
 			continue
 		case *content.CacheHint:
-			// When cacheControl is enabled, attach cache_control to the preceding content part.
-			if emitCacheControl && len(cl) > 0 {
-				cl[len(cl)-1].CacheControl = &cacheControl{Type: "ephemeral"}
-			}
+			// Cache hints are handled at the request level via prompt_cache_retention.
 			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
@@ -76,39 +79,40 @@ func convertContent(c content.Content, emitCacheControl bool) contentList {
 	return cl
 }
 
-func (cl contentList) MarshalJSON() ([]byte, error) {
+func (cl ContentList) MarshalJSON() ([]byte, error) {
 	if len(cl) == 1 && cl[0].Type == "text" && cl[0].Text != nil && cl[0].CacheControl == nil {
 		return json.Marshal(*cl[0].Text)
 	}
-	return json.Marshal([]contentPart(cl))
+	return json.Marshal([]ContentPart(cl))
 }
 
-func (cl *contentList) UnmarshalJSON(data []byte) error {
+func (cl *ContentList) UnmarshalJSON(data []byte) error {
 	var text string
 	if err := json.Unmarshal(data, &text); err == nil {
-		*cl = contentList{{Type: "text", Text: &text}}
+		*cl = ContentList{{Type: "text", Text: &text}}
 		return nil
 	}
-	var value []contentPart
+	var value []ContentPart
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	*cl = contentList(value)
+	*cl = ContentList(value)
 	return nil
 }
 
-type message struct {
+// Message represents a chat message in the OpenAI API format.
+type Message struct {
 	Role       string      `json:"role"`
-	Content    contentList `json:"content,omitempty"`
+	Content    ContentList `json:"content,omitempty"`
 	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
-// messagesFromLLM converts an llms.Message to the OpenAI API message format.
+// MessagesFromLLM converts an llms.Message to the OpenAI API message format.
 // It may return multiple messages if the input is a tool result with auxiliary content.
-func messagesFromLLM(m llms.Message, emitCacheControl bool) []message {
+func MessagesFromLLM(m llms.Message) []Message {
 	if m.Role == "tool" {
-		var messagesToReturn []message
+		var messagesToReturn []Message
 		var primaryResultString string
 		var secondaryContent content.Content
 
@@ -132,17 +136,17 @@ func messagesFromLLM(m llms.Message, emitCacheControl bool) []message {
 			primaryResultString = ""
 		}
 
-		primaryMessage := message{
+		primaryMessage := Message{
 			Role:       "tool",
-			Content:    contentList{{Type: "text", Text: &primaryResultString}},
+			Content:    ContentList{{Type: "text", Text: &primaryResultString}},
 			ToolCallID: m.ToolCallID,
 		}
 		messagesToReturn = append(messagesToReturn, primaryMessage)
 
 		if len(secondaryContent) > 0 {
-			secondaryAPIContent := convertContent(secondaryContent, emitCacheControl)
+			secondaryAPIContent := ConvertContent(secondaryContent)
 			if len(secondaryAPIContent) > 0 {
-				secondaryMessage := message{
+				secondaryMessage := Message{
 					Role:    "user",
 					Content: secondaryAPIContent,
 				}
@@ -153,13 +157,13 @@ func messagesFromLLM(m llms.Message, emitCacheControl bool) []message {
 	}
 
 	apiRole := m.Role
-	apiContent := convertContent(m.Content, emitCacheControl)
+	apiContent := ConvertContent(m.Content)
 
 	if len(apiContent) == 0 && len(m.ToolCalls) == 0 {
-		return []message{}
+		return []Message{}
 	}
 
-	msg := message{
+	msg := Message{
 		Role:    apiRole,
 		Content: apiContent,
 	}
@@ -196,7 +200,7 @@ func messagesFromLLM(m llms.Message, emitCacheControl bool) []message {
 		}
 	}
 
-	return []message{msg}
+	return []Message{msg}
 }
 
 func normalizeOpenAIToolType(metaType string) string {
