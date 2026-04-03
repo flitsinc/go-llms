@@ -77,6 +77,15 @@ func main() {
 		llmProvider = google.New("gemini-3-flash-preview").
 			WithThinkingLevel(google.ThinkingLevelLow).
 			WithGeminiAPI(apiKey)
+	case "cerebras":
+		apiKey := os.Getenv("CEREBRAS_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: CEREBRAS_API_KEY environment variable is not set")
+			return
+		}
+		llmProvider = openai.New(apiKey, "llama3.1-8b").
+			WithEndpoint("https://api.cerebras.ai/v1/chat/completions", "Cerebras").
+			WithIncludeUsage(false)
 	case "groq":
 		apiKey := os.Getenv("GROQ_API_KEY")
 		if apiKey == "" {
@@ -99,6 +108,14 @@ func main() {
 		} else {
 			llmProvider = openrouter.New(apiKey, model)
 		}
+	case "xai":
+		apiKey := os.Getenv("XAI_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: XAI_API_KEY environment variable is not set")
+			return
+		}
+		llmProvider = openai.New(apiKey, "grok-3-mini").
+			WithEndpoint("https://api.x.ai/v1/chat/completions", "xAI")
 	default:
 		printUsage()
 		return
@@ -215,16 +232,18 @@ func printUsage() {
 	fmt.Println("Usage: go run main.go <provider>")
 	fmt.Println()
 	fmt.Println("Supported providers:")
-	fmt.Println("  openai            - Uses OpenAI Chat Completions with gpt-5.4 (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-responses  - Uses OpenAI Responses API with gpt-5.4 (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-ws         - Uses OpenAI Responses API over WebSocket (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-ws-warmup  - Same as openai-ws but with Warmup pre-loading (requires OPENAI_API_KEY)")
-	fmt.Println("  anthropic         - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
-	fmt.Println("  google            - Uses Google's Gemini 3 Flash (requires GEMINI_API_KEY)")
-	fmt.Println("  groq              - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
+	fmt.Println("  openai              - Uses OpenAI Chat Completions with gpt-5.4 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-responses    - Uses OpenAI Responses API with gpt-5.4 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws           - Uses OpenAI Responses API over WebSocket (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-ws-warmup    - Same as openai-ws but with Warmup pre-loading (requires OPENAI_API_KEY)")
+	fmt.Println("  anthropic           - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
+	fmt.Println("  cerebras            - Uses Cerebras Llama 3.1 8B (requires CEREBRAS_API_KEY)")
+	fmt.Println("  google              - Uses Google's Gemini 3 Flash (requires GEMINI_API_KEY)")
+	fmt.Println("  groq                - Uses kimi-k2-instruct (requires GROQ_API_KEY)")
 	fmt.Println("  openrouter          - Uses OpenRouter with any model (requires OPENROUTER_API_KEY)")
 	fmt.Println("  openrouter-thinking - Same as openrouter but with medium reasoning effort")
 	fmt.Println("                        Optional: pass model as second arg (default: anthropic/claude-sonnet-4)")
+	fmt.Println("  xai                 - Uses xAI's Grok 3 Mini (requires XAI_API_KEY)")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()

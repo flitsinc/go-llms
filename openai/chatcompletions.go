@@ -156,7 +156,9 @@ func (m *ChatCompletionsAPI) Generate(
 	}
 
 	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
-	if hasLongCacheHint(systemPrompt, messages) {
+	// Only send this for OpenAI's own endpoint; other providers don't support it
+	// (OpenRouter uses cache_control on content parts instead).
+	if !m.cacheControl && m.endpoint == "https://api.openai.com/v1/chat/completions" && hasLongCacheHint(systemPrompt, messages) {
 		payload["prompt_cache_retention"] = "24h"
 	}
 
