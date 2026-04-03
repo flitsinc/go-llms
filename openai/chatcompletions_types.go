@@ -77,7 +77,7 @@ func convertContent(c content.Content, emitCacheControl bool) contentList {
 }
 
 func (cl contentList) MarshalJSON() ([]byte, error) {
-	if len(cl) == 1 && cl[0].Type == "text" && cl[0].Text != nil {
+	if len(cl) == 1 && cl[0].Type == "text" && cl[0].Text != nil && cl[0].CacheControl == nil {
 		return json.Marshal(*cl[0].Text)
 	}
 	return json.Marshal([]contentPart(cl))
