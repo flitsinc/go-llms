@@ -273,11 +273,23 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
 }
 
+// reasoningDetail represents a single reasoning token from providers like
+// OpenRouter that stream thinking via the OpenAI-compatible format.
+type reasoningDetail struct {
+	Type   string `json:"type"`             // e.g. "reasoning.text", "reasoning.summary", "reasoning.encrypted"
+	ID     string `json:"id,omitempty"`     // unique identifier
+	Text   string `json:"text,omitempty"`   // for "reasoning.text" type
+	Format string `json:"format,omitempty"` // e.g. "anthropic-claude-v1"
+	Index  int    `json:"index,omitempty"`
+}
+
 type chatCompletionDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	Refusal   *string         `json:"refusal,omitempty"`
-	ToolCalls []toolCallDelta `json:"tool_calls,omitempty"`
+	Role             string            `json:"role,omitempty"`
+	Content          *string           `json:"content,omitempty"`
+	Refusal          *string           `json:"refusal,omitempty"`
+	Reasoning        *string           `json:"reasoning,omitempty"`
+	ReasoningDetails []reasoningDetail `json:"reasoning_details,omitempty"`
+	ToolCalls        []toolCallDelta   `json:"tool_calls,omitempty"`
 }
 
 type logprobsContent struct {

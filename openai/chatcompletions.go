@@ -347,14 +347,15 @@ func (m *ChatCompletionsAPI) Generate(
 }
 
 type ChatCompletionsStream struct {
-	ctx      context.Context
-	model    string
-	stream   io.Reader
-	debugger llms.Debugger
-	err      error
-	message  llms.Message
-	lastText string
-	usage    *usage
+	ctx         context.Context
+	model       string
+	stream      io.Reader
+	debugger    llms.Debugger
+	err         error
+	message     llms.Message
+	lastText    string
+	lastThought *content.Thought
+	usage       *usage
 }
 
 func (s *ChatCompletionsStream) Err() error {
@@ -383,8 +384,9 @@ func (s *ChatCompletionsStream) ToolCall() llms.ToolCall {
 }
 
 func (s *ChatCompletionsStream) Thought() content.Thought {
-	// OpenAI API does not currently stream thoughts through Chat Completions API.
-	// TODO: Switch to Responses API to support this.
+	if s.lastThought != nil {
+		return *s.lastThought
+	}
 	return content.Thought{}
 }
 
@@ -480,8 +482,27 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					return
 				}
 			}
+			// Handle reasoning/thinking tokens (e.g. from OpenRouter → Anthropic)
+			if delta.Reasoning != nil && *delta.Reasoning != "" {
+				text := *delta.Reasoning
+				if s.lastThought == nil {
+					s.lastThought = &content.Thought{}
+				}
+				s.lastThought.Text = text
+				if !yield(llms.StreamStatusThinking) {
+					return
+				}
+			}
+
 			// Content is nullable string in delta
 			if delta.Content != nil {
+				// If we were thinking and now got content, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
 				s.lastText = *delta.Content
 				if s.lastText != "" {
 					s.message.Content.Append(s.lastText)
@@ -493,6 +514,13 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 
 			// Handle Tool Calls Delta
 			if len(delta.ToolCalls) > 0 {
+				// If we were thinking and now got tool calls, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
 				for _, toolDelta := range delta.ToolCalls {
 					if toolDelta.Index >= len(s.message.ToolCalls) {
 						// This is a new tool call starting
