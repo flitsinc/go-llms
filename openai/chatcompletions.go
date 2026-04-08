@@ -540,6 +540,19 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					return
 				}
 			}
+			// Capture signature from reasoning_details (arrives on the final
+			// reasoning chunk, separate from the text deltas).
+			for _, rd := range delta.ReasoningDetails {
+				if rd.Signature != "" {
+					// Ensure there's a thought to attach the signature to.
+					if s.lastThought == nil {
+						s.lastThought = &content.Thought{}
+						s.message.Content.AppendThought("")
+					}
+					s.message.Content.SetThoughtSignature(rd.Signature)
+					s.lastThought.Signature = rd.Signature
+				}
+			}
 
 			// Content is nullable string in delta
 			if delta.Content != nil && *delta.Content != "" {

@@ -2,6 +2,7 @@ package openrouter
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -76,8 +77,8 @@ func (p *Provider) Generate(
 		return &errorStream{err: err}
 	}
 
-	// Replace messages with cache_control-aware versions.
-	var apiMessages []openai.Message
+	// Replace messages with cache_control-aware versions and reasoning continuity.
+	var apiMessages []any
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, openai.Message{
 			Role:    "system",
@@ -121,17 +122,86 @@ func convertContentWithCacheControl(c content.Content) openai.ContentList {
 	return cl
 }
 
-// messagesWithCacheControl converts an llms.Message to OpenAI API messages
-// with cache_control support on content parts.
-func messagesWithCacheControl(m llms.Message) []openai.Message {
+// messageWithReasoning wraps a base message and adds reasoning_details.
+// It uses custom JSON marshaling to preserve all base message fields.
+type messageWithReasoning struct {
+	base             openai.Message
+	reasoningDetails []openai.ReasoningDetail
+}
+
+func (m messageWithReasoning) MarshalJSON() ([]byte, error) {
+	// Marshal base message to a map, then add reasoning_details.
+	data, err := json.Marshal(m.base)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, err
+	}
+	rd, err := json.Marshal(m.reasoningDetails)
+	if err != nil {
+		return nil, err
+	}
+	obj["reasoning_details"] = rd
+	return json.Marshal(obj)
+}
+
+// messagesWithCacheControl converts an llms.Message to API messages with
+// cache_control support and reasoning continuity for assistant messages.
+func messagesWithCacheControl(m llms.Message) []any {
 	msgs := openai.MessagesFromLLM(m)
+
 	// For non-tool messages, re-convert content with cache control.
 	if m.Role != "tool" && len(m.Content) > 0 {
 		for i := range msgs {
 			msgs[i].Content = convertContentWithCacheControl(m.Content)
 		}
 	}
-	return msgs
+
+	// For assistant messages, extract thoughts and emit as reasoning_details.
+	if m.Role == "assistant" {
+		var details []openai.ReasoningDetail
+		var thoughtText string
+		var signature string
+		for _, item := range m.Content {
+			if t, ok := item.(*content.Thought); ok {
+				thoughtText += t.Text
+				if t.Signature != "" {
+					signature = t.Signature
+				}
+			}
+		}
+		if thoughtText != "" || signature != "" {
+			detail := openai.ReasoningDetail{
+				Type:   "reasoning.text",
+				Text:   thoughtText,
+				Format: "anthropic-claude-v1",
+				Index:  0,
+			}
+			if signature != "" {
+				detail.Signature = signature
+			}
+			details = append(details, detail)
+		}
+		if len(details) > 0 {
+			result := make([]any, len(msgs))
+			for i, msg := range msgs {
+				result[i] = messageWithReasoning{
+					base:             msg,
+					reasoningDetails: details,
+				}
+			}
+			return result
+		}
+	}
+
+	// Default: return as-is
+	result := make([]any, len(msgs))
+	for i, msg := range msgs {
+		result[i] = msg
+	}
+	return result
 }
 
 // errorStream is a minimal ProviderStream that only returns an error.

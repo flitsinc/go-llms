@@ -277,12 +277,23 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
 }
 
+// ReasoningDetail represents a reasoning token entry from providers that stream
+// thinking via the OpenAI-compatible format (e.g. OpenRouter).
+type ReasoningDetail struct {
+	Type      string `json:"type"`                // e.g. "reasoning.text"
+	Text      string `json:"text,omitempty"`      // reasoning text (streamed per chunk)
+	Signature string `json:"signature,omitempty"` // Anthropic signature (final chunk only)
+	Format    string `json:"format,omitempty"`    // e.g. "anthropic-claude-v1"
+	Index     int    `json:"index,omitempty"`
+}
+
 type chatCompletionDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	Refusal   *string         `json:"refusal,omitempty"`
-	Reasoning *string         `json:"reasoning,omitempty"`
-	ToolCalls []toolCallDelta `json:"tool_calls,omitempty"`
+	Role             string            `json:"role,omitempty"`
+	Content          *string           `json:"content,omitempty"`
+	Refusal          *string           `json:"refusal,omitempty"`
+	Reasoning        *string           `json:"reasoning,omitempty"`
+	ReasoningDetails []ReasoningDetail `json:"reasoning_details,omitempty"`
+	ToolCalls        []toolCallDelta   `json:"tool_calls,omitempty"`
 }
 
 type logprobsContent struct {
