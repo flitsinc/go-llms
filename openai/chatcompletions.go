@@ -551,11 +551,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				}
 				s.lastText = *delta.Content
-				if s.lastText != "" {
-					s.message.Content.Append(s.lastText)
-					if !yield(llms.StreamStatusText) {
-						return
-					}
+				s.message.Content.Append(s.lastText)
+				if !yield(llms.StreamStatusText) {
+					return
 				}
 			}
 
