@@ -72,6 +72,9 @@ func (p *Provider) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	// BuildPayload handles tools, response_format, and other non-message fields.
+	// We rebuild messages below with cache_control and reasoning_details, so the
+	// messages built by BuildPayload are replaced.
 	payload, err := p.ChatCompletionsAPI.BuildPayload(systemPrompt, messages, toolbox, jsonOutputSchema)
 	if err != nil {
 		return &errorStream{err: err}
@@ -101,6 +104,10 @@ func (p *Provider) Generate(
 // convertContentWithCacheControl converts content.Content to a ContentList,
 // attaching cache_control: {"type": "ephemeral"} to content parts that precede
 // a CacheHint. This enables prompt caching for Anthropic models via OpenRouter.
+//
+// Note: this walks the original content to find CacheHint positions while
+// tracking which items ConvertContent skips (Thought, CacheHint). If
+// ConvertContent starts skipping new types, this function must be updated.
 func convertContentWithCacheControl(c content.Content) openai.ContentList {
 	cl := openai.ConvertContent(c)
 
@@ -174,10 +181,8 @@ func messagesWithCacheControl(m llms.Message) []any {
 		}
 		if thoughtText != "" || signature != "" {
 			detail := openai.ReasoningDetail{
-				Type:   "reasoning.text",
-				Text:   thoughtText,
-				Format: "anthropic-claude-v1",
-				Index:  0,
+				Type: "reasoning.text",
+				Text: thoughtText,
 			}
 			if signature != "" {
 				detail.Signature = signature
