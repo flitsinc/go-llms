@@ -528,14 +528,26 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 			}
 			// Handle reasoning/thinking tokens from providers that include them
-			// in the OpenAI-compatible streaming format.
+			// in the OpenAI-compatible streaming format. Prefer delta.Reasoning
+			// for text; fall back to reasoning_details[].Text if absent.
+			reasoningText := ""
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
-				text := *delta.Reasoning
+				reasoningText = *delta.Reasoning
+			}
+			if reasoningText == "" {
+				for _, rd := range delta.ReasoningDetails {
+					if rd.Text != "" {
+						reasoningText = rd.Text
+						break
+					}
+				}
+			}
+			if reasoningText != "" {
 				if s.lastThought == nil {
 					s.lastThought = &content.Thought{}
 				}
-				s.lastThought.Text = text
-				s.message.Content.AppendThought(text)
+				s.lastThought.Text = reasoningText
+				s.message.Content.AppendThought(reasoningText)
 				if !yield(llms.StreamStatusThinking) {
 					return
 				}
