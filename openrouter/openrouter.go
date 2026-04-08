@@ -36,6 +36,34 @@ func NewWithReasoning(apiKey, model string, reasoning Reasoning) *Provider {
 	return p
 }
 
+// Builder method overrides — these delegate to ChatCompletionsAPI but return
+// *Provider so that method chaining doesn't silently downcast to the base type.
+
+func (p *Provider) WithMaxCompletionTokens(n int) *Provider {
+	p.ChatCompletionsAPI.WithMaxCompletionTokens(n)
+	return p
+}
+
+func (p *Provider) WithThinking(effort openai.Effort) *Provider {
+	p.ChatCompletionsAPI.WithThinking(effort)
+	return p
+}
+
+func (p *Provider) WithVerbosity(verbosity openai.Verbosity) *Provider {
+	p.ChatCompletionsAPI.WithVerbosity(verbosity)
+	return p
+}
+
+func (p *Provider) WithIncludeUsage(include bool) *Provider {
+	p.ChatCompletionsAPI.WithIncludeUsage(include)
+	return p
+}
+
+func (p *Provider) WithCustomPayloadValue(key string, value any) *Provider {
+	p.ChatCompletionsAPI.WithCustomPayloadValue(key, value)
+	return p
+}
+
 func (p *Provider) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
