@@ -280,8 +280,9 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 // ReasoningDetail represents a reasoning token entry from providers that stream
 // thinking via the OpenAI-compatible format (e.g. OpenRouter).
 type ReasoningDetail struct {
-	Type      string `json:"type"`                // e.g. "reasoning.text"
+	Type      string `json:"type"`                // "reasoning.text" or "reasoning.encrypted"
 	Text      string `json:"text,omitempty"`      // reasoning text (streamed per chunk)
+	Data      string `json:"data,omitempty"`      // base64-encoded encrypted thinking
 	Signature string `json:"signature,omitempty"` // Anthropic signature (final chunk only)
 	Format    string `json:"format,omitempty"`    // e.g. "anthropic-claude-v1"
 	Index     int    `json:"index,omitempty"`

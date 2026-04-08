@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -552,17 +553,33 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					return
 				}
 			}
-			// Capture signature from reasoning_details (arrives on the final
-			// reasoning chunk, separate from the text deltas).
+			// Process reasoning_details for signatures and encrypted thinking.
 			for _, rd := range delta.ReasoningDetails {
 				if rd.Signature != "" {
-					// Ensure there's a thought to attach the signature to.
+					// Signature arrives on the final reasoning chunk.
 					if s.lastThought == nil {
 						s.lastThought = &content.Thought{}
 						s.message.Content.AppendThought("")
 					}
 					s.message.Content.SetThoughtSignature(rd.Signature)
 					s.lastThought.Signature = rd.Signature
+				}
+				if rd.Type == "reasoning.encrypted" && rd.Data != "" {
+					decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
+					if err != nil {
+						s.err = fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+						return
+					}
+					thought := &content.Thought{
+						Text:      "(Redacted)",
+						Encrypted: decodedData,
+						Summary:   true,
+					}
+					s.lastThought = thought
+					s.message.Content = append(s.message.Content, thought)
+					if !yield(llms.StreamStatusThinking) {
+						return
+					}
 				}
 			}
 

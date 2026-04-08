@@ -2,6 +2,7 @@ package openrouter
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 
 	"github.com/flitsinc/go-llms/content"
@@ -172,7 +173,17 @@ func messagesWithCacheControl(m llms.Message) []any {
 		var thoughtText string
 		var signature string
 		for _, item := range m.Content {
-			if t, ok := item.(*content.Thought); ok {
+			t, ok := item.(*content.Thought)
+			if !ok {
+				continue
+			}
+			if len(t.Encrypted) > 0 {
+				// Encrypted/redacted thinking — emit as reasoning.encrypted.
+				details = append(details, openai.ReasoningDetail{
+					Type: "reasoning.encrypted",
+					Data: base64.StdEncoding.EncodeToString(t.Encrypted),
+				})
+			} else {
 				thoughtText += t.Text
 				if t.Signature != "" {
 					signature = t.Signature
