@@ -61,9 +61,6 @@ func (p *Provider) Generate(
 	}
 	payload["messages"] = apiMessages
 
-	// OpenRouter doesn't support prompt_cache_retention; remove it.
-	delete(payload, "prompt_cache_retention")
-
 	// Add reasoning parameter if configured.
 	if p.reasoning != nil {
 		payload["reasoning"] = p.reasoning

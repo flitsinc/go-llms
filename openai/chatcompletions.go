@@ -30,6 +30,10 @@ type ChatCompletionsAPI struct {
 	includeUsage bool
 
 	customPayloadValues map[string]any
+
+	// When set, include prompt_cache_retention in requests that contain a "long"
+	// cache hint. This is an OpenAI-specific feature.
+	promptCacheRetention string
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -68,6 +72,14 @@ func (m *ChatCompletionsAPI) WithVerbosity(verbosity Verbosity) *ChatCompletions
 // WithIncludeUsage sets whether to include stream_options.include_usage in requests.
 func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI {
 	m.includeUsage = include
+	return m
+}
+
+// WithPromptCacheRetention enables extended prompt caching with the given
+// retention duration (e.g. "24h") when content contains a "long" cache hint.
+// This is an OpenAI-specific feature.
+func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCompletionsAPI {
+	m.promptCacheRetention = retention
 	return m
 }
 
@@ -140,10 +152,8 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		payload["verbosity"] = m.verbosity
 	}
 
-	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
-	// Only send for OpenAI's own endpoint; other providers reject this parameter.
-	if m.endpoint == "https://api.openai.com/v1/chat/completions" && hasLongCacheHint(systemPrompt, messages) {
-		payload["prompt_cache_retention"] = "24h"
+	if m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
+		payload["prompt_cache_retention"] = m.promptCacheRetention
 	}
 
 	for k, v := range m.customPayloadValues {
