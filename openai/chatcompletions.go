@@ -517,7 +517,8 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					return
 				}
 			}
-			// Handle reasoning/thinking tokens (e.g. from OpenRouter → Anthropic)
+			// Handle reasoning/thinking tokens from providers that include them
+			// in the OpenAI-compatible streaming format.
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
 				text := *delta.Reasoning
 				if s.lastThought == nil {
