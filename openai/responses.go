@@ -440,7 +440,12 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		for _, tc := range msg.ToolCalls {
 			itemID := tc.Metadata["openai:item_id"]
 			if itemID == "" {
-				return nil, fmt.Errorf("tool call %q is missing openai:item_id metadata for replay", tc.ID)
+				// Generate a deterministic synthetic item_id when metadata is missing.
+				// This happens when:
+				// 1. Tool calls originated from a different provider (e.g., Anthropic → OpenAI)
+				// 2. Metadata was lost during stream interruption/recovery
+				// 3. Injected tool calls weren't annotated with provider metadata
+				itemID = "fc_synthetic_" + tc.ID
 			}
 			itemType := tc.Metadata["openai:item_type"]
 			var toolItem ResponseInput
