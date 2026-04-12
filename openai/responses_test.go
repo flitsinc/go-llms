@@ -283,7 +283,7 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 	}
 }
 
-func TestConvertMessageToInput_MissingOpenAIItemIDGeneratesSyntheticID(t *testing.T) {
+func TestConvertMessageToInput_MissingOpenAIItemIDReturnsError(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",
 		Content: content.Content{
@@ -298,66 +298,12 @@ func TestConvertMessageToInput_MissingOpenAIItemIDGeneratesSyntheticID(t *testin
 		},
 	}
 
-	items, err := convertMessageToInput(msg)
-	if err != nil {
-		t.Fatalf("expected no error for tool call missing openai:item_id metadata, got %v", err)
+	_, err := convertMessageToInput(msg)
+	if err == nil {
+		t.Fatalf("expected error for tool call missing openai:item_id metadata, got nil")
 	}
-
-	// Should have reasoning + function_call
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
-	}
-
-	fc, ok := items[1].(FunctionCall)
-	if !ok {
-		t.Fatalf("expected FunctionCall, got %T", items[1])
-	}
-	if fc.ID != "fc_synthetic_call_missing" {
-		t.Fatalf("expected synthetic item ID 'fc_synthetic_call_missing', got %q", fc.ID)
-	}
-	if fc.CallID != "call_missing" {
-		t.Fatalf("expected CallID 'call_missing', got %q", fc.CallID)
-	}
-}
-
-func TestConvertMessageToInput_CrossProviderToolCallIDs(t *testing.T) {
-	// Simulates tool calls from Anthropic (toolu_01*) being replayed through OpenAI
-	msg := llms.Message{
-		Role: "assistant",
-		Content: content.Content{
-			&content.Text{Text: "I'll read the module."},
-		},
-		ToolCalls: []llms.ToolCall{
-			{
-				ID:        "toolu_01GRVUqdmDwoW27uDQJ378yi",
-				Name:      "readModule",
-				Arguments: json.RawMessage(`{"module_name":"Views.Home"}`),
-			},
-		},
-	}
-
-	items, err := convertMessageToInput(msg)
-	if err != nil {
-		t.Fatalf("expected no error for cross-provider tool call, got %v", err)
-	}
-
-	// Should have output_text + function_call
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
-	}
-
-	fc, ok := items[1].(FunctionCall)
-	if !ok {
-		t.Fatalf("expected FunctionCall, got %T", items[1])
-	}
-	if fc.ID != "fc_synthetic_toolu_01GRVUqdmDwoW27uDQJ378yi" {
-		t.Fatalf("expected synthetic item ID, got %q", fc.ID)
-	}
-	if fc.CallID != "toolu_01GRVUqdmDwoW27uDQJ378yi" {
-		t.Fatalf("expected original CallID preserved, got %q", fc.CallID)
-	}
-	if fc.Name != "readModule" {
-		t.Fatalf("expected tool name 'readModule', got %q", fc.Name)
+	if !strings.Contains(err.Error(), "missing openai:item_id metadata") {
+		t.Fatalf("expected missing openai:item_id metadata error, got %v", err)
 	}
 }
 
