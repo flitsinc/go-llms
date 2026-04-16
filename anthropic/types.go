@@ -17,6 +17,22 @@ const (
 	EffortMax    Effort = "max" // Opus 4.6 only
 )
 
+// ThinkingDisplay controls whether (and how) thinking content is returned in
+// the response when thinking is enabled. Introduced with Claude Opus 4.7,
+// where the default is "omitted" (thinking blocks arrive empty in the
+// response stream). Set to [ThinkingDisplaySummarized] to receive populated
+// thinking content that can be round-tripped on subsequent turns.
+type ThinkingDisplay string
+
+const (
+	// ThinkingDisplayOmitted leaves the thinking field of thinking blocks
+	// empty in the response. This is the default on Claude Opus 4.7.
+	ThinkingDisplayOmitted ThinkingDisplay = "omitted"
+	// ThinkingDisplaySummarized returns populated thinking content so that
+	// thinking blocks can be replayed back to the API on the next turn.
+	ThinkingDisplaySummarized ThinkingDisplay = "summarized"
+)
+
 type Tool struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`

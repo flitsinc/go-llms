@@ -658,6 +658,81 @@ func TestAnthropic_BetaPlacement(t *testing.T) {
 	})
 }
 
+func TestAnthropic_ThinkingPayload(t *testing.T) {
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		payloadCh <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	drain := func(t *testing.T, m *Model) {
+		t.Helper()
+		stream := m.Generate(context.Background(), nil, nil, nil, nil)
+		iter := stream.Iter()
+		iter(func(_ llms.StreamStatus) bool { return true })
+		require.NoError(t, stream.Err())
+	}
+
+	t.Run("No thinking set -> no thinking field", func(t *testing.T) {
+		m := New("key", "claude-opus-4-7").WithEndpoint(ts.URL, "Test")
+		drain(t, m)
+		body := <-payloadCh
+		_, ok := body["thinking"]
+		assert.False(t, ok, "thinking field should be absent")
+	})
+
+	t.Run("Adaptive thinking only -> type adaptive, no display", func(t *testing.T) {
+		m := New("key", "claude-opus-4-7").WithEndpoint(ts.URL, "Test").WithAdaptiveThinking()
+		drain(t, m)
+		body := <-payloadCh
+		thinking, ok := body["thinking"].(map[string]any)
+		require.True(t, ok, "thinking should be an object")
+		assert.Equal(t, "adaptive", thinking["type"])
+		_, hasDisplay := thinking["display"]
+		assert.False(t, hasDisplay, "display should be absent when not set")
+	})
+
+	t.Run("Adaptive thinking with summarized display", func(t *testing.T) {
+		m := New("key", "claude-opus-4-7").WithEndpoint(ts.URL, "Test").
+			WithAdaptiveThinking().
+			WithThinkingDisplay(ThinkingDisplaySummarized)
+		drain(t, m)
+		body := <-payloadCh
+		thinking, ok := body["thinking"].(map[string]any)
+		require.True(t, ok, "thinking should be an object")
+		assert.Equal(t, "adaptive", thinking["type"])
+		assert.Equal(t, "summarized", thinking["display"])
+	})
+
+	t.Run("Extended thinking with omitted display", func(t *testing.T) {
+		m := New("key", "claude-sonnet-4-6").WithEndpoint(ts.URL, "Test").
+			WithThinking(2048).
+			WithThinkingDisplay(ThinkingDisplayOmitted)
+		drain(t, m)
+		body := <-payloadCh
+		thinking, ok := body["thinking"].(map[string]any)
+		require.True(t, ok, "thinking should be an object")
+		assert.Equal(t, "enabled", thinking["type"])
+		assert.Equal(t, float64(2048), thinking["budget_tokens"])
+		assert.Equal(t, "omitted", thinking["display"])
+	})
+
+	t.Run("WithThinkingDisplay without thinking -> no thinking field", func(t *testing.T) {
+		m := New("key", "claude-opus-4-7").WithEndpoint(ts.URL, "Test").
+			WithThinkingDisplay(ThinkingDisplaySummarized)
+		drain(t, m)
+		body := <-payloadCh
+		_, ok := body["thinking"]
+		assert.False(t, ok, "thinking field should be absent without thinking mode enabled")
+	})
+}
+
 func TestAnthropic_ToolChoice_Mapping(t *testing.T) {
 	// Build toolbox with two tools
 	weatherSchema := tools.FunctionSchema{Name: "get_weather", Description: "Weather", Parameters: tools.ValueSchema{Type: "object"}}
