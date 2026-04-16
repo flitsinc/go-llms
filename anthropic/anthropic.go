@@ -27,6 +27,7 @@ type Model struct {
 	maxTokens           int
 	maxThinkingTokens   int
 	adaptiveThinking    bool
+	thinkingDisplay     ThinkingDisplay
 	effort              Effort
 	customPayloadValues map[string]any
 	betaFeatures        []string
@@ -101,6 +102,18 @@ func (m *Model) WithThinking(budgetTokens int) *Model {
 // This is only supported on Claude Opus 4.6+.
 func (m *Model) WithAdaptiveThinking() *Model {
 	m.adaptiveThinking = true
+	return m
+}
+
+// WithThinkingDisplay controls whether (and how) the API returns thinking
+// content in the response. On Claude Opus 4.7 the default is
+// [ThinkingDisplayOmitted] (empty thinking blocks arrive in the stream);
+// set to [ThinkingDisplaySummarized] to receive populated thinking content
+// so thinking blocks can be replayed back on subsequent turns. Must be
+// combined with [Model.WithAdaptiveThinking] or [Model.WithThinking] for
+// the display value to be sent.
+func (m *Model) WithThinkingDisplay(display ThinkingDisplay) *Model {
+	m.thinkingDisplay = display
 	return m
 }
 
@@ -412,14 +425,22 @@ func (m *Model) Generate(
 	}
 
 	if m.adaptiveThinking {
-		payload["thinking"] = map[string]any{
+		thinking := map[string]any{
 			"type": "adaptive",
 		}
+		if m.thinkingDisplay != "" {
+			thinking["display"] = string(m.thinkingDisplay)
+		}
+		payload["thinking"] = thinking
 	} else if m.maxThinkingTokens > 0 {
-		payload["thinking"] = map[string]any{
+		thinking := map[string]any{
 			"type":          "enabled",
 			"budget_tokens": m.maxThinkingTokens,
 		}
+		if m.thinkingDisplay != "" {
+			thinking["display"] = string(m.thinkingDisplay)
+		}
+		payload["thinking"] = thinking
 	}
 
 	if m.effort != "" {
