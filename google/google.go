@@ -488,7 +488,8 @@ type Stream struct {
 	lastThought *content.Thought
 	usage       *usageMetadata
 	debugger    llms.Debugger
-	lastImage   struct{ URL, MIME string }
+	lastImage struct{ URL, MIME string }
+	lastAudio struct{ URL, MIME string }
 
 	// Tool call tracking for streaming function call arguments.
 	// Maps functionCall.ID to the index in message.ToolCalls.
@@ -520,6 +521,10 @@ func (s *Stream) Text() string {
 
 func (s *Stream) Image() (string, string) {
 	return s.lastImage.URL, s.lastImage.MIME
+}
+
+func (s *Stream) Audio() (string, string) {
+	return s.lastAudio.URL, s.lastAudio.MIME
 }
 
 func (s *Stream) ToolCall() llms.ToolCall {
@@ -697,15 +702,24 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						}
 					}
 				}
-				// Emit images from inline/file data parts as discrete image events.
+				// Emit images or audio from inline/file data parts as discrete events.
 				if p.InlineData != nil {
 					if p.InlineData.MimeType != "" && p.InlineData.Data != "" {
 						uri := content.BuildDataURI(p.InlineData.MimeType, p.InlineData.Data)
-						s.message.Content = append(s.message.Content, &content.ImageURL{URL: uri, MimeType: p.InlineData.MimeType})
-						s.lastImage.URL = uri
-						s.lastImage.MIME = p.InlineData.MimeType
-						if !yield(llms.StreamStatusImage) {
-							return
+						if strings.HasPrefix(p.InlineData.MimeType, "audio/") {
+							s.message.Content = append(s.message.Content, &content.AudioURL{URL: uri, MimeType: p.InlineData.MimeType})
+							s.lastAudio.URL = uri
+							s.lastAudio.MIME = p.InlineData.MimeType
+							if !yield(llms.StreamStatusAudio) {
+								return
+							}
+						} else {
+							s.message.Content = append(s.message.Content, &content.ImageURL{URL: uri, MimeType: p.InlineData.MimeType})
+							s.lastImage.URL = uri
+							s.lastImage.MIME = p.InlineData.MimeType
+							if !yield(llms.StreamStatusImage) {
+								return
+							}
 						}
 					}
 				}
@@ -716,11 +730,20 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						mime = content.ExtractMIMETypeFromURIOrURL(url)
 					}
 					if url != "" {
-						s.message.Content = append(s.message.Content, &content.ImageURL{URL: url, MimeType: mime})
-						s.lastImage.URL = url
-						s.lastImage.MIME = mime
-						if !yield(llms.StreamStatusImage) {
-							return
+						if strings.HasPrefix(mime, "audio/") {
+							s.message.Content = append(s.message.Content, &content.AudioURL{URL: url, MimeType: mime})
+							s.lastAudio.URL = url
+							s.lastAudio.MIME = mime
+							if !yield(llms.StreamStatusAudio) {
+								return
+							}
+						} else {
+							s.message.Content = append(s.message.Content, &content.ImageURL{URL: url, MimeType: mime})
+							s.lastImage.URL = url
+							s.lastImage.MIME = mime
+							if !yield(llms.StreamStatusImage) {
+								return
+							}
 						}
 					}
 				}

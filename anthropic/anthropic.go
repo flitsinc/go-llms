@@ -557,6 +557,7 @@ func (s *Stream) Text() string {
 	return s.lastText
 }
 
+func (s *Stream) Audio() (string, string) { return "", "" }
 func (s *Stream) Image() (string, string) {
 	// Anthropic doesn't generate any images as of this writing.
 	return "", ""

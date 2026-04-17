@@ -31,6 +31,7 @@ type ProviderStream interface {
 	Message() Message
 	Text() string
 	Image() (string, string)
+	Audio() (string, string)
 	Thought() content.Thought
 	ToolCall() ToolCall
 	Usage() Usage

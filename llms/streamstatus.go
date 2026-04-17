@@ -9,6 +9,8 @@ const (
 	StreamStatusText
 	// StreamStatusImage means the stream produced an image (URL or data URI).
 	StreamStatusImage
+	// StreamStatusAudio means the stream produced audio (data URI from TTS).
+	StreamStatusAudio
 	// StreamStatusToolCallBegin means the stream started a tool call. The name of the function is available, but not the arguments.
 	StreamStatusToolCallBegin
 	// StreamStatusToolCallDelta means the stream is streaming the arguments for a tool call.

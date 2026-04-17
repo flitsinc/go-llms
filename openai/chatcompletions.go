@@ -369,6 +369,7 @@ func (s *ChatCompletionsStream) Text() string {
 	return s.lastText
 }
 
+func (s *ChatCompletionsStream) Audio() (string, string) { return "", "" }
 func (s *ChatCompletionsStream) Image() (string, string) {
 	// OpenAI's Chat Completions API doesn't generate any images as of this writing.
 	return "", ""

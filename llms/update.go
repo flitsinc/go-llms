@@ -16,6 +16,7 @@ const (
 	UpdateTypeToolDone     UpdateType = "tool_done"
 	UpdateTypeText         UpdateType = "text"
 	UpdateTypeImage        UpdateType = "image"
+	UpdateTypeAudio        UpdateType = "audio"
 	UpdateTypeThinking     UpdateType = "thinking"
 	UpdateTypeThinkingDone UpdateType = "thinking_done"
 	UpdateTypeMessageStart UpdateType = "message_start"
@@ -82,6 +83,17 @@ type ImageUpdate struct {
 
 func (u ImageUpdate) Type() UpdateType {
 	return UpdateTypeImage
+}
+
+type AudioUpdate struct {
+	URL      string
+	MimeType string
+	// Metadata holds provider-specific metadata that should be forwarded unchanged.
+	Metadata map[string]string
+}
+
+func (u AudioUpdate) Type() UpdateType {
+	return UpdateTypeAudio
 }
 
 type ThinkingUpdate struct {

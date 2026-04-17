@@ -10,6 +10,7 @@ type Type string
 const (
 	TypeText      Type = "text"
 	TypeImageURL  Type = "image_url"
+	TypeAudioURL  Type = "audio_url"
 	TypeJSON      Type = "json"
 	TypeThought   Type = "thought"
 	TypeCacheHint Type = "cache_hint"
@@ -48,6 +49,20 @@ func (iu *ImageURL) Type() Type {
 
 func (iu *ImageURL) GetMetadata() map[string]string {
 	return iu.Metadata
+}
+
+type AudioURL struct {
+	URL      string            `json:"audio_url"`
+	MimeType string            `json:"mime_type,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+func (au *AudioURL) Type() Type {
+	return TypeAudioURL
+}
+
+func (au *AudioURL) GetMetadata() map[string]string {
+	return au.Metadata
 }
 
 type JSON struct {
@@ -247,6 +262,8 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 			item = &Text{}
 		case TypeImageURL:
 			item = &ImageURL{}
+		case TypeAudioURL:
+			item = &AudioURL{}
 		case TypeJSON:
 			item = &JSON{}
 		case TypeThought:

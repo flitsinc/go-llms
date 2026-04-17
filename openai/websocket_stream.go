@@ -30,6 +30,7 @@ func (s *WebSocketStream) Err() error            { return s.err }
 func (s *WebSocketStream) Message() llms.Message { return s.message }
 func (s *WebSocketStream) Text() string          { return s.lastText }
 
+func (s *WebSocketStream) Audio() (string, string) { return "", "" }
 func (s *WebSocketStream) Image() (string, string) {
 	return s.lastImage.URL, s.lastImage.MIME
 }

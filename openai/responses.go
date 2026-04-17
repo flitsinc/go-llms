@@ -279,6 +279,7 @@ func (s *ResponsesStream) Text() string {
 	return s.lastText
 }
 
+func (s *ResponsesStream) Audio() (string, string) { return "", "" }
 func (s *ResponsesStream) Image() (string, string) {
 	return s.lastImage.URL, s.lastImage.MIME
 }

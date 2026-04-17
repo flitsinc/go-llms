@@ -314,6 +314,17 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 			updateChan <- update
 
+		case StreamStatusAudio:
+			url, mime := stream.Audio()
+			update := AudioUpdate{URL: url, MimeType: mime}
+			msg := stream.Message()
+			if len(msg.Content) > 0 {
+				if mc, ok := msg.Content[len(msg.Content)-1].(content.MetadataCarrier); ok {
+					update.Metadata = mc.GetMetadata()
+				}
+			}
+			updateChan <- update
+
 		case StreamStatusThinking:
 			updateChan <- ThinkingUpdate{stream.Thought()}
 
