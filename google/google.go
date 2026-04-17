@@ -94,6 +94,7 @@ type Model struct {
 	thinkingLevel   ThinkingLevel
 	mediaResolution MediaResolution
 	modalities      []string
+	speechVoice     string
 	httpClient      *http.Client
 
 	// streamFunctionCallArguments enables streaming of function call arguments
@@ -193,6 +194,14 @@ func (m *Model) WithMediaResolution(resolution MediaResolution) *Model {
 // Some valid values are: "TEXT", "IMAGE", "AUDIO"
 func (m *Model) WithModalities(modalities ...string) *Model {
 	m.modalities = modalities
+	return m
+}
+
+// WithSpeechVoice configures the voice for text-to-speech generation.
+// Use with WithModalities("AUDIO") for TTS models like gemini-2.5-flash-preview-tts.
+// Example voices: "Kore", "Puck", "Charon", "Zephyr", "Fenrir".
+func (m *Model) WithSpeechVoice(voice string) *Model {
+	m.speechVoice = voice
 	return m
 }
 
@@ -343,6 +352,16 @@ func (m *Model) Generate(
 
 	if len(m.modalities) > 0 {
 		generationConfig["responseModalities"] = m.modalities
+	}
+
+	if m.speechVoice != "" {
+		generationConfig["speechConfig"] = map[string]any{
+			"voiceConfig": map[string]any{
+				"prebuiltVoiceConfig": map[string]any{
+					"voiceName": m.speechVoice,
+				},
+			},
+		}
 	}
 
 	if len(generationConfig) > 0 {
