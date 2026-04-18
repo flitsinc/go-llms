@@ -14,7 +14,8 @@ const (
 	EffortLow    Effort = "low"
 	EffortMedium Effort = "medium"
 	EffortHigh   Effort = "high"
-	EffortMax    Effort = "max" // Opus 4.6 only
+	EffortXHigh  Effort = "xhigh" // Opus 4.7+; sits between high and max.
+	EffortMax    Effort = "max"   // Opus 4.6 and later.
 )
 
 // ThinkingDisplay controls whether (and how) thinking content is returned in
