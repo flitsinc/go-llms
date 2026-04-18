@@ -53,7 +53,7 @@ func (s *mockJSONStream) Message() Message {
 	}
 }
 func (s *mockJSONStream) Text() string             { return "{\"foo\":\"bar\"}" }
-func (s *mockJSONStream) Audio() (string, string) { return "", "" }
+func (s *mockJSONStream) Audio() (string, string)  { return "", "" }
 func (s *mockJSONStream) Image() (string, string)  { return "", "" }
 func (s *mockJSONStream) Thought() content.Thought { return content.Thought{} }
 func (s *mockJSONStream) ToolCall() ToolCall       { return ToolCall{} }
@@ -79,7 +79,7 @@ func (s *mockJSONStreamWithError) Iter() func(func(StreamStatus) bool) {
 }
 func (s *mockJSONStreamWithError) Message() Message         { return Message{} }
 func (s *mockJSONStreamWithError) Text() string             { return "" }
-func (s *mockJSONStreamWithError) Audio() (string, string) { return "", "" }
+func (s *mockJSONStreamWithError) Audio() (string, string)  { return "", "" }
 func (s *mockJSONStreamWithError) Image() (string, string)  { return "", "" }
 func (s *mockJSONStreamWithError) Thought() content.Thought { return content.Thought{} }
 func (s *mockJSONStreamWithError) ToolCall() ToolCall       { return ToolCall{} }

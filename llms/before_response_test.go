@@ -86,7 +86,7 @@ func (s *beforeResponseToolStream) Iter() func(func(StreamStatus) bool) {
 
 func (s *beforeResponseToolStream) Message() Message         { return s.message }
 func (s *beforeResponseToolStream) Text() string             { return "planning" }
-func (s *beforeResponseToolStream) Audio() (string, string) { return "", "" }
+func (s *beforeResponseToolStream) Audio() (string, string)  { return "", "" }
 func (s *beforeResponseToolStream) Image() (string, string)  { return "", "" }
 func (s *beforeResponseToolStream) Thought() content.Thought { return content.Thought{} }
 func (s *beforeResponseToolStream) ToolCall() ToolCall       { return s.message.ToolCalls[0] }
@@ -109,7 +109,7 @@ func (s *beforeResponseFinalStream) Message() Message {
 }
 
 func (s *beforeResponseFinalStream) Text() string             { return s.text }
-func (s *beforeResponseFinalStream) Audio() (string, string) { return "", "" }
+func (s *beforeResponseFinalStream) Audio() (string, string)  { return "", "" }
 func (s *beforeResponseFinalStream) Image() (string, string)  { return "", "" }
 func (s *beforeResponseFinalStream) Thought() content.Thought { return content.Thought{} }
 func (s *beforeResponseFinalStream) ToolCall() ToolCall       { return ToolCall{} }

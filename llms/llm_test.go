@@ -225,7 +225,7 @@ func (s *errorMockStream) Iter() func(func(StreamStatus) bool) {
 }
 func (s *errorMockStream) Message() Message         { return Message{} }
 func (s *errorMockStream) Text() string             { return "" }
-func (s *errorMockStream) Audio() (string, string) { return "", "" }
+func (s *errorMockStream) Audio() (string, string)  { return "", "" }
 func (s *errorMockStream) Image() (string, string)  { return "", "" }
 func (s *errorMockStream) Thought() content.Thought { return content.Thought{} }
 func (s *errorMockStream) ToolCall() ToolCall       { return ToolCall{} }
@@ -375,7 +375,7 @@ func (s *mockCancellingStream) Message() Message {
 }
 
 func (s *mockCancellingStream) Text() string             { return "This is a test message." }
-func (s *mockCancellingStream) Audio() (string, string) { return "", "" }
+func (s *mockCancellingStream) Audio() (string, string)  { return "", "" }
 func (s *mockCancellingStream) Image() (string, string)  { return "", "" }
 func (s *mockCancellingStream) Thought() content.Thought { return content.Thought{} }
 func (s *mockCancellingStream) ToolCall() ToolCall       { return ToolCall{} }

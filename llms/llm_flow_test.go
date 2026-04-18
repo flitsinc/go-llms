@@ -37,7 +37,7 @@ func (s *messageStartStream) Message() Message {
 	return s.message
 }
 func (s *messageStartStream) Text() string             { return s.text }
-func (s *messageStartStream) Audio() (string, string) { return "", "" }
+func (s *messageStartStream) Audio() (string, string)  { return "", "" }
 func (s *messageStartStream) Image() (string, string)  { return "", "" }
 func (s *messageStartStream) Thought() content.Thought { return content.Thought{} }
 func (s *messageStartStream) ToolCall() ToolCall       { return ToolCall{} }

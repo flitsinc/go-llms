@@ -95,7 +95,11 @@ type Model struct {
 	mediaResolution MediaResolution
 	modalities      []string
 	speechVoice     string
-	httpClient      *http.Client
+	// nonStreaming posts to ":generateContent" (single JSON response) instead
+	// of ":streamGenerateContent?alt=sse". Required for models that do not
+	// support server-sent events — notably Gemini TTS preview models.
+	nonStreaming bool
+	httpClient   *http.Client
 
 	// streamFunctionCallArguments enables streaming of function call arguments
 	// on Vertex AI Gemini 3+ models. When true, the backend sends partial argument
@@ -215,6 +219,21 @@ func (m *Model) WithSpeechVoice(voice string) *Model {
 // (WithGeminiAPI) does not support partialArgs and will ignore this setting.
 func (m *Model) WithStreamingToolArguments(enabled bool) *Model {
 	m.streamFunctionCallArguments = enabled
+	return m
+}
+
+// WithNonStreaming configures the provider to call the :generateContent
+// endpoint (single JSON response) instead of :streamGenerateContent (SSE).
+// Use this for models that do not support server-sent events — notably
+// Gemini TTS preview models, which reject the streaming endpoint with
+// "INVALID_ARGUMENT".
+//
+// The non-streaming response is wrapped in one synthetic SSE chunk before
+// being handed to Iter(), so the Stream interface and event order are
+// unchanged; the only observable difference is that all events arrive after
+// the full HTTP response has been read rather than incrementally.
+func (m *Model) WithNonStreaming() *Model {
+	m.nonStreaming = true
 	return m
 }
 
@@ -435,11 +454,18 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("error encoding JSON: %w", err)}
 	}
 
-	if debugger != nil {
-		debugger.RawRequest(m.endpoint, jsonData)
+	endpoint := m.endpoint
+	if m.nonStreaming {
+		endpoint = strings.Replace(endpoint, ":streamGenerateContent", ":generateContent", 1)
+		endpoint = strings.Replace(endpoint, "?alt=sse&", "?", 1)
+		endpoint = strings.TrimSuffix(endpoint, "?alt=sse")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
+	if debugger != nil {
+		debugger.RawRequest(endpoint, jsonData)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &Stream{err: fmt.Errorf("error creating request: %w", err)}
 	}
@@ -485,10 +511,35 @@ func (m *Model) Generate(
 			Status:     resp.Status,
 		}}
 	}
+
+	// For non-streaming, read the whole JSON response body and wrap it in one
+	// synthetic SSE chunk so Iter() (which expects "data: " lines) can parse
+	// it unchanged. json.Compact guards against any embedded newlines in the
+	// response that would otherwise confuse the line reader.
+	var streamBody io.Reader = resp.Body
+	if m.nonStreaming {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return &Stream{err: fmt.Errorf("error reading response body: %w", readErr)}
+		}
+		if closeErr != nil {
+			return &Stream{err: fmt.Errorf("error closing response body: %w", closeErr)}
+		}
+		var chunk bytes.Buffer
+		chunk.Grow(len(bodyBytes) + len("data: \n\n"))
+		chunk.WriteString("data: ")
+		if err := json.Compact(&chunk, bodyBytes); err != nil {
+			return &Stream{err: fmt.Errorf("error compacting response body: %w", err)}
+		}
+		chunk.WriteString("\n\n")
+		streamBody = bytes.NewReader(chunk.Bytes())
+	}
+
 	return &Stream{
 		ctx:            ctx,
 		model:          m.model,
-		stream:         resp.Body,
+		stream:         streamBody,
 		debugger:       debugger,
 		toolCallsByID:  make(map[string]int),
 		toolArgsByID:   make(map[string]json.RawMessage),
@@ -507,8 +558,8 @@ type Stream struct {
 	lastThought *content.Thought
 	usage       *usageMetadata
 	debugger    llms.Debugger
-	lastImage struct{ URL, MIME string }
-	lastAudio struct{ URL, MIME string }
+	lastImage   struct{ URL, MIME string }
+	lastAudio   struct{ URL, MIME string }
 
 	// Tool call tracking for streaming function call arguments.
 	// Maps functionCall.ID to the index in message.ToolCalls.
