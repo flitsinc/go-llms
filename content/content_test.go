@@ -33,6 +33,20 @@ func TestContentMarshalJSON(t *testing.T) {
 			content: FromRawJSON(json.RawMessage(`{"foo":"bar"}`)),
 			want:    `[{"data":{"foo":"bar"},"type":"json"}]`,
 		},
+		{
+			name: "audio url",
+			content: Content{
+				&AudioURL{URL: "https://example.com/clip.mp3", MimeType: "audio/mpeg"},
+			},
+			want: `[{"audio_url":"https://example.com/clip.mp3","mime_type":"audio/mpeg","type":"audio_url"}]`,
+		},
+		{
+			name: "video url",
+			content: Content{
+				&VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+			},
+			want: `[{"mime_type":"video/mp4","type":"video_url","video_url":"https://example.com/clip.mp4"}]`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -76,6 +90,20 @@ func TestContentUnmarshalJSON(t *testing.T) {
 			name: "json content",
 			json: `[{"type":"json","data":{"foo":"bar"}}]`,
 			want: FromRawJSON(json.RawMessage(`{"foo":"bar"}`)),
+		},
+		{
+			name: "audio url",
+			json: `[{"type":"audio_url","audio_url":"https://example.com/clip.mp3","mime_type":"audio/mpeg"}]`,
+			want: Content{
+				&AudioURL{URL: "https://example.com/clip.mp3", MimeType: "audio/mpeg"},
+			},
+		},
+		{
+			name: "video url",
+			json: `[{"type":"video_url","video_url":"https://example.com/clip.mp4","mime_type":"video/mp4"}]`,
+			want: Content{
+				&VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+			},
 		},
 		{
 			name:    "invalid type",

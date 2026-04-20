@@ -137,6 +137,24 @@ type part struct {
 
 type parts []part
 
+// mediaPart builds a Gemini part from a media URL (image/audio/video). Data URIs are
+// sent as inlineData; public URLs go through fileData. Gemini uses the mime type to
+// decide how to interpret the bytes, so image/audio/video all go through the same
+// container with a different mime.
+func mediaPart(url, mimeType string) part {
+	if dataValue, found := strings.CutPrefix(url, "data:"); found {
+		parsedMime, data, found := strings.Cut(dataValue, ";base64,")
+		if !found {
+			panic(fmt.Sprintf("unsupported data URI format %q", url))
+		}
+		return part{InlineData: &inlineData{parsedMime, data}}
+	}
+	if mimeType == "" {
+		mimeType = content.GuessMIMETypeFromURL(url)
+	}
+	return part{FileData: &fileData{MimeType: mimeType, FileURI: url}}
+}
+
 func convertContent(c content.Content) (p parts) {
 	for _, item := range c {
 		var pp part
@@ -145,19 +163,11 @@ func convertContent(c content.Content) (p parts) {
 			text := v.Text
 			pp.Text = &text
 		case *content.ImageURL:
-			if dataValue, found := strings.CutPrefix(v.URL, "data:"); found {
-				mimeType, data, found := strings.Cut(dataValue, ";base64,")
-				if !found {
-					panic(fmt.Sprintf("unsupported data URI format %q", v.URL))
-				}
-				pp.InlineData = &inlineData{mimeType, data}
-			} else {
-				mimeType := v.MimeType
-				if mimeType == "" {
-					mimeType = content.GuessMIMETypeFromURL(v.URL)
-				}
-				pp.FileData = &fileData{MimeType: mimeType, FileURI: v.URL}
-			}
+			pp = mediaPart(v.URL, v.MimeType)
+		case *content.AudioURL:
+			pp = mediaPart(v.URL, v.MimeType)
+		case *content.VideoURL:
+			pp = mediaPart(v.URL, v.MimeType)
 		case *content.JSON:
 			text := string(v.Data)
 			pp.Text = &text

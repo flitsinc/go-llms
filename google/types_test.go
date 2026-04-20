@@ -51,6 +51,44 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 		},
 		{
+			name: "User message - audio (data URI)",
+			input: llms.Message{
+				Role: "user",
+				Content: content.Content{
+					&content.Text{Text: "Transcribe:"},
+					&content.AudioURL{URL: "data:audio/mpeg;base64,YWJj"},
+				},
+			},
+			expected: []message{
+				{
+					Role: "user",
+					Parts: parts{
+						{Text: ptr("Transcribe:")},
+						{InlineData: &inlineData{MimeType: "audio/mpeg", Data: "YWJj"}},
+					},
+				},
+			},
+		},
+		{
+			name: "User message - video (file URI)",
+			input: llms.Message{
+				Role: "user",
+				Content: content.Content{
+					&content.Text{Text: "Summarize:"},
+					&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+				},
+			},
+			expected: []message{
+				{
+					Role: "user",
+					Parts: parts{
+						{Text: ptr("Summarize:")},
+						{FileData: &fileData{MimeType: "video/mp4", FileURI: "https://example.com/clip.mp4"}},
+					},
+				},
+			},
+		},
+		{
 			name: "Assistant message - text only",
 			input: llms.Message{
 				Role:    "assistant",
