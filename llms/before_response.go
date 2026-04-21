@@ -135,19 +135,19 @@ func cloneContent(c content.Content) content.Content {
 			out = append(out, &content.ImageURL{
 				URL:      v.URL,
 				MimeType: v.MimeType,
-				Metadata: cloneStringMap(v.Metadata),
+				Metadata: cloneMetadata(v.Metadata),
 			})
 		case *content.AudioURL:
 			out = append(out, &content.AudioURL{
 				URL:      v.URL,
 				MimeType: v.MimeType,
-				Metadata: cloneStringMap(v.Metadata),
+				Metadata: cloneMetadata(v.Metadata),
 			})
 		case *content.VideoURL:
 			out = append(out, &content.VideoURL{
 				URL:      v.URL,
 				MimeType: v.MimeType,
-				Metadata: cloneStringMap(v.Metadata),
+				Metadata: cloneMetadata(v.Metadata),
 			})
 		case *content.JSON:
 			out = append(out, &content.JSON{Data: append([]byte(nil), v.Data...)})
@@ -157,7 +157,7 @@ func cloneContent(c content.Content) content.Content {
 				Text:      v.Text,
 				Encrypted: append([]byte(nil), v.Encrypted...),
 				Signature: v.Signature,
-				Metadata:  cloneStringMap(v.Metadata),
+				Metadata:  cloneMetadata(v.Metadata),
 				Summary:   v.Summary,
 			})
 		case *content.CacheHint:
@@ -165,17 +165,6 @@ func cloneContent(c content.Content) content.Content {
 		default:
 			out = append(out, item)
 		}
-	}
-	return out
-}
-
-func cloneStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
 	}
 	return out
 }
