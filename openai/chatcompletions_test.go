@@ -18,7 +18,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 	testCases := []struct {
 		name     string
 		input    llms.Message
-		expected []message
+		expected []Message
 	}{
 		{
 			name: "User message - text only",
@@ -26,10 +26,10 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				Role:    "user",
 				Content: content.FromText("Hello there"),
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role: "user",
-					Content: contentList{
+					Content: ContentList{
 						{Type: "text", Text: ptr("Hello there")},
 					},
 				},
@@ -41,10 +41,10 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				Role:    "user",
 				Content: content.FromTextAndImage("Look at this:", "data:image/png;base64,abc"),
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role: "user",
-					Content: contentList{
+					Content: ContentList{
 						{Type: "text", Text: ptr("Look at this:")},
 						{Type: "image_url", ImageURL: &imageURL{URL: "data:image/png;base64,abc", Detail: "auto"}},
 					},
@@ -57,10 +57,10 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				Role:    "assistant",
 				Content: content.FromText("I am here to help."),
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role: "assistant",
-					Content: contentList{
+					Content: ContentList{
 						{Type: "text", Text: ptr("I am here to help.")},
 					},
 				},
@@ -75,10 +75,10 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				},
 				Content: content.FromText("Okay, getting weather."), // Content often empty but test just in case
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role: "assistant",
-					Content: contentList{ // Ensure content is still converted
+					Content: ContentList{ // Ensure content is still converted
 						{Type: "text", Text: ptr("Okay, getting weather.")},
 					},
 					ToolCalls: []toolCall{
@@ -96,7 +96,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				},
 				Content: content.Content{}, // Empty content
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role:    "assistant",
 					Content: nil, // Content should be nil so it's omitted from JSON
@@ -120,7 +120,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					},
 				},
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role:    "assistant",
 					Content: nil,
@@ -137,11 +137,11 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				ToolCallID: "call_123",
 				Content:    content.FromRawJSON(json.RawMessage(`{"temp": 25}`)),
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role:       "tool",
 					ToolCallID: "call_123",
-					Content:    contentList{{Type: "text", Text: ptr(`{"temp": 25}`)}}, // Result stringified
+					Content:    ContentList{{Type: "text", Text: ptr(`{"temp": 25}`)}}, // Result stringified
 				},
 			},
 		},
@@ -152,11 +152,11 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 				ToolCallID: "call_456",
 				Content:    content.FromText("Command executed successfully"),
 			},
-			expected: []message{
+			expected: []Message{
 				{
 					Role:       "tool",
 					ToolCallID: "call_456",
-					Content:    contentList{{Type: "text", Text: ptr("Command executed successfully")}},
+					Content:    ContentList{{Type: "text", Text: ptr("Command executed successfully")}},
 				},
 			},
 		},
@@ -170,15 +170,15 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					&content.Text{Text: "Process finished."},
 				},
 			},
-			expected: []message{
+			expected: []Message{
 				{ // Primary tool result message
 					Role:       "tool",
 					ToolCallID: "call_789",
-					Content:    contentList{{Type: "text", Text: ptr(`{"status": "done"}`)}},
+					Content:    ContentList{{Type: "text", Text: ptr(`{"status": "done"}`)}},
 				},
 				{ // Secondary user message for the extra text
 					Role: "user",
-					Content: contentList{
+					Content: ContentList{
 						{Type: "text", Text: ptr("Process finished.")},
 					},
 				},
@@ -194,15 +194,15 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					&content.ImageURL{URL: "data:image/png;base64,xyz"},
 				},
 			},
-			expected: []message{
+			expected: []Message{
 				{ // Primary tool result message
 					Role:       "tool",
 					ToolCallID: "call_abc",
-					Content:    contentList{{Type: "text", Text: ptr(`{"plot_generated": true}`)}},
+					Content:    ContentList{{Type: "text", Text: ptr(`{"plot_generated": true}`)}},
 				},
 				{ // Secondary user message for the extra image
 					Role: "user",
-					Content: contentList{
+					Content: ContentList{
 						{Type: "image_url", ImageURL: &imageURL{URL: "data:image/png;base64,xyz", Detail: "auto"}},
 					},
 				},
@@ -211,13 +211,13 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 		{
 			name:     "Empty message",
 			input:    llms.Message{Role: "user", Content: nil},
-			expected: []message{}, // Should produce no message if content and tool calls are empty
+			expected: []Message{}, // Should produce no message if content and tool calls are empty
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := messagesFromLLM(tc.input, false)
+			actual := MessagesFromLLM(tc.input)
 			assert.Equal(t, len(tc.expected), len(actual), "Number of messages mismatch")
 
 			// Use require for slice length check before iterating

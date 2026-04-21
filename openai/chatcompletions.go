@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,12 +32,9 @@ type ChatCompletionsAPI struct {
 
 	customPayloadValues map[string]any
 
-	// When true, emit cache_control on content parts from CacheHint items.
-	// Use for providers like OpenRouter that pass cache_control through to Anthropic.
-	// TODO: If we need more pass-through exceptions like this, create a dedicated
-	// openrouter Provider implementation instead of adding flags here, and remove
-	// cacheControl from ChatCompletionsAPI.
-	cacheControl bool
+	// When set, include prompt_cache_retention in requests that contain a "long"
+	// cache hint. This is an OpenAI-specific feature.
+	promptCacheRetention string
 }
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
@@ -78,11 +76,11 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 	return m
 }
 
-// WithCacheControl enables emitting cache_control fields on content parts.
-// Use this for providers like OpenRouter that pass cache_control through to
-// upstream providers (e.g. Anthropic) for prompt caching.
-func (m *ChatCompletionsAPI) WithCacheControl(enable bool) *ChatCompletionsAPI {
-	m.cacheControl = enable
+// WithPromptCacheRetention enables extended prompt caching with the given
+// retention duration (e.g. "24h") when content contains a "long" cache hint.
+// This is an OpenAI-specific feature.
+func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCompletionsAPI {
+	m.promptCacheRetention = retention
 	return m
 }
 
@@ -110,25 +108,25 @@ func (m *ChatCompletionsAPI) Model() string {
 	return m.model
 }
 
-func (m *ChatCompletionsAPI) Generate(
-	ctx context.Context,
+// BuildPayload constructs the request payload without sending it.
+// This is exported so wrapper providers (e.g. OpenRouter) can modify the payload
+// before calling DoRequest.
+func (m *ChatCompletionsAPI) BuildPayload(
 	systemPrompt content.Content,
 	messages []llms.Message,
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
-) llms.ProviderStream {
-	debugger := llms.GetDebugger(ctx)
-
-	var apiMessages []message
+) (map[string]any, error) {
+	var apiMessages []Message
 	if systemPrompt != nil {
-		apiMessages = append(apiMessages, message{
+		apiMessages = append(apiMessages, Message{
 			Role:    "system",
-			Content: convertContent(systemPrompt, m.cacheControl),
+			Content: ConvertContent(systemPrompt),
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := messagesFromLLM(msg, m.cacheControl)
+		convertedMsgs := MessagesFromLLM(msg)
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
@@ -155,9 +153,8 @@ func (m *ChatCompletionsAPI) Generate(
 		payload["verbosity"] = m.verbosity
 	}
 
-	// Enable extended prompt caching (24h) when any content contains a "long" cache hint.
-	if hasLongCacheHint(systemPrompt, messages) {
-		payload["prompt_cache_retention"] = "24h"
+	if m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
+		payload["prompt_cache_retention"] = m.promptCacheRetention
 	}
 
 	for k, v := range m.customPayloadValues {
@@ -199,7 +196,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: no allowed tools found in toolbox")}
+					return nil, fmt.Errorf("openai chat: no allowed tools found in toolbox")
 				}
 				// Build allowed_tools object
 				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
@@ -225,7 +222,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: required tool %q not found in toolbox", name)}
+					return nil, fmt.Errorf("openai chat: required tool %q not found in toolbox", name)
 				}
 				payload["tool_choice"] = ChatToolChoice{Type: "function", Function: &ChatToolChoiceFunc{Name: name}}
 			default:
@@ -250,7 +247,7 @@ func (m *ChatCompletionsAPI) Generate(
 					}
 				}
 				if !exists {
-					return &ChatCompletionsStream{err: fmt.Errorf("openai chat: none of the required tools are present in toolbox")}
+					return nil, fmt.Errorf("openai chat: none of the required tools are present in toolbox")
 				}
 				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
 				for _, n := range choice.AllowedTools {
@@ -275,6 +272,29 @@ func (m *ChatCompletionsAPI) Generate(
 			},
 		}
 	}
+
+	return payload, nil
+}
+
+func (m *ChatCompletionsAPI) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) llms.ProviderStream {
+	payload, err := m.BuildPayload(systemPrompt, messages, toolbox, jsonOutputSchema)
+	if err != nil {
+		return &ChatCompletionsStream{err: err}
+	}
+	return m.DoRequest(ctx, payload)
+}
+
+// DoRequest sends a pre-built payload and returns a streaming response.
+// This is exported so wrapper providers (e.g. OpenRouter) can build/modify a
+// payload via BuildPayload and then send it.
+func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]any) llms.ProviderStream {
+	debugger := llms.GetDebugger(ctx)
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -347,14 +367,15 @@ func (m *ChatCompletionsAPI) Generate(
 }
 
 type ChatCompletionsStream struct {
-	ctx      context.Context
-	model    string
-	stream   io.Reader
-	debugger llms.Debugger
-	err      error
-	message  llms.Message
-	lastText string
-	usage    *usage
+	ctx         context.Context
+	model       string
+	stream      io.Reader
+	debugger    llms.Debugger
+	err         error
+	message     llms.Message
+	lastText    string
+	lastThought *content.Thought
+	usage       *usage
 }
 
 func (s *ChatCompletionsStream) Err() error {
@@ -383,8 +404,9 @@ func (s *ChatCompletionsStream) ToolCall() llms.ToolCall {
 }
 
 func (s *ChatCompletionsStream) Thought() content.Thought {
-	// OpenAI API does not currently stream thoughts through Chat Completions API.
-	// TODO: Switch to Responses API to support this.
+	if s.lastThought != nil {
+		return *s.lastThought
+	}
 	return content.Thought{}
 }
 
@@ -404,8 +426,27 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
 	messageStartYielded := false
 
-	return func(yield func(llms.StreamStatus) bool) {
+	return func(rawYield func(llms.StreamStatus) bool) {
+		stopped := false
+		yield := func(status llms.StreamStatus) bool {
+			if !rawYield(status) {
+				stopped = true
+				return false
+			}
+			return true
+		}
 		defer io.Copy(io.Discard, s.stream)
+		defer func() {
+			// Ensure ThinkingDone is emitted if the stream ends abnormally
+			// (e.g. EOF without [DONE]) while still in thinking state.
+			// Don't call yield if the consumer already stopped iterating.
+			if s.lastThought != nil {
+				s.lastThought = nil
+				if !stopped {
+					rawYield(llms.StreamStatusThinkingDone)
+				}
+			}
+		}()
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -447,7 +488,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				continue
 			}
 			if line == "[DONE]" {
-				// Stream ended. If a tool call was active, mark it as ready.
+				// Stream ended. If we were still thinking, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
+				// If a tool call was active, mark it as ready.
 				if activeToolCallIndex != -1 {
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
@@ -480,19 +528,86 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					return
 				}
 			}
-			// Content is nullable string in delta
-			if delta.Content != nil {
-				s.lastText = *delta.Content
-				if s.lastText != "" {
-					s.message.Content.Append(s.lastText)
-					if !yield(llms.StreamStatusText) {
+			// Handle reasoning/thinking tokens from providers that include them
+			// in the OpenAI-compatible streaming format. Prefer delta.Reasoning
+			// for text; fall back to reasoning_details[].Text if absent.
+			reasoningText := ""
+			if delta.Reasoning != nil && *delta.Reasoning != "" {
+				reasoningText = *delta.Reasoning
+			}
+			if reasoningText == "" {
+				for _, rd := range delta.ReasoningDetails {
+					if rd.Text != "" {
+						reasoningText = rd.Text
+						break
+					}
+				}
+			}
+			if reasoningText != "" {
+				if s.lastThought == nil {
+					s.lastThought = &content.Thought{}
+				}
+				s.lastThought.Text = reasoningText
+				s.message.Content.AppendThought(reasoningText)
+				if !yield(llms.StreamStatusThinking) {
+					return
+				}
+			}
+			// Process reasoning_details for signatures and encrypted thinking.
+			for _, rd := range delta.ReasoningDetails {
+				if rd.Signature != "" {
+					// Signature arrives on the final reasoning chunk.
+					if s.lastThought == nil {
+						s.lastThought = &content.Thought{}
+						s.message.Content.AppendThought("")
+					}
+					s.message.Content.SetThoughtSignature(rd.Signature)
+					s.lastThought.Signature = rd.Signature
+				}
+				if rd.Type == "reasoning.encrypted" && rd.Data != "" {
+					decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
+					if err != nil {
+						s.err = fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+						return
+					}
+					thought := &content.Thought{
+						Text:      "(Redacted)",
+						Encrypted: decodedData,
+						Summary:   true,
+					}
+					s.lastThought = thought
+					s.message.Content = append(s.message.Content, thought)
+					if !yield(llms.StreamStatusThinking) {
 						return
 					}
 				}
 			}
 
+			// Content is nullable string in delta
+			if delta.Content != nil && *delta.Content != "" {
+				// If we were thinking and now got content, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
+				s.lastText = *delta.Content
+				s.message.Content.Append(s.lastText)
+				if !yield(llms.StreamStatusText) {
+					return
+				}
+			}
+
 			// Handle Tool Calls Delta
 			if len(delta.ToolCalls) > 0 {
+				// If we were thinking and now got tool calls, emit ThinkingDone.
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
 				for _, toolDelta := range delta.ToolCalls {
 					if toolDelta.Index >= len(s.message.ToolCalls) {
 						// This is a new tool call starting
