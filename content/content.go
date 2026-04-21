@@ -93,6 +93,9 @@ type Thought struct {
 	Text      string `json:"text,omitempty"`
 	Encrypted []byte `json:"encrypted,omitempty"`
 	Signature string `json:"signature,omitempty"`
+	// Metadata holds protocol-specific metadata that should be forwarded unchanged.
+	// Keys are prefixed with the protocol/provider name, e.g. "openai:format".
+	Metadata map[string]string `json:"metadata,omitempty"`
 	// Summary is true if the thought is a complete summary of the thinking
 	// session, as opposed to the actual thinking stream.
 	Summary bool `json:"summary"`
@@ -100,6 +103,10 @@ type Thought struct {
 
 func (t *Thought) Type() Type {
 	return TypeThought
+}
+
+func (t *Thought) GetMetadata() map[string]string {
+	return t.Metadata
 }
 
 type CacheHint struct {

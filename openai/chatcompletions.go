@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -39,11 +40,12 @@ type ChatCompletionsAPI struct {
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 	return &ChatCompletionsAPI{
-		accessToken:  accessToken,
-		model:        model,
-		endpoint:     "https://api.openai.com/v1/chat/completions",
-		company:      "OpenAI",
-		includeUsage: true,
+		accessToken:          accessToken,
+		model:                model,
+		endpoint:             "https://api.openai.com/v1/chat/completions",
+		company:              "OpenAI",
+		includeUsage:         true,
+		promptCacheRetention: "24h",
 	}
 }
 
@@ -81,6 +83,13 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 // This is an OpenAI-specific feature.
 func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCompletionsAPI {
 	m.promptCacheRetention = retention
+	return m
+}
+
+// WithoutPromptCacheRetention disables prompt_cache_retention even when
+// content contains a long cache hint.
+func (m *ChatCompletionsAPI) WithoutPromptCacheRetention() *ChatCompletionsAPI {
+	m.promptCacheRetention = ""
 	return m
 }
 
@@ -421,6 +430,177 @@ func (s *ChatCompletionsStream) Usage() llms.Usage {
 	}
 }
 
+func (s *ChatCompletionsStream) emitReasoningDetail(
+	rd ReasoningDetail,
+	yield func(llms.StreamStatus) bool,
+) bool {
+	thought, err := s.applyReasoningDetail(rd)
+	if err != nil {
+		s.err = err
+		return false
+	}
+	if thought == nil {
+		return true
+	}
+	s.lastThought = thought
+	return yield(llms.StreamStatusThinking)
+}
+
+func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*content.Thought, error) {
+	aggregate := s.findReasoningThought(rd)
+	if aggregate == nil {
+		aggregate = &content.Thought{ID: rd.ID}
+		s.message.Content = append(s.message.Content, aggregate)
+	} else if aggregate.ID == "" && rd.ID != "" {
+		aggregate.ID = rd.ID
+	}
+	s.mergeReasoningMetadata(aggregate, rd)
+
+	switch rd.Type {
+	case "reasoning.encrypted":
+		if rd.Data == "" {
+			return nil, nil
+		}
+		decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+		}
+		aggregate.Encrypted = decodedData
+		aggregate.Text = "(Redacted)"
+		aggregate.Summary = true
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      aggregate.Text,
+			Encrypted: append([]byte(nil), decodedData...),
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   true,
+		}, nil
+	case "reasoning.summary":
+		if rd.Summary == "" && rd.Signature == "" {
+			return nil, nil
+		}
+		aggregate.Summary = true
+		aggregate.Text += rd.Summary
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      rd.Summary,
+			Signature: rd.Signature,
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   true,
+		}, nil
+	default:
+		if rd.Text == "" && rd.Signature == "" {
+			return nil, nil
+		}
+		aggregate.Text += rd.Text
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      rd.Text,
+			Signature: rd.Signature,
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   aggregate.Summary,
+		}, nil
+	}
+}
+
+func (s *ChatCompletionsStream) findReasoningThought(rd ReasoningDetail) *content.Thought {
+	var fallback *content.Thought
+	for i := len(s.message.Content) - 1; i >= 0; i-- {
+		thought, ok := s.message.Content[i].(*content.Thought)
+		if !ok {
+			continue
+		}
+		if rd.ID != "" {
+			if thought.ID == rd.ID {
+				return thought
+			}
+		}
+		if rd.Index != nil {
+			if idx, ok := thoughtReasoningIndex(thought); ok && idx == *rd.Index {
+				return thought
+			}
+		}
+		if fallback == nil && thoughtMatchesReasoningDetail(thought, rd) {
+			fallback = thought
+		}
+	}
+	return fallback
+}
+
+func (s *ChatCompletionsStream) mergeReasoningMetadata(thought *content.Thought, rd ReasoningDetail) {
+	metadata := reasoningDetailMetadata(rd)
+	if len(metadata) == 0 {
+		return
+	}
+	if thought.Metadata == nil {
+		thought.Metadata = metadata
+		return
+	}
+	for k, v := range metadata {
+		thought.Metadata[k] = v
+	}
+}
+
+func reasoningDetailMetadata(rd ReasoningDetail) map[string]string {
+	var metadata map[string]string
+	if rd.Format != "" {
+		metadata = map[string]string{"openai:reasoning_format": rd.Format}
+	}
+	if rd.Index != nil {
+		if metadata == nil {
+			metadata = make(map[string]string, 1)
+		}
+		metadata["openai:reasoning_index"] = strconv.Itoa(*rd.Index)
+	}
+	return metadata
+}
+
+func thoughtReasoningIndex(thought *content.Thought) (int, bool) {
+	if thought == nil || thought.Metadata == nil {
+		return 0, false
+	}
+	val, ok := thought.Metadata["openai:reasoning_index"]
+	if !ok || val == "" {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, false
+	}
+	return idx, true
+}
+
+func thoughtMatchesReasoningDetail(thought *content.Thought, rd ReasoningDetail) bool {
+	if thought == nil {
+		return false
+	}
+	switch rd.Type {
+	case "reasoning.encrypted":
+		return len(thought.Encrypted) > 0
+	case "reasoning.summary":
+		return thought.Summary && len(thought.Encrypted) == 0
+	default:
+		return !thought.Summary && len(thought.Encrypted) == 0
+	}
+}
+
+func cloneThoughtMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
@@ -529,57 +709,22 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 			}
 			// Handle reasoning/thinking tokens from providers that include them
-			// in the OpenAI-compatible streaming format. Prefer delta.Reasoning
-			// for text; fall back to reasoning_details[].Text if absent.
-			reasoningText := ""
+			// in the OpenAI-compatible streaming format. delta.Reasoning is the
+			// legacy plaintext field; reasoning_details carries structured replay data.
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
-				reasoningText = *delta.Reasoning
-			}
-			if reasoningText == "" {
-				for _, rd := range delta.ReasoningDetails {
-					if rd.Text != "" {
-						reasoningText = rd.Text
-						break
-					}
-				}
-			}
-			if reasoningText != "" {
-				if s.lastThought == nil {
-					s.lastThought = &content.Thought{}
-				}
-				s.lastThought.Text = reasoningText
-				s.message.Content.AppendThought(reasoningText)
-				if !yield(llms.StreamStatusThinking) {
+				if !s.emitReasoningDetail(ReasoningDetail{
+					Type: "reasoning.text",
+					Text: *delta.Reasoning,
+				}, yield) {
 					return
 				}
 			}
-			// Process reasoning_details for signatures and encrypted thinking.
 			for _, rd := range delta.ReasoningDetails {
-				if rd.Signature != "" {
-					// Signature arrives on the final reasoning chunk.
-					if s.lastThought == nil {
-						s.lastThought = &content.Thought{}
-						s.message.Content.AppendThought("")
-					}
-					s.message.Content.SetThoughtSignature(rd.Signature)
-					s.lastThought.Signature = rd.Signature
+				if delta.Reasoning != nil && *delta.Reasoning != "" && rd.Text != "" {
+					rd.Text = ""
 				}
-				if rd.Type == "reasoning.encrypted" && rd.Data != "" {
-					decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
-					if err != nil {
-						s.err = fmt.Errorf("error decoding encrypted reasoning data: %w", err)
-						return
-					}
-					thought := &content.Thought{
-						Text:      "(Redacted)",
-						Encrypted: decodedData,
-						Summary:   true,
-					}
-					s.lastThought = thought
-					s.message.Content = append(s.message.Content, thought)
-					if !yield(llms.StreamStatusThinking) {
-						return
-					}
+				if !s.emitReasoningDetail(rd, yield) {
+					return
 				}
 			}
 

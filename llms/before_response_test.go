@@ -187,6 +187,43 @@ func TestBeforeResponseHookCanAbort(t *testing.T) {
 	assert.Len(t, provider.Calls(), 0, "provider should not be called after before-response abort")
 }
 
+func TestCloneMessages_PreservesContentMetadata(t *testing.T) {
+	original := []Message{{
+		Role: "assistant",
+		Content: content.Content{
+			&content.ImageURL{
+				URL:      "https://example.com/image.png",
+				MimeType: "image/png",
+				Metadata: map[string]string{"openai:item_id": "img_1"},
+			},
+			&content.Thought{
+				ID:       "r1",
+				Text:     "thinking",
+				Metadata: map[string]string{"openai:reasoning_format": "anthropic-claude-v1"},
+			},
+		},
+	}}
+
+	cloned := cloneMessages(original)
+	require.Len(t, cloned, 1)
+
+	image, ok := cloned[0].Content[0].(*content.ImageURL)
+	require.True(t, ok)
+	assert.Equal(t, "img_1", image.Metadata["openai:item_id"])
+
+	thought, ok := cloned[0].Content[1].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "anthropic-claude-v1", thought.Metadata["openai:reasoning_format"])
+
+	originalImage := original[0].Content[0].(*content.ImageURL)
+	originalThought := original[0].Content[1].(*content.Thought)
+	originalImage.Metadata["openai:item_id"] = "mutated"
+	originalThought.Metadata["openai:reasoning_format"] = "mutated"
+
+	assert.Equal(t, "img_1", image.Metadata["openai:item_id"])
+	assert.Equal(t, "anthropic-claude-v1", thought.Metadata["openai:reasoning_format"])
+}
+
 func firstText(msg Message) string {
 	for _, item := range msg.Content {
 		if text, ok := item.(*content.Text); ok {

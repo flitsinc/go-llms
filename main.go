@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -35,6 +39,27 @@ func main() {
 	}
 
 	provider := os.Args[1]
+
+	// gemini-tts is a one-shot TTS flow (no tools, writes a WAV file) that
+	// doesn't fit the chat-loop shape used for the other providers, so it
+	// gets its own entry point.
+	if provider == "gemini-tts" {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			fmt.Println("Error: GEMINI_API_KEY environment variable is not set")
+			return
+		}
+		prompt := "Say with a cheerful tone: Hello from go-llms! This is Gemini text-to-speech."
+		if len(os.Args) > 2 {
+			prompt = os.Args[2]
+		}
+		if err := runGeminiTTS(apiKey, prompt, "out.wav"); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var llmProvider llms.Provider
 
 	var cleanup func()
@@ -244,6 +269,8 @@ func printUsage() {
 	fmt.Println("  openrouter-thinking - Same as openrouter but with medium reasoning effort")
 	fmt.Println("                        Optional: pass model as second arg (default: anthropic/claude-sonnet-4)")
 	fmt.Println("  xai                 - Uses xAI's Grok 3 Mini (requires XAI_API_KEY)")
+	fmt.Println("  gemini-tts          - Synthesizes speech to out.wav via Gemini TTS (requires GEMINI_API_KEY)")
+	fmt.Println("                        Optional: pass the prompt as second arg")
 	fmt.Println()
 	fmt.Println("Environment variables can be set directly or loaded from a .env file.")
 	fmt.Println()
@@ -301,3 +328,96 @@ var DoMath = tools.FuncGrammar(
 		return tools.SuccessWithLabel(expr, result)
 	},
 )
+
+// Gemini TTS always streams 24 kHz, 16-bit, mono PCM. The model emits many
+// small chunks (~40 ms each) as base64 data URIs like
+// `data:audio/L16;rate=24000;base64,...`; we concatenate the decoded PCM and
+// wrap it in a WAV container at the end.
+const (
+	ttsSampleRate    = 24000
+	ttsChannels      = 1
+	ttsBitsPerSample = 16
+)
+
+func runGeminiTTS(apiKey, prompt, outPath string) error {
+	provider := google.New("gemini-3.1-flash-tts-preview").
+		WithGeminiAPI(apiKey).
+		WithMaxOutputTokens(0).
+		WithThinking(0).
+		WithModalities("AUDIO").
+		WithSpeechVoice("Kore")
+
+	llm := llms.New(provider)
+
+	start := time.Now()
+	var pcm []byte
+	var mime string
+	chunks := 0
+	for update := range llm.Chat(prompt) {
+		if u, ok := update.(llms.AudioUpdate); ok {
+			b, err := decodeAudioDataURI(u.URL)
+			if err != nil {
+				return fmt.Errorf("decode audio chunk: %w", err)
+			}
+			pcm = append(pcm, b...)
+			if mime == "" {
+				mime = u.MimeType
+			}
+			chunks++
+			fmt.Fprintf(os.Stderr, "[%s] chunk %d arrived (%d bytes, total pcm %d bytes)\n",
+				time.Since(start).Round(time.Millisecond), chunks, len(b), len(pcm))
+		}
+	}
+	if err := llm.Err(); err != nil {
+		return err
+	}
+	if len(pcm) == 0 {
+		return fmt.Errorf("no audio returned")
+	}
+
+	if err := writeWAV(outPath, pcm, ttsSampleRate, ttsChannels, ttsBitsPerSample); err != nil {
+		return fmt.Errorf("write wav: %w", err)
+	}
+
+	durationMs := len(pcm) * 1000 / (ttsSampleRate * ttsChannels * ttsBitsPerSample / 8)
+	dim("[%d chunks, %s PCM, %d ms audio, %s wall]\n",
+		chunks, mime, durationMs, time.Since(start).Round(time.Millisecond))
+	fmt.Printf("Wrote %s\n", outPath)
+	return nil
+}
+
+func decodeAudioDataURI(dataURI string) ([]byte, error) {
+	if !strings.HasPrefix(dataURI, "data:") {
+		return nil, fmt.Errorf("expected data URI, got %q", dataURI)
+	}
+	comma := strings.Index(dataURI, ",")
+	if comma == -1 {
+		return nil, fmt.Errorf("invalid data URI: no comma")
+	}
+	return base64.StdEncoding.DecodeString(dataURI[comma+1:])
+}
+
+func writeWAV(path string, pcm []byte, sampleRate, channels, bitsPerSample uint32) error {
+	var buf bytes.Buffer
+	byteRate := sampleRate * channels * bitsPerSample / 8
+	blockAlign := uint16(channels * bitsPerSample / 8)
+
+	buf.WriteString("RIFF")
+	binary.Write(&buf, binary.LittleEndian, uint32(36+len(pcm)))
+	buf.WriteString("WAVE")
+
+	buf.WriteString("fmt ")
+	binary.Write(&buf, binary.LittleEndian, uint32(16))
+	binary.Write(&buf, binary.LittleEndian, uint16(1)) // PCM
+	binary.Write(&buf, binary.LittleEndian, uint16(channels))
+	binary.Write(&buf, binary.LittleEndian, sampleRate)
+	binary.Write(&buf, binary.LittleEndian, byteRate)
+	binary.Write(&buf, binary.LittleEndian, blockAlign)
+	binary.Write(&buf, binary.LittleEndian, uint16(bitsPerSample))
+
+	buf.WriteString("data")
+	binary.Write(&buf, binary.LittleEndian, uint32(len(pcm)))
+	buf.Write(pcm)
+
+	return os.WriteFile(path, buf.Bytes(), 0644)
+}

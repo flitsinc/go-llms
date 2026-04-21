@@ -102,10 +102,11 @@ func (cl *ContentList) UnmarshalJSON(data []byte) error {
 
 // Message represents a chat message in the OpenAI API format.
 type Message struct {
-	Role       string      `json:"role"`
-	Content    ContentList `json:"content,omitempty"`
-	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Role             string            `json:"role"`
+	Content          ContentList       `json:"content,omitempty"`
+	ReasoningDetails []ReasoningDetail `json:"reasoning_details,omitempty"`
+	ToolCalls        []toolCall        `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
 }
 
 // MessagesFromLLM converts an llms.Message to the OpenAI API message format.
@@ -280,12 +281,14 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 // ReasoningDetail represents a reasoning token entry from providers that stream
 // thinking via the OpenAI-compatible format (e.g. OpenRouter).
 type ReasoningDetail struct {
-	Type      string `json:"type"`                // "reasoning.text" or "reasoning.encrypted"
+	Type      string `json:"type"`                // "reasoning.summary", "reasoning.text", or "reasoning.encrypted"
+	ID        string `json:"id,omitempty"`        // stable identifier for replaying a logical reasoning block
+	Summary   string `json:"summary,omitempty"`   // summary text for reasoning.summary blocks
 	Text      string `json:"text,omitempty"`      // reasoning text (streamed per chunk)
 	Data      string `json:"data,omitempty"`      // base64-encoded encrypted thinking
 	Signature string `json:"signature,omitempty"` // Anthropic signature (final chunk only)
 	Format    string `json:"format,omitempty"`    // e.g. "anthropic-claude-v1"
-	Index     int    `json:"index,omitempty"`
+	Index     *int   `json:"index,omitempty"`
 }
 
 type chatCompletionDelta struct {

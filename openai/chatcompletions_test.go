@@ -2,9 +2,11 @@ package openai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
@@ -357,4 +359,122 @@ func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
 		toolsList := tc["tools"].([]any)
 		require.Len(t, toolsList, 2)
 	})
+}
+
+func TestBuildPayload_DefaultPromptCacheRetention(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "24h", payload["prompt_cache_retention"])
+}
+
+func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
+	encrypted := base64.StdEncoding.EncodeToString([]byte("encrypted-reasoning"))
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","text":"Hello ","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","signature":"sig-1","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"r2","data":"` + encrypted + `","format":"anthropic-claude-v1","index":1}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"Done"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var thoughts []content.Thought
+	var thinkingDone int
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusThinking:
+			thoughts = append(thoughts, stream.Thought())
+		case llms.StreamStatusThinkingDone:
+			thinkingDone++
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 3)
+
+	assert.Equal(t, "r1", thoughts[0].ID)
+	assert.Equal(t, "Hello ", thoughts[0].Text)
+	assert.Equal(t, "anthropic-claude-v1", thoughts[0].Metadata["openai:reasoning_format"])
+	assert.Equal(t, "0", thoughts[0].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, "r1", thoughts[1].ID)
+	assert.Empty(t, thoughts[1].Text)
+	assert.Equal(t, "sig-1", thoughts[1].Signature)
+	assert.Equal(t, "0", thoughts[1].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, "r2", thoughts[2].ID)
+	assert.Equal(t, "(Redacted)", thoughts[2].Text)
+	assert.Equal(t, []byte("encrypted-reasoning"), thoughts[2].Encrypted)
+	assert.True(t, thoughts[2].Summary)
+	assert.Equal(t, "1", thoughts[2].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, 1, thinkingDone)
+	assert.Equal(t, "Done", stream.Text())
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 3)
+
+	firstThought, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r1", firstThought.ID)
+	assert.Equal(t, "Hello ", firstThought.Text)
+	assert.Equal(t, "sig-1", firstThought.Signature)
+	assert.Equal(t, "anthropic-claude-v1", firstThought.Metadata["openai:reasoning_format"])
+	assert.Equal(t, "0", firstThought.Metadata["openai:reasoning_index"])
+
+	secondThought, ok := msg.Content[1].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r2", secondThought.ID)
+	assert.Equal(t, "(Redacted)", secondThought.Text)
+	assert.Equal(t, []byte("encrypted-reasoning"), secondThought.Encrypted)
+	assert.True(t, secondThought.Summary)
+	assert.Equal(t, "1", secondThought.Metadata["openai:reasoning_index"])
+
+	text, ok := msg.Content[2].(*content.Text)
+	require.True(t, ok)
+	assert.Equal(t, "Done", text.Text)
+}
+
+func TestChatCompletionsStream_ReasoningSummaryDeltaAndAggregate(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","id":"rs1","summary":"Summarized reasoning","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var thoughts []content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			thoughts = append(thoughts, stream.Thought())
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 1)
+	assert.Equal(t, "rs1", thoughts[0].ID)
+	assert.Equal(t, "Summarized reasoning", thoughts[0].Text)
+	assert.True(t, thoughts[0].Summary)
+	assert.Equal(t, "0", thoughts[0].Metadata["openai:reasoning_index"])
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 1)
+	summary, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "rs1", summary.ID)
+	assert.Equal(t, "Summarized reasoning", summary.Text)
+	assert.True(t, summary.Summary)
+	assert.Equal(t, "anthropic-claude-v1", summary.Metadata["openai:reasoning_format"])
 }
