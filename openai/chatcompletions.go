@@ -31,7 +31,13 @@ type ChatCompletionsAPI struct {
 	// When true, include stream_options.include_usage in requests; default true.
 	includeUsage bool
 
+	// When true, encode CacheHint items as cache_control on content parts.
+	cacheControlPromptHints bool
+	// When true, encode assistant Thought items as reasoning_details for replay.
+	assistantReasoningReplay bool
+
 	customPayloadValues map[string]any
+	customHeaders       map[string]string
 
 	// When set, include prompt_cache_retention in requests that contain a "long"
 	// cache hint. This is an OpenAI-specific feature.
@@ -78,6 +84,21 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 	return m
 }
 
+// WithCacheControlPromptHints encodes CacheHint items as cache_control on
+// content parts instead of using prompt_cache_retention.
+func (m *ChatCompletionsAPI) WithCacheControlPromptHints() *ChatCompletionsAPI {
+	m.cacheControlPromptHints = true
+	return m
+}
+
+// WithAssistantReasoningReplay encodes assistant Thought items as
+// reasoning_details so they can be replayed on OpenAI-compatible providers
+// that support preserved reasoning continuity.
+func (m *ChatCompletionsAPI) WithAssistantReasoningReplay() *ChatCompletionsAPI {
+	m.assistantReasoningReplay = true
+	return m
+}
+
 // WithPromptCacheRetention enables extended prompt caching with the given
 // retention duration (e.g. "24h") when content contains a "long" cache hint.
 // This is an OpenAI-specific feature.
@@ -105,6 +126,15 @@ func (m *ChatCompletionsAPI) WithCustomPayloadValue(key string, value any) *Chat
 	return m
 }
 
+// WithHeader sets an additional HTTP header on requests made by this client.
+func (m *ChatCompletionsAPI) WithHeader(key, value string) *ChatCompletionsAPI {
+	if m.customHeaders == nil {
+		m.customHeaders = make(map[string]string)
+	}
+	m.customHeaders[key] = value
+	return m
+}
+
 func (m *ChatCompletionsAPI) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
 }
@@ -126,16 +156,21 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) (map[string]any, error) {
+	encodingOptions := chatMessageEncodingOptions{
+		cacheControlPromptHints:  m.cacheControlPromptHints,
+		assistantReasoningReplay: m.assistantReasoningReplay,
+	}
+
 	var apiMessages []Message
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, Message{
 			Role:    "system",
-			Content: ConvertContent(systemPrompt),
+			Content: ConvertContentWithOptions(systemPrompt, encodingOptions),
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := MessagesFromLLM(msg)
+		convertedMsgs := MessagesFromLLMWithOptions(msg, encodingOptions)
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
@@ -162,7 +197,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		payload["verbosity"] = m.verbosity
 	}
 
-	if m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
+	if !m.cacheControlPromptHints && m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
 		payload["prompt_cache_retention"] = m.promptCacheRetention
 	}
 
@@ -322,6 +357,9 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.accessToken))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range m.customHeaders {
+		req.Header.Set(k, v)
+	}
 
 	client := m.httpClient
 	if client == nil {

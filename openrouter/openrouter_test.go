@@ -10,57 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReasoningDetailsFromContent_PreservesOrderAndMetadata(t *testing.T) {
-	details := reasoningDetailsFromContent(content.Content{
-		&content.Thought{
-			ID:       "t1",
-			Text:     "first",
-			Metadata: map[string]string{"openai:reasoning_format": "anthropic-claude-v1", "openai:reasoning_index": "0"},
-		},
-		&content.Thought{
-			ID:        "t2",
-			Text:      "(Redacted)",
-			Encrypted: []byte("secret"),
-			Summary:   true,
-			Metadata:  map[string]string{"openai:reasoning_format": "anthropic-claude-v1", "openai:reasoning_index": "1"},
-		},
-		&content.Thought{
-			ID:        "t3",
-			Text:      "third",
-			Signature: "sig-3",
-			Metadata:  map[string]string{"openai:reasoning_format": "anthropic-claude-v1", "openai:reasoning_index": "2"},
-		},
-	})
+func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
+	p := New("", "anthropic/claude-sonnet-4")
 
-	require.Len(t, details, 3)
-	require.NotNil(t, details[0].Index)
-	require.NotNil(t, details[1].Index)
-	require.NotNil(t, details[2].Index)
-
-	assert.Equal(t, "reasoning.text", details[0].Type)
-	assert.Equal(t, "t1", details[0].ID)
-	assert.Equal(t, "first", details[0].Text)
-	assert.Equal(t, "anthropic-claude-v1", details[0].Format)
-	assert.Equal(t, 0, *details[0].Index)
-
-	assert.Equal(t, "reasoning.encrypted", details[1].Type)
-	assert.Equal(t, "t2", details[1].ID)
-	assert.NotEmpty(t, details[1].Data)
-	assert.Equal(t, "anthropic-claude-v1", details[1].Format)
-	assert.Equal(t, 1, *details[1].Index)
-
-	assert.Equal(t, "reasoning.text", details[2].Type)
-	assert.Equal(t, "t3", details[2].ID)
-	assert.Equal(t, "third", details[2].Text)
-	assert.Equal(t, "sig-3", details[2].Signature)
-	assert.Equal(t, "anthropic-claude-v1", details[2].Format)
-	assert.Equal(t, 2, *details[2].Index)
-}
-
-func TestProviderGenerate_UsesOpenRouterFields(t *testing.T) {
-	p := NewWithReasoning("", "anthropic/claude-sonnet-4", Reasoning{Effort: "medium"})
-
-	payload, err := p.buildPayload(
+	payload, err := p.BuildPayload(
 		content.Content{
 			&content.Text{Text: "Cache me"},
 			&content.CacheHint{Duration: "long"},
@@ -103,10 +56,6 @@ func TestProviderGenerate_UsesOpenRouterFields(t *testing.T) {
 	_, hasPromptCacheRetention := raw["prompt_cache_retention"]
 	assert.False(t, hasPromptCacheRetention)
 
-	reasoning, ok := raw["reasoning"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "medium", reasoning["effort"])
-
 	messages, ok := raw["messages"].([]any)
 	require.True(t, ok)
 	require.Len(t, messages, 2)
@@ -137,20 +86,19 @@ func TestProviderGenerate_UsesOpenRouterFields(t *testing.T) {
 	assert.Equal(t, "t3", third["id"])
 }
 
-func TestReasoningDetailsFromContent_SummaryThoughtsBecomeReasoningSummary(t *testing.T) {
-	details := reasoningDetailsFromContent(content.Content{
-		&content.Thought{
-			ID:       "summary_1",
-			Text:     "summary text",
-			Summary:  true,
-			Metadata: map[string]string{"openai:reasoning_index": "3"},
-		},
-	})
+func TestNewWithReasoning_AddsReasoningPayload(t *testing.T) {
+	p := NewWithReasoning("", "anthropic/claude-sonnet-4", Reasoning{Effort: "medium"})
 
-	require.Len(t, details, 1)
-	assert.Equal(t, "reasoning.summary", details[0].Type)
-	assert.Equal(t, "summary_1", details[0].ID)
-	assert.Equal(t, "summary text", details[0].Summary)
-	require.NotNil(t, details[0].Index)
-	assert.Equal(t, 3, *details[0].Index)
+	payload, err := p.BuildPayload(nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	reasoning, ok := raw["reasoning"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "medium", reasoning["effort"])
 }
