@@ -42,13 +42,17 @@ type ChatCompletionsAPI struct {
 	// When set, include prompt_cache_retention in requests that contain a "long"
 	// cache hint. This is an OpenAI-specific feature.
 	promptCacheRetention string
+	// Tracks whether prompt cache retention was explicitly configured by the caller.
+	promptCacheRetentionExplicit bool
 }
+
+const defaultChatCompletionsEndpoint = "https://api.openai.com/v1/chat/completions"
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 	return &ChatCompletionsAPI{
 		accessToken:          accessToken,
 		model:                model,
-		endpoint:             "https://api.openai.com/v1/chat/completions",
+		endpoint:             defaultChatCompletionsEndpoint,
 		company:              "OpenAI",
 		includeUsage:         true,
 		promptCacheRetention: "24h",
@@ -104,6 +108,7 @@ func (m *ChatCompletionsAPI) WithAssistantReasoningReplay() *ChatCompletionsAPI 
 // This is an OpenAI-specific feature.
 func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCompletionsAPI {
 	m.promptCacheRetention = retention
+	m.promptCacheRetentionExplicit = true
 	return m
 }
 
@@ -111,6 +116,7 @@ func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCom
 // content contains a long cache hint.
 func (m *ChatCompletionsAPI) WithoutPromptCacheRetention() *ChatCompletionsAPI {
 	m.promptCacheRetention = ""
+	m.promptCacheRetentionExplicit = true
 	return m
 }
 
@@ -197,7 +203,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		payload["verbosity"] = m.verbosity
 	}
 
-	if !m.cacheControlPromptHints && m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
+	if m.shouldSendPromptCacheRetention(systemPrompt, messages) {
 		payload["prompt_cache_retention"] = m.promptCacheRetention
 	}
 
@@ -413,6 +419,19 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: debugger}
 }
 
+func (m *ChatCompletionsAPI) shouldSendPromptCacheRetention(
+	systemPrompt content.Content,
+	messages []llms.Message,
+) bool {
+	if m.cacheControlPromptHints || m.promptCacheRetention == "" || !hasLongCacheHint(systemPrompt, messages) {
+		return false
+	}
+	if m.promptCacheRetentionExplicit {
+		return true
+	}
+	return strings.TrimRight(m.endpoint, "/") == defaultChatCompletionsEndpoint
+}
+
 type ChatCompletionsStream struct {
 	ctx         context.Context
 	model       string
@@ -496,22 +515,30 @@ func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*conte
 
 	switch rd.Type {
 	case "reasoning.encrypted":
-		if rd.Data == "" {
+		if rd.Data == "" && rd.Signature == "" {
 			return nil, nil
 		}
-		decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
-		if err != nil {
-			return nil, fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+		var deltaEncrypted []byte
+		if rd.Data != "" {
+			decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
+			if err != nil {
+				return nil, fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+			}
+			aggregate.Encrypted = decodedData
+			aggregate.Text = "(Redacted)"
+			aggregate.Summary = true
+			deltaEncrypted = append([]byte(nil), decodedData...)
 		}
-		aggregate.Encrypted = decodedData
-		aggregate.Text = "(Redacted)"
-		aggregate.Summary = true
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
 		return &content.Thought{
 			ID:        aggregate.ID,
 			Text:      aggregate.Text,
-			Encrypted: append([]byte(nil), decodedData...),
+			Encrypted: deltaEncrypted,
+			Signature: rd.Signature,
 			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
-			Summary:   true,
+			Summary:   aggregate.Summary,
 		}, nil
 	case "reasoning.summary":
 		if rd.Summary == "" && rd.Signature == "" {

@@ -376,13 +376,47 @@ func TestBuildPayload_DefaultPromptCacheRetention(t *testing.T) {
 	require.Equal(t, "24h", payload["prompt_cache_retention"])
 }
 
+func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5").
+		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	_, ok := payload["prompt_cache_retention"]
+	assert.False(t, ok)
+}
+
+func TestBuildPayload_WithPromptCacheRetention_SentToCustomEndpointWhenExplicit(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5").
+		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq").
+		WithPromptCacheRetention("24h")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "24h", payload["prompt_cache_retention"])
+}
+
 func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
 	encrypted := base64.StdEncoding.EncodeToString([]byte("encrypted-reasoning"))
 	sse := strings.Join([]string{
 		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
 		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","text":"Hello ","format":"anthropic-claude-v1","index":0}]}}]}`,
 		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","signature":"sig-1","format":"anthropic-claude-v1","index":0}]}}]}`,
-		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"r2","data":"` + encrypted + `","format":"anthropic-claude-v1","index":1}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"r2","data":"` + encrypted + `","signature":"enc-sig","format":"anthropic-claude-v1","index":1}]}}]}`,
 		`data: {"id":"chat_1","choices":[{"delta":{"content":"Done"}}]}`,
 		`data: [DONE]`,
 		"",
@@ -416,6 +450,7 @@ func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
 	assert.Equal(t, "r2", thoughts[2].ID)
 	assert.Equal(t, "(Redacted)", thoughts[2].Text)
 	assert.Equal(t, []byte("encrypted-reasoning"), thoughts[2].Encrypted)
+	assert.Equal(t, "enc-sig", thoughts[2].Signature)
 	assert.True(t, thoughts[2].Summary)
 	assert.Equal(t, "1", thoughts[2].Metadata["openai:reasoning_index"])
 
@@ -438,6 +473,7 @@ func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
 	assert.Equal(t, "r2", secondThought.ID)
 	assert.Equal(t, "(Redacted)", secondThought.Text)
 	assert.Equal(t, []byte("encrypted-reasoning"), secondThought.Encrypted)
+	assert.Equal(t, "enc-sig", secondThought.Signature)
 	assert.True(t, secondThought.Summary)
 	assert.Equal(t, "1", secondThought.Metadata["openai:reasoning_index"])
 
