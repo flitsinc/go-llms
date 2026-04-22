@@ -83,7 +83,6 @@ func main() {
 			cleanup = func() { wsProvider.Close() }
 		default:
 			llmProvider = openai.New(apiKey, "gpt-5.4").
-				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		}
 	case "anthropic":
