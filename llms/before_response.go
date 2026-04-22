@@ -132,7 +132,23 @@ func cloneContent(c content.Content) content.Content {
 		case *content.Text:
 			out = append(out, &content.Text{Text: v.Text})
 		case *content.ImageURL:
-			out = append(out, &content.ImageURL{URL: v.URL, MimeType: v.MimeType})
+			out = append(out, &content.ImageURL{
+				URL:      v.URL,
+				MimeType: v.MimeType,
+				Metadata: cloneMetadata(v.Metadata),
+			})
+		case *content.AudioURL:
+			out = append(out, &content.AudioURL{
+				URL:      v.URL,
+				MimeType: v.MimeType,
+				Metadata: cloneMetadata(v.Metadata),
+			})
+		case *content.VideoURL:
+			out = append(out, &content.VideoURL{
+				URL:      v.URL,
+				MimeType: v.MimeType,
+				Metadata: cloneMetadata(v.Metadata),
+			})
 		case *content.JSON:
 			out = append(out, &content.JSON{Data: append([]byte(nil), v.Data...)})
 		case *content.Thought:
@@ -141,6 +157,7 @@ func cloneContent(c content.Content) content.Content {
 				Text:      v.Text,
 				Encrypted: append([]byte(nil), v.Encrypted...),
 				Signature: v.Signature,
+				Metadata:  cloneMetadata(v.Metadata),
 				Summary:   v.Summary,
 			})
 		case *content.CacheHint:

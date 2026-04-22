@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -43,10 +44,21 @@ type ContentPart struct {
 // ContentList is a list of content parts with custom JSON marshaling.
 type ContentList []ContentPart
 
+type chatMessageEncodingOptions struct {
+	cacheControlPromptHints  bool
+	assistantReasoningReplay bool
+}
+
 // ConvertContent converts content.Content to a ContentList for the OpenAI API.
-// CacheHint items are skipped; use openrouter.ConvertContentWithCacheControl
-// for providers that support cache_control on content parts.
+// CacheHint and Thought items are skipped by default.
 func ConvertContent(c content.Content) ContentList {
+	return ConvertContentWithOptions(c, chatMessageEncodingOptions{})
+}
+
+// ConvertContentWithOptions converts content.Content to a ContentList for the
+// OpenAI-compatible Chat Completions API, with optional provider-specific
+// encodings such as cache_control on content parts.
+func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOptions) ContentList {
 	cl := make(ContentList, 0, len(c))
 	for _, item := range c {
 		var cp ContentPart
@@ -66,10 +78,14 @@ func ConvertContent(c content.Content) ContentList {
 			text := string(v.Data)
 			cp.Text = &text
 		case *content.Thought:
-			// OpenAI does not expect thinking tokens as input; ignore.
+			// Thoughts are encoded separately as reasoning_details when enabled.
 			continue
 		case *content.CacheHint:
-			// Cache hints are handled at the request level via prompt_cache_retention.
+			if opts.cacheControlPromptHints {
+				if i := len(cl) - 1; i >= 0 {
+					cl[i].CacheControl = &CacheControl{Type: "ephemeral"}
+				}
+			}
 			continue
 		default:
 			panic(fmt.Sprintf("unhandled content item type %T", item))
@@ -102,15 +118,22 @@ func (cl *ContentList) UnmarshalJSON(data []byte) error {
 
 // Message represents a chat message in the OpenAI API format.
 type Message struct {
-	Role       string      `json:"role"`
-	Content    ContentList `json:"content,omitempty"`
-	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Role             string            `json:"role"`
+	Content          ContentList       `json:"content,omitempty"`
+	ReasoningDetails []ReasoningDetail `json:"reasoning_details,omitempty"`
+	ToolCalls        []toolCall        `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
 }
 
 // MessagesFromLLM converts an llms.Message to the OpenAI API message format.
 // It may return multiple messages if the input is a tool result with auxiliary content.
 func MessagesFromLLM(m llms.Message) []Message {
+	return MessagesFromLLMWithOptions(m, chatMessageEncodingOptions{})
+}
+
+// MessagesFromLLMWithOptions converts an llms.Message to the OpenAI-compatible
+// chat message format with optional provider-specific encodings.
+func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions) []Message {
 	if m.Role == "tool" {
 		var messagesToReturn []Message
 		var primaryResultString string
@@ -144,7 +167,7 @@ func MessagesFromLLM(m llms.Message) []Message {
 		messagesToReturn = append(messagesToReturn, primaryMessage)
 
 		if len(secondaryContent) > 0 {
-			secondaryAPIContent := ConvertContent(secondaryContent)
+			secondaryAPIContent := ConvertContentWithOptions(secondaryContent, opts)
 			if len(secondaryAPIContent) > 0 {
 				secondaryMessage := Message{
 					Role:    "user",
@@ -157,15 +180,20 @@ func MessagesFromLLM(m llms.Message) []Message {
 	}
 
 	apiRole := m.Role
-	apiContent := ConvertContent(m.Content)
+	apiContent := ConvertContentWithOptions(m.Content, opts)
+	var reasoningDetails []ReasoningDetail
+	if opts.assistantReasoningReplay && m.Role == "assistant" {
+		reasoningDetails = reasoningDetailsFromContent(m.Content)
+	}
 
-	if len(apiContent) == 0 && len(m.ToolCalls) == 0 {
+	if len(apiContent) == 0 && len(m.ToolCalls) == 0 && len(reasoningDetails) == 0 {
 		return []Message{}
 	}
 
 	msg := Message{
-		Role:    apiRole,
-		Content: apiContent,
+		Role:             apiRole,
+		Content:          apiContent,
+		ReasoningDetails: reasoningDetails,
 	}
 
 	if m.Role == "assistant" && len(m.ToolCalls) > 0 {
@@ -201,6 +229,41 @@ func MessagesFromLLM(m llms.Message) []Message {
 	}
 
 	return []Message{msg}
+}
+
+func reasoningDetailsFromContent(c content.Content) []ReasoningDetail {
+	var details []ReasoningDetail
+	for _, item := range c {
+		t, ok := item.(*content.Thought)
+		if !ok {
+			continue
+		}
+		detail := ReasoningDetail{
+			ID:        t.ID,
+			Signature: t.Signature,
+		}
+		if format := t.Metadata["openai:reasoning_format"]; format != "" {
+			detail.Format = format
+		}
+		if idx, ok := thoughtReasoningIndex(t); ok {
+			detail.Index = &idx
+		}
+		switch {
+		case len(t.Encrypted) > 0:
+			detail.Type = "reasoning.encrypted"
+			detail.Data = base64.StdEncoding.EncodeToString(t.Encrypted)
+		case t.Summary:
+			detail.Type = "reasoning.summary"
+			detail.Summary = t.Text
+		default:
+			detail.Type = "reasoning.text"
+			detail.Text = t.Text
+		}
+		if detail.Type != "" {
+			details = append(details, detail)
+		}
+	}
+	return details
 }
 
 func normalizeOpenAIToolType(metaType string) string {
@@ -280,12 +343,14 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 // ReasoningDetail represents a reasoning token entry from providers that stream
 // thinking via the OpenAI-compatible format (e.g. OpenRouter).
 type ReasoningDetail struct {
-	Type      string `json:"type"`                // "reasoning.text" or "reasoning.encrypted"
+	Type      string `json:"type"`                // "reasoning.summary", "reasoning.text", or "reasoning.encrypted"
+	ID        string `json:"id,omitempty"`        // stable identifier for replaying a logical reasoning block
+	Summary   string `json:"summary,omitempty"`   // summary text for reasoning.summary blocks
 	Text      string `json:"text,omitempty"`      // reasoning text (streamed per chunk)
 	Data      string `json:"data,omitempty"`      // base64-encoded encrypted thinking
 	Signature string `json:"signature,omitempty"` // Anthropic signature (final chunk only)
 	Format    string `json:"format,omitempty"`    // e.g. "anthropic-claude-v1"
-	Index     int    `json:"index,omitempty"`
+	Index     *int   `json:"index,omitempty"`
 }
 
 type chatCompletionDelta struct {

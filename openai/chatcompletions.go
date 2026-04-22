@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -30,20 +31,31 @@ type ChatCompletionsAPI struct {
 	// When true, include stream_options.include_usage in requests; default true.
 	includeUsage bool
 
+	// When true, encode CacheHint items as cache_control on content parts.
+	cacheControlPromptHints bool
+	// When true, encode assistant Thought items as reasoning_details for replay.
+	assistantReasoningReplay bool
+
 	customPayloadValues map[string]any
+	customHeaders       map[string]string
 
 	// When set, include prompt_cache_retention in requests that contain a "long"
 	// cache hint. This is an OpenAI-specific feature.
 	promptCacheRetention string
+	// Tracks whether prompt cache retention was explicitly configured by the caller.
+	promptCacheRetentionExplicit bool
 }
+
+const defaultChatCompletionsEndpoint = "https://api.openai.com/v1/chat/completions"
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 	return &ChatCompletionsAPI{
-		accessToken:  accessToken,
-		model:        model,
-		endpoint:     "https://api.openai.com/v1/chat/completions",
-		company:      "OpenAI",
-		includeUsage: true,
+		accessToken:          accessToken,
+		model:                model,
+		endpoint:             defaultChatCompletionsEndpoint,
+		company:              "OpenAI",
+		includeUsage:         true,
+		promptCacheRetention: "24h",
 	}
 }
 
@@ -76,11 +88,35 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 	return m
 }
 
+// WithCacheControlPromptHints encodes CacheHint items as cache_control on
+// content parts instead of using prompt_cache_retention.
+func (m *ChatCompletionsAPI) WithCacheControlPromptHints() *ChatCompletionsAPI {
+	m.cacheControlPromptHints = true
+	return m
+}
+
+// WithAssistantReasoningReplay encodes assistant Thought items as
+// reasoning_details so they can be replayed on OpenAI-compatible providers
+// that support preserved reasoning continuity.
+func (m *ChatCompletionsAPI) WithAssistantReasoningReplay() *ChatCompletionsAPI {
+	m.assistantReasoningReplay = true
+	return m
+}
+
 // WithPromptCacheRetention enables extended prompt caching with the given
 // retention duration (e.g. "24h") when content contains a "long" cache hint.
 // This is an OpenAI-specific feature.
 func (m *ChatCompletionsAPI) WithPromptCacheRetention(retention string) *ChatCompletionsAPI {
 	m.promptCacheRetention = retention
+	m.promptCacheRetentionExplicit = true
+	return m
+}
+
+// WithoutPromptCacheRetention disables prompt_cache_retention even when
+// content contains a long cache hint.
+func (m *ChatCompletionsAPI) WithoutPromptCacheRetention() *ChatCompletionsAPI {
+	m.promptCacheRetention = ""
+	m.promptCacheRetentionExplicit = true
 	return m
 }
 
@@ -93,6 +129,15 @@ func (m *ChatCompletionsAPI) WithCustomPayloadValue(key string, value any) *Chat
 		m.customPayloadValues = make(map[string]any)
 	}
 	m.customPayloadValues[key] = value
+	return m
+}
+
+// WithHeader sets an additional HTTP header on requests made by this client.
+func (m *ChatCompletionsAPI) WithHeader(key, value string) *ChatCompletionsAPI {
+	if m.customHeaders == nil {
+		m.customHeaders = make(map[string]string)
+	}
+	m.customHeaders[key] = value
 	return m
 }
 
@@ -117,16 +162,21 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) (map[string]any, error) {
+	encodingOptions := chatMessageEncodingOptions{
+		cacheControlPromptHints:  m.cacheControlPromptHints,
+		assistantReasoningReplay: m.assistantReasoningReplay,
+	}
+
 	var apiMessages []Message
 	if systemPrompt != nil {
 		apiMessages = append(apiMessages, Message{
 			Role:    "system",
-			Content: ConvertContent(systemPrompt),
+			Content: ConvertContentWithOptions(systemPrompt, encodingOptions),
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := MessagesFromLLM(msg)
+		convertedMsgs := MessagesFromLLMWithOptions(msg, encodingOptions)
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 
@@ -153,7 +203,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		payload["verbosity"] = m.verbosity
 	}
 
-	if m.promptCacheRetention != "" && hasLongCacheHint(systemPrompt, messages) {
+	if m.shouldSendPromptCacheRetention(systemPrompt, messages) {
 		payload["prompt_cache_retention"] = m.promptCacheRetention
 	}
 
@@ -313,6 +363,9 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.accessToken))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range m.customHeaders {
+		req.Header.Set(k, v)
+	}
 
 	client := m.httpClient
 	if client == nil {
@@ -364,6 +417,19 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 	}
 
 	return &ChatCompletionsStream{ctx: ctx, model: m.model, stream: resp.Body, debugger: debugger}
+}
+
+func (m *ChatCompletionsAPI) shouldSendPromptCacheRetention(
+	systemPrompt content.Content,
+	messages []llms.Message,
+) bool {
+	if m.cacheControlPromptHints || m.promptCacheRetention == "" || !hasLongCacheHint(systemPrompt, messages) {
+		return false
+	}
+	if m.promptCacheRetentionExplicit {
+		return true
+	}
+	return strings.TrimRight(m.endpoint, "/") == defaultChatCompletionsEndpoint
 }
 
 type ChatCompletionsStream struct {
@@ -419,6 +485,188 @@ func (s *ChatCompletionsStream) Usage() llms.Usage {
 		InputTokens:       s.usage.PromptTokens,
 		OutputTokens:      s.usage.CompletionTokens,
 	}
+}
+
+func (s *ChatCompletionsStream) emitReasoningDetail(
+	rd ReasoningDetail,
+	yield func(llms.StreamStatus) bool,
+) bool {
+	thought, err := s.applyReasoningDetail(rd)
+	if err != nil {
+		s.err = err
+		return false
+	}
+	if thought == nil {
+		return true
+	}
+	s.lastThought = thought
+	return yield(llms.StreamStatusThinking)
+}
+
+func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*content.Thought, error) {
+	aggregate := s.findReasoningThought(rd)
+	if aggregate == nil {
+		aggregate = &content.Thought{ID: rd.ID}
+		s.message.Content = append(s.message.Content, aggregate)
+	} else if aggregate.ID == "" && rd.ID != "" {
+		aggregate.ID = rd.ID
+	}
+	s.mergeReasoningMetadata(aggregate, rd)
+
+	switch rd.Type {
+	case "reasoning.encrypted":
+		if rd.Data == "" && rd.Signature == "" {
+			return nil, nil
+		}
+		var deltaEncrypted []byte
+		if rd.Data != "" {
+			decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
+			if err != nil {
+				return nil, fmt.Errorf("error decoding encrypted reasoning data: %w", err)
+			}
+			aggregate.Encrypted = decodedData
+			aggregate.Text = "(Redacted)"
+			aggregate.Summary = true
+			deltaEncrypted = append([]byte(nil), decodedData...)
+		}
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      aggregate.Text,
+			Encrypted: deltaEncrypted,
+			Signature: rd.Signature,
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   aggregate.Summary,
+		}, nil
+	case "reasoning.summary":
+		if rd.Summary == "" && rd.Signature == "" {
+			return nil, nil
+		}
+		aggregate.Summary = true
+		aggregate.Text += rd.Summary
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      rd.Summary,
+			Signature: rd.Signature,
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   true,
+		}, nil
+	default:
+		if rd.Text == "" && rd.Signature == "" {
+			return nil, nil
+		}
+		aggregate.Text += rd.Text
+		if rd.Signature != "" {
+			aggregate.Signature = rd.Signature
+		}
+		return &content.Thought{
+			ID:        aggregate.ID,
+			Text:      rd.Text,
+			Signature: rd.Signature,
+			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
+			Summary:   aggregate.Summary,
+		}, nil
+	}
+}
+
+func (s *ChatCompletionsStream) findReasoningThought(rd ReasoningDetail) *content.Thought {
+	var fallback *content.Thought
+	for i := len(s.message.Content) - 1; i >= 0; i-- {
+		thought, ok := s.message.Content[i].(*content.Thought)
+		if !ok {
+			continue
+		}
+		if rd.ID != "" {
+			if thought.ID == rd.ID {
+				return thought
+			}
+			if thought.ID != "" {
+				continue
+			}
+		}
+		if rd.Index != nil {
+			if idx, ok := thoughtReasoningIndex(thought); ok && idx == *rd.Index {
+				return thought
+			}
+		}
+		if fallback == nil && thoughtMatchesReasoningDetail(thought, rd) {
+			fallback = thought
+		}
+	}
+	return fallback
+}
+
+func (s *ChatCompletionsStream) mergeReasoningMetadata(thought *content.Thought, rd ReasoningDetail) {
+	metadata := reasoningDetailMetadata(rd)
+	if len(metadata) == 0 {
+		return
+	}
+	if thought.Metadata == nil {
+		thought.Metadata = metadata
+		return
+	}
+	for k, v := range metadata {
+		thought.Metadata[k] = v
+	}
+}
+
+func reasoningDetailMetadata(rd ReasoningDetail) map[string]string {
+	var metadata map[string]string
+	if rd.Format != "" {
+		metadata = map[string]string{"openai:reasoning_format": rd.Format}
+	}
+	if rd.Index != nil {
+		if metadata == nil {
+			metadata = make(map[string]string, 1)
+		}
+		metadata["openai:reasoning_index"] = strconv.Itoa(*rd.Index)
+	}
+	return metadata
+}
+
+func thoughtReasoningIndex(thought *content.Thought) (int, bool) {
+	if thought == nil || thought.Metadata == nil {
+		return 0, false
+	}
+	val, ok := thought.Metadata["openai:reasoning_index"]
+	if !ok || val == "" {
+		return 0, false
+	}
+	idx, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, false
+	}
+	return idx, true
+}
+
+func thoughtMatchesReasoningDetail(thought *content.Thought, rd ReasoningDetail) bool {
+	if thought == nil {
+		return false
+	}
+	switch rd.Type {
+	case "reasoning.encrypted":
+		return len(thought.Encrypted) > 0
+	case "reasoning.summary":
+		return thought.Summary && len(thought.Encrypted) == 0
+	default:
+		return !thought.Summary && len(thought.Encrypted) == 0
+	}
+}
+
+func cloneThoughtMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {
@@ -529,57 +777,22 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 			}
 			// Handle reasoning/thinking tokens from providers that include them
-			// in the OpenAI-compatible streaming format. Prefer delta.Reasoning
-			// for text; fall back to reasoning_details[].Text if absent.
-			reasoningText := ""
+			// in the OpenAI-compatible streaming format. delta.Reasoning is the
+			// legacy plaintext field; reasoning_details carries structured replay data.
 			if delta.Reasoning != nil && *delta.Reasoning != "" {
-				reasoningText = *delta.Reasoning
-			}
-			if reasoningText == "" {
-				for _, rd := range delta.ReasoningDetails {
-					if rd.Text != "" {
-						reasoningText = rd.Text
-						break
-					}
-				}
-			}
-			if reasoningText != "" {
-				if s.lastThought == nil {
-					s.lastThought = &content.Thought{}
-				}
-				s.lastThought.Text = reasoningText
-				s.message.Content.AppendThought(reasoningText)
-				if !yield(llms.StreamStatusThinking) {
+				if !s.emitReasoningDetail(ReasoningDetail{
+					Type: "reasoning.text",
+					Text: *delta.Reasoning,
+				}, yield) {
 					return
 				}
 			}
-			// Process reasoning_details for signatures and encrypted thinking.
 			for _, rd := range delta.ReasoningDetails {
-				if rd.Signature != "" {
-					// Signature arrives on the final reasoning chunk.
-					if s.lastThought == nil {
-						s.lastThought = &content.Thought{}
-						s.message.Content.AppendThought("")
-					}
-					s.message.Content.SetThoughtSignature(rd.Signature)
-					s.lastThought.Signature = rd.Signature
+				if delta.Reasoning != nil && *delta.Reasoning != "" && rd.Text != "" {
+					rd.Text = ""
 				}
-				if rd.Type == "reasoning.encrypted" && rd.Data != "" {
-					decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
-					if err != nil {
-						s.err = fmt.Errorf("error decoding encrypted reasoning data: %w", err)
-						return
-					}
-					thought := &content.Thought{
-						Text:      "(Redacted)",
-						Encrypted: decodedData,
-						Summary:   true,
-					}
-					s.lastThought = thought
-					s.message.Content = append(s.message.Content, thought)
-					if !yield(llms.StreamStatusThinking) {
-						return
-					}
+				if !s.emitReasoningDetail(rd, yield) {
+					return
 				}
 			}
 

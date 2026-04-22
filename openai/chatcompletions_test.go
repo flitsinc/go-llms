@@ -2,9 +2,11 @@ package openai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
@@ -357,4 +359,301 @@ func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
 		toolsList := tc["tools"].([]any)
 		require.Len(t, toolsList, 2)
 	})
+}
+
+func TestBuildPayload_DefaultPromptCacheRetention(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "24h", payload["prompt_cache_retention"])
+}
+
+func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5").
+		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	_, ok := payload["prompt_cache_retention"]
+	assert.False(t, ok)
+}
+
+func TestBuildPayload_WithPromptCacheRetention_SentToCustomEndpointWhenExplicit(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-5").
+		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq").
+		WithPromptCacheRetention("24h")
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache this"},
+			&content.CacheHint{Duration: "long"},
+		},
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "24h", payload["prompt_cache_retention"])
+}
+
+func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
+	encrypted := base64.StdEncoding.EncodeToString([]byte("encrypted-reasoning"))
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","text":"Hello ","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","signature":"sig-1","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"r2","data":"` + encrypted + `","signature":"enc-sig","format":"anthropic-claude-v1","index":1}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"Done"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var thoughts []content.Thought
+	var thinkingDone int
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusThinking:
+			thoughts = append(thoughts, stream.Thought())
+		case llms.StreamStatusThinkingDone:
+			thinkingDone++
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 3)
+
+	assert.Equal(t, "r1", thoughts[0].ID)
+	assert.Equal(t, "Hello ", thoughts[0].Text)
+	assert.Equal(t, "anthropic-claude-v1", thoughts[0].Metadata["openai:reasoning_format"])
+	assert.Equal(t, "0", thoughts[0].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, "r1", thoughts[1].ID)
+	assert.Empty(t, thoughts[1].Text)
+	assert.Equal(t, "sig-1", thoughts[1].Signature)
+	assert.Equal(t, "0", thoughts[1].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, "r2", thoughts[2].ID)
+	assert.Equal(t, "(Redacted)", thoughts[2].Text)
+	assert.Equal(t, []byte("encrypted-reasoning"), thoughts[2].Encrypted)
+	assert.Equal(t, "enc-sig", thoughts[2].Signature)
+	assert.True(t, thoughts[2].Summary)
+	assert.Equal(t, "1", thoughts[2].Metadata["openai:reasoning_index"])
+
+	assert.Equal(t, 1, thinkingDone)
+	assert.Equal(t, "Done", stream.Text())
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 3)
+
+	firstThought, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r1", firstThought.ID)
+	assert.Equal(t, "Hello ", firstThought.Text)
+	assert.Equal(t, "sig-1", firstThought.Signature)
+	assert.Equal(t, "anthropic-claude-v1", firstThought.Metadata["openai:reasoning_format"])
+	assert.Equal(t, "0", firstThought.Metadata["openai:reasoning_index"])
+
+	secondThought, ok := msg.Content[1].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r2", secondThought.ID)
+	assert.Equal(t, "(Redacted)", secondThought.Text)
+	assert.Equal(t, []byte("encrypted-reasoning"), secondThought.Encrypted)
+	assert.Equal(t, "enc-sig", secondThought.Signature)
+	assert.True(t, secondThought.Summary)
+	assert.Equal(t, "1", secondThought.Metadata["openai:reasoning_index"])
+
+	text, ok := msg.Content[2].(*content.Text)
+	require.True(t, ok)
+	assert.Equal(t, "Done", text.Text)
+}
+
+func TestChatCompletionsStream_ReasoningSummaryDeltaAndAggregate(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","id":"rs1","summary":"Summarized reasoning","format":"anthropic-claude-v1","index":0}]}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var thoughts []content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			thoughts = append(thoughts, stream.Thought())
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 1)
+	assert.Equal(t, "rs1", thoughts[0].ID)
+	assert.Equal(t, "Summarized reasoning", thoughts[0].Text)
+	assert.True(t, thoughts[0].Summary)
+	assert.Equal(t, "0", thoughts[0].Metadata["openai:reasoning_index"])
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 1)
+	summary, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "rs1", summary.ID)
+	assert.Equal(t, "Summarized reasoning", summary.Text)
+	assert.True(t, summary.Summary)
+	assert.Equal(t, "anthropic-claude-v1", summary.Metadata["openai:reasoning_format"])
+}
+
+func TestChatCompletionsStream_ApplyReasoningDetail_DoesNotMatchDifferentIDByIndex(t *testing.T) {
+	stream := &ChatCompletionsStream{
+		message: llms.Message{
+			Content: content.Content{
+				&content.Thought{
+					ID:       "r1",
+					Text:     "existing",
+					Metadata: map[string]string{"openai:reasoning_index": "0"},
+				},
+			},
+		},
+	}
+
+	thought, err := stream.applyReasoningDetail(ReasoningDetail{
+		Type:  "reasoning.text",
+		ID:    "r2",
+		Index: intPtr(0),
+		Text:  "new",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, thought)
+	assert.Equal(t, "r2", thought.ID)
+	assert.Equal(t, "new", thought.Text)
+
+	require.Len(t, stream.message.Content, 2)
+
+	firstThought, ok := stream.message.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r1", firstThought.ID)
+	assert.Equal(t, "existing", firstThought.Text)
+
+	secondThought, ok := stream.message.Content[1].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r2", secondThought.ID)
+	assert.Equal(t, "new", secondThought.Text)
+	assert.Equal(t, "0", secondThought.Metadata["openai:reasoning_index"])
+}
+
+func TestBuildPayload_WithCacheControlPromptHintsAndAssistantReasoningReplay(t *testing.T) {
+	m := NewChatCompletionsAPI("", "test-model").
+		WithCacheControlPromptHints().
+		WithAssistantReasoningReplay()
+
+	payload, err := m.BuildPayload(
+		content.Content{
+			&content.Text{Text: "Cache me"},
+			&content.CacheHint{Duration: "long"},
+		},
+		[]llms.Message{{
+			Role: "assistant",
+			Content: content.Content{
+				&content.Thought{
+					ID:       "t1",
+					Text:     "first",
+					Metadata: map[string]string{"openai:reasoning_format": "anthropic-claude-v1", "openai:reasoning_index": "0"},
+				},
+				&content.Thought{
+					ID:        "t2",
+					Text:      "(Redacted)",
+					Encrypted: []byte("secret"),
+					Summary:   true,
+					Metadata:  map[string]string{"openai:reasoning_index": "1"},
+				},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	_, hasPromptCacheRetention := raw["prompt_cache_retention"]
+	assert.False(t, hasPromptCacheRetention)
+
+	messages := raw["messages"].([]any)
+	require.Len(t, messages, 2)
+
+	system := messages[0].(map[string]any)
+	systemContent := system["content"].([]any)
+	firstPart := systemContent[0].(map[string]any)
+	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
+
+	assistant := messages[1].(map[string]any)
+	reasoningDetails := assistant["reasoning_details"].([]any)
+	require.Len(t, reasoningDetails, 2)
+	assert.Equal(t, "reasoning.text", reasoningDetails[0].(map[string]any)["type"])
+	assert.Equal(t, "reasoning.encrypted", reasoningDetails[1].(map[string]any)["type"])
+}
+
+func TestBuildPayload_AssistantReasoningReplayWithoutVisibleContent(t *testing.T) {
+	m := NewChatCompletionsAPI("", "test-model").WithAssistantReasoningReplay()
+
+	payload, err := m.BuildPayload(nil, []llms.Message{{
+		Role: "assistant",
+		Content: content.Content{
+			&content.Thought{ID: "r1", Text: "thinking"},
+		},
+	}}, nil, nil)
+	require.NoError(t, err)
+
+	messages := payload["messages"].([]Message)
+	require.Len(t, messages, 1)
+	assert.Empty(t, messages[0].Content)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	assert.Equal(t, "r1", messages[0].ReasoningDetails[0].ID)
+	assert.Equal(t, "thinking", messages[0].ReasoningDetails[0].Text)
+}
+
+func TestDoRequest_WithHeader(t *testing.T) {
+	var gotHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("HTTP-Referer")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	m := NewChatCompletionsAPI("", "test-model").
+		WithEndpoint(ts.URL, "Test").
+		WithHeader("HTTP-Referer", "https://example.com")
+
+	stream := m.DoRequest(context.Background(), map[string]any{
+		"model":    "test-model",
+		"messages": []Message{},
+		"stream":   true,
+	})
+	require.NoError(t, stream.Err())
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+	assert.Equal(t, "https://example.com", gotHeader)
+}
+
+func intPtr(v int) *int {
+	return &v
 }
