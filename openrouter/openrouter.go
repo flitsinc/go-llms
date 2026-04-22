@@ -230,6 +230,7 @@ func (s *errorStream) Iter() func(yield func(llms.StreamStatus) bool) { return f
 func (s *errorStream) Message() llms.Message                         { return llms.Message{} }
 func (s *errorStream) Text() string                                  { return "" }
 func (s *errorStream) Image() (string, string)                       { return "", "" }
+func (s *errorStream) Audio() (string, string)                       { return "", "" }
 func (s *errorStream) Thought() content.Thought                      { return content.Thought{} }
 func (s *errorStream) ToolCall() llms.ToolCall                       { return llms.ToolCall{} }
 func (s *errorStream) Usage() llms.Usage                             { return llms.Usage{} }
