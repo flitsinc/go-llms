@@ -515,6 +515,44 @@ func TestChatCompletionsStream_ReasoningSummaryDeltaAndAggregate(t *testing.T) {
 	assert.Equal(t, "anthropic-claude-v1", summary.Metadata["openai:reasoning_format"])
 }
 
+func TestChatCompletionsStream_ApplyReasoningDetail_DoesNotMatchDifferentIDByIndex(t *testing.T) {
+	stream := &ChatCompletionsStream{
+		message: llms.Message{
+			Content: content.Content{
+				&content.Thought{
+					ID:       "r1",
+					Text:     "existing",
+					Metadata: map[string]string{"openai:reasoning_index": "0"},
+				},
+			},
+		},
+	}
+
+	thought, err := stream.applyReasoningDetail(ReasoningDetail{
+		Type:  "reasoning.text",
+		ID:    "r2",
+		Index: intPtr(0),
+		Text:  "new",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, thought)
+	assert.Equal(t, "r2", thought.ID)
+	assert.Equal(t, "new", thought.Text)
+
+	require.Len(t, stream.message.Content, 2)
+
+	firstThought, ok := stream.message.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r1", firstThought.ID)
+	assert.Equal(t, "existing", firstThought.Text)
+
+	secondThought, ok := stream.message.Content[1].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "r2", secondThought.ID)
+	assert.Equal(t, "new", secondThought.Text)
+	assert.Equal(t, "0", secondThought.Metadata["openai:reasoning_index"])
+}
+
 func TestBuildPayload_WithCacheControlPromptHintsAndAssistantReasoningReplay(t *testing.T) {
 	m := NewChatCompletionsAPI("", "test-model").
 		WithCacheControlPromptHints().
@@ -614,4 +652,8 @@ func TestDoRequest_WithHeader(t *testing.T) {
 	}
 	require.NoError(t, stream.Err())
 	assert.Equal(t, "https://example.com", gotHeader)
+}
+
+func intPtr(v int) *int {
+	return &v
 }

@@ -585,6 +585,9 @@ func (s *ChatCompletionsStream) findReasoningThought(rd ReasoningDetail) *conten
 			if thought.ID == rd.ID {
 				return thought
 			}
+			if thought.ID != "" {
+				continue
+			}
 		}
 		if rd.Index != nil {
 			if idx, ok := thoughtReasoningIndex(thought); ok && idx == *rd.Index {
