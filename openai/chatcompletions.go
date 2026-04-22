@@ -32,6 +32,9 @@ type ChatCompletionsAPI struct {
 
 	customPayloadValues map[string]any
 
+	// extraHeaders are added to every outgoing request. Set via WithExtraHeader.
+	extraHeaders http.Header
+
 	// When set, include prompt_cache_retention in requests that contain a "long"
 	// cache hint. This is an OpenAI-specific feature.
 	promptCacheRetention string
@@ -93,6 +96,20 @@ func (m *ChatCompletionsAPI) WithCustomPayloadValue(key string, value any) *Chat
 		m.customPayloadValues = make(map[string]any)
 	}
 	m.customPayloadValues[key] = value
+	return m
+}
+
+// WithExtraHeader adds a header that is sent on every outgoing request.
+// Use this for provider-specific headers not covered by other methods
+// (e.g. `x-anthropic-beta` on OpenRouter requests routed to Anthropic).
+// Calling this multiple times with the same key overwrites the previous
+// value; Authorization and Content-Type are set by DoRequest and cannot
+// be overridden here.
+func (m *ChatCompletionsAPI) WithExtraHeader(key, value string) *ChatCompletionsAPI {
+	if m.extraHeaders == nil {
+		m.extraHeaders = http.Header{}
+	}
+	m.extraHeaders.Set(key, value)
 	return m
 }
 
@@ -308,6 +325,11 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 	req, err := http.NewRequestWithContext(ctx, "POST", m.endpoint, bytes.NewReader(jsonData))
 	if err != nil {
 		return &ChatCompletionsStream{err: fmt.Errorf("error creating request: %w", err)}
+	}
+	for k, vs := range m.extraHeaders {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 	if m.accessToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", m.accessToken))

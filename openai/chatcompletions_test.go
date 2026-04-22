@@ -358,3 +358,52 @@ func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
 		require.Len(t, toolsList, 2)
 	})
 }
+
+func TestChatCompletions_WithExtraHeader(t *testing.T) {
+	// Verify that WithExtraHeader-configured values are sent on the HTTP
+	// request. Used for provider-specific headers like `x-anthropic-beta`
+	// on OpenRouter requests routed to Anthropic.
+	headerCh := make(chan http.Header, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerCh <- r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	m := NewChatCompletionsAPI("", "gpt-4o")
+	m.WithEndpoint(ts.URL, "Test")
+	m.WithExtraHeader("X-Anthropic-Beta", "fine-grained-tool-streaming-2025-05-14")
+	m.WithExtraHeader("X-Custom", "value")
+
+	stream := m.Generate(context.Background(), nil, nil, nil, nil)
+	require.NoError(t, stream.Err())
+	hdr := <-headerCh
+	assert.Equal(t, "fine-grained-tool-streaming-2025-05-14", hdr.Get("X-Anthropic-Beta"))
+	assert.Equal(t, "value", hdr.Get("X-Custom"))
+	// Authorization and Content-Type continue to be set by DoRequest.
+	assert.Equal(t, "application/json", hdr.Get("Content-Type"))
+}
+
+func TestChatCompletions_WithExtraHeader_CannotOverrideProtected(t *testing.T) {
+	// Content-Type is set explicitly by DoRequest after extraHeaders are
+	// applied, so a caller cannot override it via WithExtraHeader — this
+	// is intentional: the Messages body is always JSON.
+	headerCh := make(chan http.Header, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerCh <- r.Header.Clone()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	m := NewChatCompletionsAPI("", "gpt-4o")
+	m.WithEndpoint(ts.URL, "Test")
+	m.WithExtraHeader("Content-Type", "text/plain")
+
+	_ = m.Generate(context.Background(), nil, nil, nil, nil)
+	hdr := <-headerCh
+	assert.Equal(t, "application/json", hdr.Get("Content-Type"))
+}

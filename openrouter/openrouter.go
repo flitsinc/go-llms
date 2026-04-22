@@ -66,6 +66,11 @@ func (p *Provider) WithCustomPayloadValue(key string, value any) *Provider {
 	return p
 }
 
+func (p *Provider) WithExtraHeader(key, value string) *Provider {
+	p.ChatCompletionsAPI.WithExtraHeader(key, value)
+	return p
+}
+
 func (p *Provider) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
