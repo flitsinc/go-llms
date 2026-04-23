@@ -72,17 +72,17 @@ func main() {
 		}
 		switch provider {
 		case "openai-responses":
-			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.4").
+			llmProvider = openai.NewResponsesAPI(apiKey, "gpt-5.5").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 		case "openai-ws", "openai-ws-warmup":
-			wsProvider := openai.NewWebSocketResponsesAPI(apiKey, "gpt-5.4").
+			wsProvider := openai.NewWebSocketResponsesAPI(apiKey, "gpt-5.5").
 				WithThinking(openai.EffortLow).
 				WithVerbosity(openai.VerbosityLow)
 			llmProvider = wsProvider
 			cleanup = func() { wsProvider.Close() }
 		default:
-			llmProvider = openai.New(apiKey, "gpt-5.4").
+			llmProvider = openai.New(apiKey, "gpt-5.5").
 				WithVerbosity(openai.VerbosityLow)
 		}
 	case "anthropic":
@@ -256,8 +256,8 @@ func printUsage() {
 	fmt.Println("Usage: go run main.go <provider>")
 	fmt.Println()
 	fmt.Println("Supported providers:")
-	fmt.Println("  openai              - Uses OpenAI Chat Completions with gpt-5.4 (requires OPENAI_API_KEY)")
-	fmt.Println("  openai-responses    - Uses OpenAI Responses API with gpt-5.4 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai              - Uses OpenAI Chat Completions with gpt-5.5 (requires OPENAI_API_KEY)")
+	fmt.Println("  openai-responses    - Uses OpenAI Responses API with gpt-5.5 (requires OPENAI_API_KEY)")
 	fmt.Println("  openai-ws           - Uses OpenAI Responses API over WebSocket (requires OPENAI_API_KEY)")
 	fmt.Println("  openai-ws-warmup    - Same as openai-ws but with Warmup pre-loading (requires OPENAI_API_KEY)")
 	fmt.Println("  anthropic           - Uses Anthropic's Claude Sonnet 4.6 (requires ANTHROPIC_API_KEY)")
