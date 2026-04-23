@@ -1,6 +1,11 @@
 package openai
 
-import "github.com/flitsinc/go-llms/tools"
+import (
+	"context"
+
+	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
+)
 
 // responsesConfig holds configuration fields shared by ResponsesAPI and
 // WebSocketResponsesAPI. Both provider types embed this struct.
@@ -27,6 +32,7 @@ type responsesConfig struct {
 // fields (e.g. "stream":true for SSE, "type":"response.create" for WS) and
 // previousResponseID.
 func (c *responsesConfig) buildResponsesPayload(
+	ctx context.Context,
 	input []ResponseInput,
 	instructions string,
 	toolbox *tools.Toolbox,
@@ -103,7 +109,11 @@ func (c *responsesConfig) buildResponsesPayload(
 		payload["metadata"] = c.metadata
 	}
 
-	if c.promptCacheKey != "" {
+	// Use per-request prompt cache key from context if available,
+	// falling back to the struct-level configuration.
+	if key := llms.GetPromptCacheKey(ctx); key != "" {
+		payload["prompt_cache_key"] = key
+	} else if c.promptCacheKey != "" {
 		payload["prompt_cache_key"] = c.promptCacheKey
 	}
 
