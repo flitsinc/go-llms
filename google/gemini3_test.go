@@ -45,6 +45,14 @@ func TestGemini3Config(t *testing.T) {
 			t.Errorf("expected mediaResolution 'MEDIA_RESOLUTION_HIGH', got %v", genConfig["mediaResolution"])
 		}
 
+		imageConfig, ok := genConfig["imageConfig"].(map[string]any)
+		if !ok {
+			t.Fatal("imageConfig missing or invalid")
+		}
+		if aspectRatio, ok := imageConfig["aspectRatio"].(string); !ok || aspectRatio != "16:9" {
+			t.Errorf("expected image aspect ratio '16:9', got %v", imageConfig["aspectRatio"])
+		}
+
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"candidates": [{"content": {"parts": [{"text": "done"}]}}]}`))
 	}))
@@ -54,7 +62,8 @@ func TestGemini3Config(t *testing.T) {
 	model := New("gemini-3-pro-preview").
 		WithGeminiAPI("fake-key").
 		WithThinkingLevel(ThinkingLevelHigh).
-		WithMediaResolution(MediaResolutionHigh)
+		WithMediaResolution(MediaResolutionHigh).
+		WithImageAspectRatio("16:9")
 	model.SetHTTPClient(client)
 
 	// Override endpoint to point to test server

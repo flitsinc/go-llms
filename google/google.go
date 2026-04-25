@@ -82,20 +82,21 @@ func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
 }
 
 type Model struct {
-	tokenSource     oauth2.TokenSource
-	model           string
-	endpoint        string
-	maxOutputTokens int
-	temperature     float64
-	topK            int
-	topP            float64
-	includeThoughts bool
-	thinkingBudget  int
-	thinkingLevel   ThinkingLevel
-	mediaResolution MediaResolution
-	modalities      []string
-	speechVoice     string
-	httpClient      *http.Client
+	tokenSource      oauth2.TokenSource
+	model            string
+	endpoint         string
+	maxOutputTokens  int
+	temperature      float64
+	topK             int
+	topP             float64
+	includeThoughts  bool
+	thinkingBudget   int
+	thinkingLevel    ThinkingLevel
+	mediaResolution  MediaResolution
+	modalities       []string
+	speechVoice      string
+	imageAspectRatio string
+	httpClient       *http.Client
 
 	// streamFunctionCallArguments enables streaming of function call arguments
 	// on Vertex AI Gemini 3+ models. When true, the backend sends partial argument
@@ -202,6 +203,13 @@ func (m *Model) WithModalities(modalities ...string) *Model {
 // Example voices: "Kore", "Puck", "Charon", "Zephyr", "Fenrir".
 func (m *Model) WithSpeechVoice(voice string) *Model {
 	m.speechVoice = voice
+	return m
+}
+
+// WithImageAspectRatio configures Gemini image output aspect ratio.
+// Use with image-output models and WithModalities("IMAGE", "TEXT").
+func (m *Model) WithImageAspectRatio(aspectRatio string) *Model {
+	m.imageAspectRatio = aspectRatio
 	return m
 }
 
@@ -361,6 +369,12 @@ func (m *Model) Generate(
 					"voiceName": m.speechVoice,
 				},
 			},
+		}
+	}
+
+	if m.imageAspectRatio != "" {
+		generationConfig["imageConfig"] = map[string]any{
+			"aspectRatio": m.imageAspectRatio,
 		}
 	}
 
