@@ -89,7 +89,7 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
-	if rawError.Error.Message != "" || rawError.Error.Type != "" || len(rawError.Error.Code) > 0 {
+	if rawError.Error.Message != "" || rawError.Error.Type != "" || rawJSONScalarString(rawError.Error.Code) != "" {
 		metadata.RawErrorCode = rawJSONScalarString(rawError.Error.Code)
 		metadata.RawErrorType = rawError.Error.Type
 		metadata.RawErrorMessage = rawError.Error.Message
