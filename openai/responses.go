@@ -223,20 +223,8 @@ func (m *ResponsesAPI) Generate(
 		bodyBytes, readErr := io.ReadAll(resp.Body)
 
 		if readErr == nil && len(bodyBytes) > 0 {
-			var openAIError struct {
-				Error struct {
-					Message string `json:"message"`
-					Type    string `json:"type"`
-				} `json:"error"`
-			}
-
-			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
-				return newResponsesStreamError(&llms.HTTPError{
-					StatusCode: resp.StatusCode,
-					Status:     resp.Status,
-					ErrorType:  openAIError.Error.Type,
-					Message:    openAIError.Error.Message,
-				})
+			if httpErr, ok := parseHTTPError(resp, bodyBytes); ok {
+				return newResponsesStreamError(httpErr)
 			}
 		}
 		return newResponsesStreamError(&llms.HTTPError{
