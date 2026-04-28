@@ -31,6 +31,7 @@ type imageURL struct {
 // CacheControl represents a cache control directive on a content part.
 type CacheControl struct {
 	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 // ContentPart represents a single part of a message's content array.
@@ -83,7 +84,7 @@ func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 		case *content.CacheHint:
 			if opts.cacheControlPromptHints {
 				if i := len(cl) - 1; i >= 0 {
-					cl[i].CacheControl = &CacheControl{Type: "ephemeral"}
+					cl[i].CacheControl = cacheControlFromCacheHint(v)
 				}
 			}
 			continue
@@ -114,6 +115,14 @@ func (cl *ContentList) UnmarshalJSON(data []byte) error {
 	}
 	*cl = ContentList(value)
 	return nil
+}
+
+func cacheControlFromCacheHint(hint *content.CacheHint) *CacheControl {
+	cc := &CacheControl{Type: "ephemeral"}
+	if hint.Duration == "long" {
+		cc.TTL = "1h"
+	}
+	return cc
 }
 
 // Message represents a chat message in the OpenAI API format.
@@ -157,11 +166,11 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 				secondaryStart := 1
 				if opts.cacheControlPromptHints {
 					for secondaryStart < len(m.Content) {
-						_, ok := m.Content[secondaryStart].(*content.CacheHint)
+						cacheHint, ok := m.Content[secondaryStart].(*content.CacheHint)
 						if !ok {
 							break
 						}
-						primaryCacheControl = &CacheControl{Type: "ephemeral"}
+						primaryCacheControl = cacheControlFromCacheHint(cacheHint)
 						secondaryStart++
 					}
 				}

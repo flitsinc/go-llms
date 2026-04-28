@@ -280,6 +280,23 @@ func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResults(t *test
 	assert.Equal(t, &CacheControl{Type: "ephemeral"}, messages[0].Content[0].CacheControl)
 }
 
+func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResultsWithLongTTL(t *testing.T) {
+	messages := MessagesFromLLMWithOptions(llms.Message{
+		Role:       "tool",
+		ToolCallID: "call_123",
+		Content: content.Content{
+			&content.Text{Text: "Command executed successfully"},
+			&content.CacheHint{Duration: "long"},
+		},
+	}, chatMessageEncodingOptions{cacheControlPromptHints: true})
+
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Content, 1)
+	assert.Equal(t, "tool", messages[0].Role)
+	assert.Equal(t, "call_123", messages[0].ToolCallID)
+	assert.Equal(t, &CacheControl{Type: "ephemeral", TTL: "1h"}, messages[0].Content[0].CacheControl)
+}
+
 func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResultsWithSecondaryContent(t *testing.T) {
 	messages := MessagesFromLLMWithOptions(llms.Message{
 		Role:       "tool",
@@ -288,7 +305,7 @@ func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResultsWithSeco
 			&content.JSON{Data: json.RawMessage(`{"status":"done"}`)},
 			&content.CacheHint{Duration: "short"},
 			&content.Text{Text: "Process finished."},
-			&content.CacheHint{Duration: "short"},
+			&content.CacheHint{Duration: "long"},
 		},
 	}, chatMessageEncodingOptions{cacheControlPromptHints: true})
 
@@ -301,7 +318,7 @@ func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResultsWithSeco
 
 	require.Len(t, messages[1].Content, 1)
 	assert.Equal(t, "user", messages[1].Role)
-	assert.Equal(t, &CacheControl{Type: "ephemeral"}, messages[1].Content[0].CacheControl)
+	assert.Equal(t, &CacheControl{Type: "ephemeral", TTL: "1h"}, messages[1].Content[0].CacheControl)
 }
 
 func TestToolCallDeltaToLLMPreservesMetadata(t *testing.T) {
@@ -641,7 +658,7 @@ func TestBuildPayload_WithCacheControlPromptHintsAndAssistantReasoningReplay(t *
 	system := messages[0].(map[string]any)
 	systemContent := system["content"].([]any)
 	firstPart := systemContent[0].(map[string]any)
-	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
+	assert.Equal(t, map[string]any{"type": "ephemeral", "ttl": "1h"}, firstPart["cache_control"])
 
 	assistant := messages[1].(map[string]any)
 	reasoningDetails := assistant["reasoning_details"].([]any)

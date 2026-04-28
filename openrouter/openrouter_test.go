@@ -63,7 +63,7 @@ func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
 	systemMessage := messages[0].(map[string]any)
 	systemContent := systemMessage["content"].([]any)
 	firstPart := systemContent[0].(map[string]any)
-	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
+	assert.Equal(t, map[string]any{"type": "ephemeral", "ttl": "1h"}, firstPart["cache_control"])
 
 	assistantMessage := messages[1].(map[string]any)
 	reasoningDetails := assistantMessage["reasoning_details"].([]any)
