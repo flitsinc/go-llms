@@ -123,6 +123,7 @@ func TestResponsesAPI_ErrorMetadata(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{
 			"error": {
+				"code": 400,
 				"message": "Provider returned error",
 				"type": "invalid_request_error",
 				"metadata": {
@@ -139,6 +140,7 @@ func TestResponsesAPI_ErrorMetadata(t *testing.T) {
 	var httpErr *llms.HTTPError
 	require.True(t, errors.As(stream.Err(), &httpErr))
 	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
+	assert.Equal(t, "400", httpErr.ErrorCode)
 	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
 	assert.Equal(t, "Anthropic", httpErr.Metadata.ProviderName)
 	assert.Equal(t, "invalid_request_error", httpErr.Metadata.RawErrorType)

@@ -15,19 +15,20 @@ var ErrOutputTruncated = errors.New("output truncated: model reached max output 
 type HTTPError struct {
 	StatusCode int               // HTTP status code (e.g., 429, 503, 500)
 	Status     string            // Full status text (e.g., "429 Too Many Requests")
-	ErrorCode  string            // Provider-specific error code
+	ErrorCode  string            // Provider-specific error code from the response body
 	ErrorType  string            // Provider-specific error type (e.g., "rate_limit_error")
 	Message    string            // Human-readable error message
 	Metadata   HTTPErrorMetadata // Optional upstream-provider diagnostics
 }
 
+// HTTPErrorMetadata contains upstream-provider diagnostics returned through a gateway.
 type HTTPErrorMetadata struct {
-	ProviderName       string
-	Raw                json.RawMessage
-	RawErrorCode       string
-	RawErrorType       string
-	RawErrorMessage    string
-	RawErrorStatusCode int
+	ProviderName       string          // Upstream provider name
+	Raw                json.RawMessage // Raw upstream error payload
+	RawErrorCode       string          // Upstream provider-specific error code
+	RawErrorType       string          // Upstream provider-specific error type
+	RawErrorMessage    string          // Upstream provider error message
+	RawErrorStatusCode int             // Upstream provider HTTP status code
 }
 
 func (e *HTTPError) Error() string {

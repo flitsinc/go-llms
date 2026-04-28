@@ -66,6 +66,7 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
+	// Gateways return raw upstream errors as plain strings, nested error objects, or flat objects.
 	var rawMessage string
 	if json.Unmarshal(raw, &rawMessage) == nil {
 		metadata.RawErrorMessage = rawMessage
