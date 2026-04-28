@@ -138,6 +138,7 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 		var messagesToReturn []Message
 		var primaryResultString string
 		var secondaryContent content.Content
+		var primaryCacheControl *CacheControl
 
 		if len(m.Content) > 0 {
 			firstItem := m.Content[0]
@@ -153,7 +154,18 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 			}
 
 			if len(m.Content) > 1 {
-				secondaryContent = m.Content[1:]
+				secondaryStart := 1
+				if opts.cacheControlPromptHints {
+					for secondaryStart < len(m.Content) {
+						_, ok := m.Content[secondaryStart].(*content.CacheHint)
+						if !ok {
+							break
+						}
+						primaryCacheControl = &CacheControl{Type: "ephemeral"}
+						secondaryStart++
+					}
+				}
+				secondaryContent = m.Content[secondaryStart:]
 			}
 		} else {
 			primaryResultString = ""
@@ -161,7 +173,7 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 
 		primaryMessage := Message{
 			Role:       "tool",
-			Content:    ContentList{{Type: "text", Text: &primaryResultString}},
+			Content:    ContentList{{Type: "text", Text: &primaryResultString, CacheControl: primaryCacheControl}},
 			ToolCallID: m.ToolCallID,
 		}
 		messagesToReturn = append(messagesToReturn, primaryMessage)

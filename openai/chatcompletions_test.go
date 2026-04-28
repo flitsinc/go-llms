@@ -263,6 +263,47 @@ func ptr(s string) *string {
 	return &s
 }
 
+func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResults(t *testing.T) {
+	messages := MessagesFromLLMWithOptions(llms.Message{
+		Role:       "tool",
+		ToolCallID: "call_123",
+		Content: content.Content{
+			&content.Text{Text: "Command executed successfully"},
+			&content.CacheHint{Duration: "short"},
+		},
+	}, chatMessageEncodingOptions{cacheControlPromptHints: true})
+
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Content, 1)
+	assert.Equal(t, "tool", messages[0].Role)
+	assert.Equal(t, "call_123", messages[0].ToolCallID)
+	assert.Equal(t, &CacheControl{Type: "ephemeral"}, messages[0].Content[0].CacheControl)
+}
+
+func TestMessagesFromLLMWithOptions_CacheControlPromptHintsOnToolResultsWithSecondaryContent(t *testing.T) {
+	messages := MessagesFromLLMWithOptions(llms.Message{
+		Role:       "tool",
+		ToolCallID: "call_123",
+		Content: content.Content{
+			&content.JSON{Data: json.RawMessage(`{"status":"done"}`)},
+			&content.CacheHint{Duration: "short"},
+			&content.Text{Text: "Process finished."},
+			&content.CacheHint{Duration: "short"},
+		},
+	}, chatMessageEncodingOptions{cacheControlPromptHints: true})
+
+	require.Len(t, messages, 2)
+
+	require.Len(t, messages[0].Content, 1)
+	assert.Equal(t, "tool", messages[0].Role)
+	assert.Equal(t, "call_123", messages[0].ToolCallID)
+	assert.Equal(t, &CacheControl{Type: "ephemeral"}, messages[0].Content[0].CacheControl)
+
+	require.Len(t, messages[1].Content, 1)
+	assert.Equal(t, "user", messages[1].Role)
+	assert.Equal(t, &CacheControl{Type: "ephemeral"}, messages[1].Content[0].CacheControl)
+}
+
 func TestToolCallDeltaToLLMPreservesMetadata(t *testing.T) {
 	input := toolCallDelta{
 		ID:   "call_custom",
