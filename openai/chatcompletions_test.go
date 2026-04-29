@@ -654,6 +654,41 @@ func TestDoRequest_WithHeader(t *testing.T) {
 	assert.Equal(t, "https://example.com", gotHeader)
 }
 
+func TestDoRequest_OpenRouterErrorMetadata(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"error": {
+				"code": 400,
+				"message": "Provider returned error",
+				"type": "invalid_request_error",
+				"metadata": {
+					"provider_name": "Anthropic",
+					"raw": "{\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 250000 tokens > 200000 maximum\"}}"
+				}
+			}
+		}`))
+	}))
+	defer ts.Close()
+
+	stream := New("", "test-model").WithEndpoint(ts.URL, "OpenRouter").DoRequest(context.Background(), map[string]any{
+		"model":    "test-model",
+		"messages": []Message{},
+		"stream":   true,
+	})
+
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
+	assert.Equal(t, "400", httpErr.ErrorCode)
+	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
+	assert.Equal(t, "Provider returned error", httpErr.Message)
+	assert.Equal(t, "Anthropic", httpErr.Metadata.ProviderName)
+	assert.Equal(t, json.RawMessage(`{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}`), httpErr.Metadata.Raw)
+	assert.Equal(t, "invalid_request_error", httpErr.Metadata.RawErrorType)
+	assert.Equal(t, "prompt is too long: 250000 tokens > 200000 maximum", httpErr.Metadata.RawErrorMessage)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

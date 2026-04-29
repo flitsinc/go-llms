@@ -3,11 +3,16 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Test that reasoning summary events stream deltas via Thought() and aggregate full text in Message().
@@ -111,6 +116,61 @@ func TestResponsesStream_ReasoningSummaryDoneWithoutDeltas(t *testing.T) {
 	if !summary.Summary {
 		t.Fatalf("expected reasoning thought to be marked summary")
 	}
+}
+
+func TestResponsesAPI_ErrorMetadata(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"error": {
+				"code": 400,
+				"message": "Provider returned error",
+				"type": "invalid_request_error",
+				"metadata": {
+					"provider_name": "Anthropic",
+					"raw": {"error": {"type": "invalid_request_error", "message": "prompt is too long"}}
+				}
+			}
+		}`))
+	}))
+	defer ts.Close()
+
+	stream := NewResponsesAPI("", "gpt-5").WithEndpoint(ts.URL, "Test").Generate(context.Background(), nil, nil, nil, nil)
+
+	var httpErr *llms.HTTPError
+	require.True(t, errors.As(stream.Err(), &httpErr))
+	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
+	assert.Equal(t, "400", httpErr.ErrorCode)
+	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
+	assert.Equal(t, "Anthropic", httpErr.Metadata.ProviderName)
+	assert.Equal(t, "invalid_request_error", httpErr.Metadata.RawErrorType)
+	assert.Equal(t, "prompt is too long", httpErr.Metadata.RawErrorMessage)
+}
+
+func TestParseHTTPErrorMetadata_FlatRawErrorWithNullNestedCode(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"message": "flat message", "type": "flat_type", "error": {"code": null}}`),
+	})
+
+	assert.Empty(t, metadata.RawErrorCode)
+	assert.Equal(t, "flat_type", metadata.RawErrorType)
+	assert.Equal(t, "flat message", metadata.RawErrorMessage)
+}
+
+func TestParseHTTPErrorMetadata_NestedStatusCodeOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status_code": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
+}
+
+func TestParseHTTPErrorMetadata_NestedStatusOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
 }
 
 func TestResponsesStream_ReasoningOutputDoneSummaryFallback(t *testing.T) {

@@ -381,21 +381,8 @@ func (m *ChatCompletionsAPI) DoRequest(ctx context.Context, payload map[string]a
 		bodyBytes, readErr := io.ReadAll(resp.Body)
 
 		if readErr == nil && len(bodyBytes) > 0 {
-			var openAIError struct {
-				Error struct {
-					Message string `json:"message"`
-					Type    string `json:"type"`
-				} `json:"error"`
-			}
-
-			if jsonErr := json.Unmarshal(bodyBytes, &openAIError); jsonErr == nil && openAIError.Error.Message != "" {
-				// Successfully parsed the OpenAI error format
-				return &ChatCompletionsStream{err: &llms.HTTPError{
-					StatusCode: resp.StatusCode,
-					Status:     resp.Status,
-					ErrorType:  openAIError.Error.Type,
-					Message:    openAIError.Error.Message,
-				}}
+			if httpErr, ok := parseHTTPError(resp, bodyBytes); ok {
+				return &ChatCompletionsStream{err: httpErr}
 			}
 			// Body read okay, but JSON parsing failed or structure mismatch.
 			// Just repeat the body up to a limit.

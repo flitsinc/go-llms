@@ -1,6 +1,7 @@
 package llms
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -12,10 +13,22 @@ var ErrOutputTruncated = errors.New("output truncated: model reached max output 
 
 // HTTPError represents an HTTP error response from an LLM provider.
 type HTTPError struct {
-	StatusCode int    // HTTP status code (e.g., 429, 503, 500)
-	Status     string // Full status text (e.g., "429 Too Many Requests")
-	ErrorType  string // Provider-specific error type (e.g., "rate_limit_error")
-	Message    string // Human-readable error message
+	StatusCode int               // HTTP status code (e.g., 429, 503, 500)
+	Status     string            // Full status text (e.g., "429 Too Many Requests")
+	ErrorCode  string            // Provider-specific error code from the response body
+	ErrorType  string            // Provider-specific error type (e.g., "rate_limit_error")
+	Message    string            // Human-readable error message
+	Metadata   HTTPErrorMetadata // Optional upstream-provider diagnostics
+}
+
+// HTTPErrorMetadata contains upstream-provider diagnostics returned through a gateway.
+type HTTPErrorMetadata struct {
+	ProviderName       string          // Upstream provider name
+	Raw                json.RawMessage // Raw upstream error payload
+	RawErrorCode       string          // Upstream provider-specific error code
+	RawErrorType       string          // Upstream provider-specific error type
+	RawErrorMessage    string          // Upstream provider error message
+	RawErrorStatusCode int             // Upstream provider HTTP status code
 }
 
 func (e *HTTPError) Error() string {
