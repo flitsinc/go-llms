@@ -63,7 +63,7 @@ func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
 	systemMessage := messages[0].(map[string]any)
 	systemContent := systemMessage["content"].([]any)
 	firstPart := systemContent[0].(map[string]any)
-	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
+	assert.Equal(t, map[string]any{"type": "ephemeral", "ttl": "1h"}, firstPart["cache_control"])
 
 	assistantMessage := messages[1].(map[string]any)
 	reasoningDetails := assistantMessage["reasoning_details"].([]any)
@@ -84,6 +84,44 @@ func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
 	assert.Equal(t, "third", third["text"])
 	assert.Equal(t, "sig-3", third["signature"])
 	assert.Equal(t, "t3", third["id"])
+}
+
+func TestNew_BuildPayload_CachesToolResultPromptHint(t *testing.T) {
+	p := New("", "anthropic/claude-sonnet-4")
+
+	payload, err := p.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role:       "tool",
+			ToolCallID: "call_123",
+			Content: content.Content{
+				&content.Text{Text: "Tool result"},
+				&content.CacheHint{Duration: "short"},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	toolMessage := messages[0].(map[string]any)
+	assert.Equal(t, "tool", toolMessage["role"])
+	assert.Equal(t, "call_123", toolMessage["tool_call_id"])
+
+	toolContent := toolMessage["content"].([]any)
+	require.Len(t, toolContent, 1)
+	firstPart := toolContent[0].(map[string]any)
+	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
 }
 
 func TestNewWithReasoning_AddsReasoningPayload(t *testing.T) {

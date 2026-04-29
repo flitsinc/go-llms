@@ -31,6 +31,7 @@ type imageURL struct {
 // CacheControl represents a cache control directive on a content part.
 type CacheControl struct {
 	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 // ContentPart represents a single part of a message's content array.
@@ -83,7 +84,7 @@ func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 		case *content.CacheHint:
 			if opts.cacheControlPromptHints {
 				if i := len(cl) - 1; i >= 0 {
-					cl[i].CacheControl = &CacheControl{Type: "ephemeral"}
+					cl[i].CacheControl = cacheControlFromCacheHint(v)
 				}
 			}
 			continue
@@ -116,6 +117,14 @@ func (cl *ContentList) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func cacheControlFromCacheHint(hint *content.CacheHint) *CacheControl {
+	cc := &CacheControl{Type: "ephemeral"}
+	if hint.Duration == "long" {
+		cc.TTL = "1h"
+	}
+	return cc
+}
+
 // Message represents a chat message in the OpenAI API format.
 type Message struct {
 	Role             string            `json:"role"`
@@ -138,6 +147,7 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 		var messagesToReturn []Message
 		var primaryResultString string
 		var secondaryContent content.Content
+		var primaryCacheControl *CacheControl
 
 		if len(m.Content) > 0 {
 			firstItem := m.Content[0]
@@ -153,7 +163,18 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 			}
 
 			if len(m.Content) > 1 {
-				secondaryContent = m.Content[1:]
+				secondaryStart := 1
+				if opts.cacheControlPromptHints {
+					for secondaryStart < len(m.Content) {
+						cacheHint, ok := m.Content[secondaryStart].(*content.CacheHint)
+						if !ok {
+							break
+						}
+						primaryCacheControl = cacheControlFromCacheHint(cacheHint)
+						secondaryStart++
+					}
+				}
+				secondaryContent = m.Content[secondaryStart:]
 			}
 		} else {
 			primaryResultString = ""
@@ -161,7 +182,7 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 
 		primaryMessage := Message{
 			Role:       "tool",
-			Content:    ContentList{{Type: "text", Text: &primaryResultString}},
+			Content:    ContentList{{Type: "text", Text: &primaryResultString, CacheControl: primaryCacheControl}},
 			ToolCallID: m.ToolCallID,
 		}
 		messagesToReturn = append(messagesToReturn, primaryMessage)
