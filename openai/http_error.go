@@ -77,11 +77,13 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		Code       json.RawMessage `json:"code"`
 		Message    string          `json:"message"`
 		Type       string          `json:"type"`
+		Status     int             `json:"status"`
 		StatusCode int             `json:"status_code"`
 		Error      struct {
 			Code       json.RawMessage `json:"code"`
 			Message    string          `json:"message"`
 			Type       string          `json:"type"`
+			Status     int             `json:"status"`
 			StatusCode int             `json:"status_code"`
 		} `json:"error"`
 	}
@@ -89,18 +91,26 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
-	if rawError.Error.Message != "" || rawError.Error.Type != "" || rawJSONScalarString(rawError.Error.Code) != "" {
+	nestedStatusCode := rawError.Error.StatusCode
+	if nestedStatusCode == 0 {
+		nestedStatusCode = rawError.Error.Status
+	}
+	if rawError.Error.Message != "" || rawError.Error.Type != "" || rawJSONScalarString(rawError.Error.Code) != "" || nestedStatusCode != 0 {
 		metadata.RawErrorCode = rawJSONScalarString(rawError.Error.Code)
 		metadata.RawErrorType = rawError.Error.Type
 		metadata.RawErrorMessage = rawError.Error.Message
-		metadata.RawErrorStatusCode = rawError.Error.StatusCode
+		metadata.RawErrorStatusCode = nestedStatusCode
 		return
 	}
 
+	statusCode := rawError.StatusCode
+	if statusCode == 0 {
+		statusCode = rawError.Status
+	}
 	metadata.RawErrorCode = rawJSONScalarString(rawError.Code)
 	metadata.RawErrorType = rawError.Type
 	metadata.RawErrorMessage = rawError.Message
-	metadata.RawErrorStatusCode = rawError.StatusCode
+	metadata.RawErrorStatusCode = statusCode
 }
 
 func rawJSONScalarString(raw json.RawMessage) string {

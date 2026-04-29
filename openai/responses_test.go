@@ -157,6 +157,22 @@ func TestParseHTTPErrorMetadata_FlatRawErrorWithNullNestedCode(t *testing.T) {
 	assert.Equal(t, "flat message", metadata.RawErrorMessage)
 }
 
+func TestParseHTTPErrorMetadata_NestedStatusCodeOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status_code": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
+}
+
+func TestParseHTTPErrorMetadata_NestedStatusOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
+}
+
 func TestResponsesStream_ReasoningOutputDoneSummaryFallback(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"type":"response.created"}`,
