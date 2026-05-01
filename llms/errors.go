@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrOutputTruncated is returned when a model's output is cut short because it
@@ -39,4 +40,29 @@ func (e *HTTPError) Error() string {
 		return fmt.Sprintf("%s: %s", e.Status, e.Message)
 	}
 	return e.Status
+}
+
+// IsRequestTooLarge reports whether the error indicates that the request
+// exceeded the model's context window or payload size limit.
+//
+// It checks structured fields first (HTTP 413, OpenAI's "context_length_exceeded"
+// error code) and falls back to message-based detection for providers like
+// Anthropic that do not expose a structured error code for this condition.
+func (e *HTTPError) IsRequestTooLarge() bool {
+	if e.StatusCode == 413 || e.Metadata.RawErrorStatusCode == 413 {
+		return true
+	}
+	if isContextLengthExceededCode(e.ErrorCode) || isContextLengthExceededCode(e.Metadata.RawErrorCode) {
+		return true
+	}
+	return isRequestTooLargeMessage(e.Message) || isRequestTooLargeMessage(e.Metadata.RawErrorMessage)
+}
+
+func isContextLengthExceededCode(code string) bool {
+	return code == "context_length_exceeded"
+}
+
+func isRequestTooLargeMessage(msg string) bool {
+	return strings.Contains(msg, "prompt is too long") ||
+		strings.Contains(msg, "maximum context length")
 }
