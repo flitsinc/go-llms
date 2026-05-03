@@ -5,10 +5,11 @@ import "github.com/flitsinc/go-llms/tools"
 type Effort string
 
 const (
-	// EffortNone disables reasoning entirely. Supported on GPT-5.5 and
-	// later as an explicit "no reasoning" tier; older reasoning models
-	// (GPT-5.4, o-series) reject it and accept EffortMinimal as the
-	// lightest tier instead.
+	// EffortNone disables reasoning entirely. The GPT-5.x reasoning
+	// family (5.2, 5.4, 5.5, …) accepts it; the older o-series /
+	// gpt-5 generation expose EffortMinimal as their lightest tier
+	// instead. Which one a given model accepts is documented on its
+	// model page; OpenAI returns a 400 if you send the wrong one.
 	EffortNone    Effort = "none"
 	EffortMinimal Effort = "minimal"
 	EffortLow     Effort = "low"
