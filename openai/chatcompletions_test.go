@@ -777,11 +777,11 @@ func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
 		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
 	})
 
-	t.Run("chunks but no DONE does not error", func(t *testing.T) {
-		// Once any chunk has been processed, downstream may already have
-		// done real work (text captured, tool call executed). Erroring
-		// here would force the caller to retry and re-run side effects.
-		// Outcome enforcement (zero tokens, etc.) belongs above the SDK.
+	t.Run("text content but no DONE", func(t *testing.T) {
+		// Truncated text-only stream: no tool was executed, so retrying
+		// is safe. We surface the missing terminator as ErrEmptyStream
+		// so the caller can either retry or fail loud — not silently
+		// accept a half-stream as success.
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
@@ -797,14 +797,14 @@ func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
 		require.NoError(t, stream.Err())
 		for range stream.Iter() {
 		}
-		require.NoError(t, stream.Err())
+		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
 	})
 
 	t.Run("tool call followed by EOF without DONE preserves work", func(t *testing.T) {
-		// Bugbot scenario: stream completes a tool call (which the caller
-		// will have already executed) and then the connection drops before
-		// [DONE]. Erroring here would make the caller retry and re-run
-		// the tool — the side effect must not be undone.
+		// Stream completes a tool call (which the caller will have
+		// already executed) and then the connection drops before [DONE].
+		// Erroring here would make the caller retry and re-run the tool;
+		// the side effect must not be undone.
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
