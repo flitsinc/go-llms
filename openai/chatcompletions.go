@@ -703,9 +703,17 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							// terminate streams with `data: [DONE]`. EOF without
 							// [DONE] means the connection closed abruptly (proxy
 							// timeout, middleware swallowing an upstream error,
-							// empty response from the model). Without this, the
-							// caller would observe a successful empty completion.
-							if !doneSeen && s.err == nil {
+							// empty response from the model).
+							//
+							// Only error when nothing was yielded. If at least one
+							// chunk was processed, downstream may have already done
+							// real work (executed a tool call, captured partial
+							// content, etc.); turning that into an error would make
+							// the caller retry and re-run those side effects. The
+							// API-layer "zero tokens" guard catches the empty-but-
+							// truncated case. We're enforcing transport here, not
+							// outcome.
+							if !doneSeen && !messageStartYielded && s.err == nil {
 								s.err = llms.ErrEmptyStream
 							}
 							return

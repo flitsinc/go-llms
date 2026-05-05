@@ -777,11 +777,14 @@ func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
 		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
 	})
 
-	t.Run("chunks but no DONE", func(t *testing.T) {
+	t.Run("chunks but no DONE does not error", func(t *testing.T) {
+		// Once any chunk has been processed, downstream may already have
+		// done real work (text captured, tool call executed). Erroring
+		// here would force the caller to retry and re-run side effects.
+		// Outcome enforcement (zero tokens, etc.) belongs above the SDK.
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			// One valid chunk, then connection close without [DONE].
 			_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n"))
 		}))
 		defer ts.Close()
@@ -794,7 +797,35 @@ func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
 		require.NoError(t, stream.Err())
 		for range stream.Iter() {
 		}
-		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
+		require.NoError(t, stream.Err())
+	})
+
+	t.Run("tool call followed by EOF without DONE preserves work", func(t *testing.T) {
+		// Bugbot scenario: stream completes a tool call (which the caller
+		// will have already executed) and then the connection drops before
+		// [DONE]. Erroring here would make the caller retry and re-run
+		// the tool — the side effect must not be undone.
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"foo\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		var sawToolCallReady bool
+		for status := range stream.Iter() {
+			if status == llms.StreamStatusToolCallReady {
+				sawToolCallReady = true
+			}
+		}
+		require.NoError(t, stream.Err())
+		assert.True(t, sawToolCallReady, "tool call should have been yielded as ready")
 	})
 
 	t.Run("DONE marker keeps clean exit", func(t *testing.T) {
