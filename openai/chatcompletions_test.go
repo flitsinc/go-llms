@@ -750,3 +750,69 @@ func TestDoRequest_OpenRouterErrorMetadata(t *testing.T) {
 func intPtr(v int) *int {
 	return &v
 }
+
+// TestChatCompletionsStream_EOFWithoutDone covers the case where the upstream
+// closes the SSE connection cleanly but never sends the `data: [DONE]`
+// terminator. This is what we observed on `openrouter/claude-4.6-opus-*`
+// and `gpt-5.*`: the stream returns 200, the connection closes, and our
+// iterator used to exit silently — yielding `success=true` with zero
+// tokens and an empty assistant message. The fix surfaces this as
+// `llms.ErrEmptyStream` so callers can retry or fail loud.
+func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
+	t.Run("no chunks at all", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
+	})
+
+	t.Run("chunks but no DONE", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// One valid chunk, then connection close without [DONE].
+			_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
+	})
+
+	t.Run("DONE marker keeps clean exit", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.NoError(t, stream.Err())
+	})
+}

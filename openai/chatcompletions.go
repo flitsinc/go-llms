@@ -660,6 +660,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
 	messageStartYielded := false
+	doneSeen := false // Whether the SSE terminator `data: [DONE]` was observed
 
 	return func(rawYield func(llms.StreamStatus) bool) {
 		stopped := false
@@ -698,6 +699,15 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				if err != nil {
 					if err == io.EOF {
 						if lineBuilder.Len() == 0 {
+							// Per the Chat Completions streaming spec, providers
+							// terminate streams with `data: [DONE]`. EOF without
+							// [DONE] means the connection closed abruptly (proxy
+							// timeout, middleware swallowing an upstream error,
+							// empty response from the model). Without this, the
+							// caller would observe a successful empty completion.
+							if !doneSeen && s.err == nil {
+								s.err = llms.ErrEmptyStream
+							}
 							return
 						}
 						break
@@ -723,6 +733,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				continue
 			}
 			if line == "[DONE]" {
+				doneSeen = true
 				// Stream ended. If we were still thinking, emit ThinkingDone.
 				if s.lastThought != nil {
 					s.lastThought = nil
