@@ -513,3 +513,5 @@ To fix this, use [fine-grained tool streaming](https://docs.anthropic.com/en/doc
 ## License
 
 MIT License - See LICENSE file for details.
+
+<!-- Declarative environment verification: 2026-05-10 -->
