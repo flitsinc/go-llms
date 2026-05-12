@@ -353,7 +353,7 @@ type toolCallDelta struct {
 	Custom   *customToolCall   `json:"custom,omitempty"`
 }
 
-func (t toolCallDelta) ToLLM() llms.ToolCall {
+func (t toolCallDelta) ToLLM() (llms.ToolCall, error) {
 	metadata := make(map[string]string)
 	if t.Type != "" {
 		metadata["openai:item_type"] = t.Type
@@ -367,7 +367,7 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 			Name:      t.Function.Name,
 			Arguments: json.RawMessage(t.Function.Arguments),
 			Metadata:  metadata,
-		}
+		}, nil
 	}
 	if t.Custom != nil && t.Custom.Input != nil {
 		if len(metadata) == 0 {
@@ -378,9 +378,9 @@ func (t toolCallDelta) ToLLM() llms.ToolCall {
 			Name:      t.Custom.Name,
 			Arguments: json.RawMessage([]byte(*t.Custom.Input)),
 			Metadata:  metadata,
-		}
+		}, nil
 	}
-	panic(fmt.Sprintf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID))
+	return llms.ToolCall{}, fmt.Errorf("malformed tool call delta with ID %q: both Function and Custom are nil or invalid", t.ID)
 }
 
 // ReasoningDetail represents a reasoning token entry from providers that stream

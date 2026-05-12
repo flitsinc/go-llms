@@ -383,8 +383,12 @@ func (m *Model) Generate(
 	}
 
 	if systemPrompt != nil {
+		systemParts, err := convertContent(systemPrompt)
+		if err != nil {
+			return &Stream{err: fmt.Errorf("failed to convert system prompt for Google: %w", err)}
+		}
 		payload["systemInstruction"] = map[string]any{
-			"parts": convertContent(systemPrompt),
+			"parts": systemParts,
 		}
 	}
 
@@ -400,7 +404,7 @@ func (m *Model) Generate(
 				sanitizeSchemaForGemini(&schema.Parameters)
 				declarations[i] = schema
 			default:
-				panic(fmt.Sprintf("unsupported grammar type: %T", g))
+				return &Stream{err: fmt.Errorf("google: unsupported tool grammar type %T", g)}
 			}
 		}
 		payload["tools"] = map[string]any{

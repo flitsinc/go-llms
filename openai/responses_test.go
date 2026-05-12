@@ -700,3 +700,17 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 		t.Fatalf("expected third item to be FunctionCall, got %T", inputs[2])
 	}
 }
+
+func TestResponsesGenerate_UnsupportedVideoReturnsStreamError(t *testing.T) {
+	api := NewResponsesAPI("key", "gpt-5")
+
+	stream := api.Generate(context.Background(), nil, []llms.Message{{
+		Role: "user",
+		Content: content.Content{
+			&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+		},
+	}}, nil, nil)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "openai responses: unsupported content item type *content.VideoURL")
+}

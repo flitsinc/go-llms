@@ -372,7 +372,10 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 
 	switch msg.Role {
 	case "user", "system", "developer":
-		content := convertContentToInputContent(msg.Content)
+		content, err := convertContentToInputContent(msg.Content)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, InputMessage{
 			Type:    "message",
 			Role:    msg.Role,
@@ -421,6 +424,10 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 				}
 				items = append(items, reasoning)
 				seenReasoningIDs[v.ID] = true
+			case *content.CacheHint:
+				// Cache hints are input-only markers; ignore when replaying assistant output.
+			default:
+				return nil, fmt.Errorf("openai responses: unsupported assistant content item type %T", item)
 			}
 		}
 
@@ -457,7 +464,10 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		}
 
 		if len(msg.Content) > 1 {
-			secondaryContent := convertContentToInputContent(msg.Content[1:])
+			secondaryContent, err := convertContentToInputContent(msg.Content[1:])
+			if err != nil {
+				return nil, err
+			}
 			if len(secondaryContent) > 0 {
 				items = append(items, InputMessage{
 					Type:    "message",
@@ -479,7 +489,7 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 }
 
 // convertContentToInputContent converts content.Content to InputContent array
-func convertContentToInputContent(c content.Content) []InputContent {
+func convertContentToInputContent(c content.Content) ([]InputContent, error) {
 	var inputContent []InputContent
 
 	for _, item := range c {
@@ -504,8 +514,10 @@ func convertContentToInputContent(c content.Content) []InputContent {
 			// Skip thoughts in input
 		case *content.CacheHint:
 			// Skip cache hints
+		default:
+			return nil, fmt.Errorf("openai responses: unsupported content item type %T", item)
 		}
 	}
 
-	return inputContent
+	return inputContent, nil
 }

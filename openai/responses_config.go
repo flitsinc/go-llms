@@ -108,7 +108,10 @@ func (c *responsesConfig) buildResponsesPayload(
 	}
 
 	if toolbox != nil || len(c.specialTools) > 0 {
-		toolsArr := buildResponsesToolsArray(c.specialTools, toolbox)
+		toolsArr, err := buildResponsesToolsArray(c.specialTools, toolbox)
+		if err != nil {
+			return nil, err
+		}
 		if len(toolsArr) > 0 {
 			payload["tools"] = toolsArr
 			if toolbox != nil {

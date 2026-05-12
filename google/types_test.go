@@ -343,6 +343,29 @@ func TestGoogle_ToolChoice_Config(t *testing.T) {
 	})
 }
 
+func TestGenerate_MalformedMediaReturnsStreamError(t *testing.T) {
+	m := New("gemini-2.0-flash-exp").WithGeminiAPI("key")
+
+	stream := m.Generate(context.Background(), content.Content{
+		&content.ImageURL{URL: "data:image/png,not-base64"},
+	}, nil, nil, nil)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "unsupported data URI format")
+}
+
+func TestGenerate_UnsupportedToolGrammarReturnsStreamError(t *testing.T) {
+	m := New("gemini-2.0-flash-exp").WithGeminiAPI("key")
+	tb := tools.Box(tools.FuncGrammar(tools.Text(), "Raw Text", "Raw text tool", "raw_text", func(r tools.Runner, input string) tools.Result {
+		return tools.SuccessFromString("ok")
+	}))
+
+	stream := m.Generate(context.Background(), nil, nil, tb, nil)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "unsupported tool grammar type tools.TextGrammar")
+}
+
 // Helper function to get a pointer to a string
 func ptr(s string) *string {
 	return &s

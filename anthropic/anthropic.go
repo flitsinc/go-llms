@@ -292,7 +292,11 @@ func (m *Model) Generate(
 
 	var apiMessages []message
 	for _, msg := range messages {
-		apiMessages = append(apiMessages, messageFromLLM(msg))
+		apiMessage, err := messageFromLLM(msg)
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: failed to convert message role=%s: %w", msg.Role, err)}
+		}
+		apiMessages = append(apiMessages, apiMessage)
 	}
 
 	maxTokens := m.maxTokens + m.maxThinkingTokens
@@ -323,7 +327,11 @@ func (m *Model) Generate(
 	}
 
 	if systemPrompt != nil {
-		payload["system"] = contentFromLLM(systemPrompt)
+		apiSystemPrompt, err := contentFromLLM(systemPrompt)
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: failed to convert system prompt: %w", err)}
+		}
+		payload["system"] = apiSystemPrompt
 	}
 
 	outputConfig := map[string]any{}
@@ -341,7 +349,10 @@ func (m *Model) Generate(
 
 	if toolbox != nil {
 		// Build full tool list first.
-		allTools := Tools(toolbox)
+		allTools, err := toolsFromToolbox(toolbox)
+		if err != nil {
+			return &Stream{err: err}
+		}
 		choice := toolbox.Choice
 
 		// Map Choice to Anthropic tool_choice.
@@ -830,7 +841,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	}
 }
 
-func Tools(toolbox *tools.Toolbox) []Tool {
+func toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
 	toolDefs := []Tool{}
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
@@ -842,14 +853,22 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 				InputSchema: schema.Parameters,
 			})
 		default:
-			panic(fmt.Sprintf("unsupported grammar type: %T", g))
+			return nil, fmt.Errorf("anthropic: unsupported tool grammar type %T", g)
 		}
+	}
+	return toolDefs, nil
+}
+
+func Tools(toolbox *tools.Toolbox) []Tool {
+	toolDefs, err := toolsFromToolbox(toolbox)
+	if err != nil {
+		panic(err)
 	}
 	return toolDefs
 }
 
-func contentFromLLM(llmContent content.Content) (cl contentList) {
-	cl = []contentItem{}
+func contentFromLLM(llmContent content.Content) (contentList, error) {
+	cl := []contentItem{}
 	for _, item := range llmContent {
 		var ci contentItem
 		switch v := item.(type) {
@@ -865,7 +884,7 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 			if dataValue, found := strings.CutPrefix(v.URL, "data:"); found {
 				mimeType, data, found := strings.Cut(dataValue, ";base64,")
 				if !found {
-					panic(fmt.Sprintf("unsupported data URI format %q", v.URL))
+					return nil, fmt.Errorf("unsupported data URI format %q", v.URL)
 				}
 				ci.Source = &source{
 					Type:      "base64",
@@ -904,15 +923,18 @@ func contentFromLLM(llmContent content.Content) (cl contentList) {
 			}
 			continue // Skip appending empty content item
 		default:
-			panic(fmt.Sprintf("unhandled content item type %T", item))
+			return nil, fmt.Errorf("unsupported content item type %T", item)
 		}
 		cl = append(cl, ci)
 	}
-	return cl
+	return cl, nil
 }
 
-func messageFromLLM(m llms.Message) message {
-	apiContent := contentFromLLM(m.Content)
+func messageFromLLM(m llms.Message) (message, error) {
+	apiContent, err := contentFromLLM(m.Content)
+	if err != nil {
+		return message{}, err
+	}
 	switch m.Role {
 	case "tool":
 		// Anthropic expects tool results to be from the user, wrapped in a specific structure.
@@ -925,7 +947,7 @@ func messageFromLLM(m llms.Message) message {
 					Content:   apiContent,
 				},
 			},
-		}
+		}, nil
 	case "assistant":
 		for _, toolCall := range m.ToolCalls {
 			apiContent = append(apiContent, contentItem{
@@ -944,5 +966,5 @@ func messageFromLLM(m llms.Message) message {
 	return message{
 		Role:    m.Role,
 		Content: apiContent,
-	}
+	}, nil
 }

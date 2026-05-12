@@ -457,20 +457,23 @@ func TestAnthropicStreamHandling(t *testing.T) {
 func TestContentFromLLMEdgeCases(t *testing.T) {
 	t.Run("Empty Text Content", func(t *testing.T) {
 		llmContent := content.FromText("")
-		apiContent := contentFromLLM(llmContent)
+		apiContent, err := contentFromLLM(llmContent)
+		require.NoError(t, err)
 		require.Len(t, apiContent, 0, "Empty text should result in an empty content list from contentFromLLM")
 	})
 
 	t.Run("Whitespace Only Text Content", func(t *testing.T) {
 		llmContent := content.FromText("   \n\t ")
-		apiContent := contentFromLLM(llmContent)
+		apiContent, err := contentFromLLM(llmContent)
+		require.NoError(t, err)
 		require.Len(t, apiContent, 0, "Whitespace-only text should result in an empty content list from contentFromLLM")
 	})
 
 	t.Run("JSON Content", func(t *testing.T) {
 		jsonValue := `{"key": "value", "num": 1}`
 		llmContent := content.FromRawJSON(json.RawMessage(jsonValue))
-		apiContent := contentFromLLM(llmContent)
+		apiContent, err := contentFromLLM(llmContent)
+		require.NoError(t, err)
 		require.Len(t, apiContent, 1)
 		assert.Equal(t, "text", apiContent[0].Type)
 		assert.Equal(t, jsonValue, apiContent[0].Text, "JSON content should be converted to text")
@@ -485,7 +488,8 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 			Role:    "assistant",
 			Content: content.FromText("Just text."),
 		}
-		apiMsg := messageFromLLM(llmMsg)
+		apiMsg, err := messageFromLLM(llmMsg)
+		require.NoError(t, err)
 		assert.Equal(t, "assistant", apiMsg.Role)
 		require.Len(t, apiMsg.Content, 1)
 		assert.Equal(t, "text", apiMsg.Content[0].Type)
@@ -502,7 +506,8 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 			ToolCallID: "toolu_test_123",
 			Content:    content.Textf("Tool result text"),
 		}
-		apiMsg := messageFromLLM(llmMsg)
+		apiMsg, err := messageFromLLM(llmMsg)
+		require.NoError(t, err)
 		assert.Equal(t, "user", apiMsg.Role, "Tool result message should have role 'user'")
 		require.Len(t, apiMsg.Content, 1, "Tool result message should have one content item")
 		toolResultItem := apiMsg.Content[0]
@@ -522,7 +527,8 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 			ToolCallID: "toolu_json_456",
 			Content:    content.FromRawJSON(json.RawMessage(jsonResult)),
 		}
-		apiMsg := messageFromLLM(llmMsg)
+		apiMsg, err := messageFromLLM(llmMsg)
+		require.NoError(t, err)
 		assert.Equal(t, "user", apiMsg.Role)
 		require.Len(t, apiMsg.Content, 1)
 		toolResultItem := apiMsg.Content[0]
@@ -544,7 +550,8 @@ func TestMessageFromLLMEdgeCases(t *testing.T) {
 				{ID: "t_2", Name: "toolB", Arguments: json.RawMessage(`{}`)},
 			},
 		}
-		apiMsg := messageFromLLM(llmMsg)
+		apiMsg, err := messageFromLLM(llmMsg)
+		require.NoError(t, err)
 		assert.Equal(t, "assistant", apiMsg.Role)
 		// Check the logic in messageFromLLM: it appends tool_use blocks after content blocks
 		require.Len(t, apiMsg.Content, 3, "Expected 1 text + 2 tool_use content items")
@@ -810,4 +817,30 @@ func TestAnthropic_ToolChoice_Mapping(t *testing.T) {
 		tc := payload["tool_choice"].(map[string]any)
 		assert.Equal(t, "none", tc["type"])
 	})
+}
+
+func TestGenerate_UnsupportedContentReturnsStreamError(t *testing.T) {
+	m := New("key", "claude-3-sonnet")
+
+	stream := m.Generate(context.Background(), nil, []llms.Message{{
+		Role: "user",
+		Content: content.Content{
+			&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+		},
+	}}, nil, nil)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "unsupported content item type *content.VideoURL")
+}
+
+func TestGenerate_UnsupportedToolGrammarReturnsStreamError(t *testing.T) {
+	m := New("key", "claude-3-sonnet")
+	tb := tools.Box(tools.FuncGrammar(tools.Text(), "Raw Text", "Raw text tool", "raw_text", func(r tools.Runner, input string) tools.Result {
+		return tools.SuccessFromString("ok")
+	}))
+
+	stream := m.Generate(context.Background(), nil, nil, tb, nil)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "unsupported tool grammar type tools.TextGrammar")
 }

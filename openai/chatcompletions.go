@@ -220,7 +220,10 @@ func (m *ChatCompletionsAPI) BuildPayload(
 
 	if toolbox != nil {
 		// Build tools first.
-		apiTools := Tools(toolbox)
+		apiTools, err := toolsFromToolbox(toolbox)
+		if err != nil {
+			return nil, err
+		}
 		// Always include full tools for cacheability; constrain with tool_choice
 		payload["tools"] = apiTools
 
@@ -819,7 +822,8 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					if toolDelta.Index >= len(s.message.ToolCalls) {
 						// This is a new tool call starting
 						if toolDelta.Index != len(s.message.ToolCalls) {
-							panic(fmt.Sprintf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index))
+							s.err = fmt.Errorf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index)
+							return
 						}
 						// If a previous tool call was active, mark it as ready now.
 						if activeToolCallIndex != -1 {
@@ -828,7 +832,11 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							}
 						}
 						// Add the new tool call (converting from toolCallDelta)
-						llmToolCall := toolDelta.ToLLM()
+						llmToolCall, err := toolDelta.ToLLM()
+						if err != nil {
+							s.err = err
+							return
+						}
 						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
 						activeToolCallIndex = toolDelta.Index // Mark new tool call as active
 						if !yield(llms.StreamStatusToolCallBegin) {
@@ -888,7 +896,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	}
 }
 
-func Tools(toolbox *tools.Toolbox) []Tool {
+func toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
 	apiTools := []Tool{}
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
@@ -927,8 +935,16 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 				},
 			}})
 		default:
-			panic(fmt.Sprintf("unsupported grammar type: %T", g))
+			return nil, fmt.Errorf("openai chat: unsupported tool grammar type %T", g)
 		}
+	}
+	return apiTools, nil
+}
+
+func Tools(toolbox *tools.Toolbox) []Tool {
+	apiTools, err := toolsFromToolbox(toolbox)
+	if err != nil {
+		panic(err)
 	}
 	return apiTools
 }

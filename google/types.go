@@ -141,21 +141,22 @@ type parts []part
 // sent as inlineData; public URLs go through fileData. Gemini uses the mime type to
 // decide how to interpret the bytes, so image/audio/video all go through the same
 // container with a different mime.
-func mediaPart(url, mimeType string) part {
+func mediaPart(url, mimeType string) (part, error) {
 	if dataValue, found := strings.CutPrefix(url, "data:"); found {
 		parsedMime, data, found := strings.Cut(dataValue, ";base64,")
 		if !found {
-			panic(fmt.Sprintf("unsupported data URI format %q", url))
+			return part{}, fmt.Errorf("unsupported data URI format %q", url)
 		}
-		return part{InlineData: &inlineData{parsedMime, data}}
+		return part{InlineData: &inlineData{parsedMime, data}}, nil
 	}
 	if mimeType == "" {
 		mimeType = content.GuessMIMETypeFromURL(url)
 	}
-	return part{FileData: &fileData{MimeType: mimeType, FileURI: url}}
+	return part{FileData: &fileData{MimeType: mimeType, FileURI: url}}, nil
 }
 
-func convertContent(c content.Content) (p parts) {
+func convertContent(c content.Content) (parts, error) {
+	p := parts{}
 	for _, item := range c {
 		var pp part
 		switch v := item.(type) {
@@ -163,11 +164,23 @@ func convertContent(c content.Content) (p parts) {
 			text := v.Text
 			pp.Text = &text
 		case *content.ImageURL:
-			pp = mediaPart(v.URL, v.MimeType)
+			var err error
+			pp, err = mediaPart(v.URL, v.MimeType)
+			if err != nil {
+				return nil, err
+			}
 		case *content.AudioURL:
-			pp = mediaPart(v.URL, v.MimeType)
+			var err error
+			pp, err = mediaPart(v.URL, v.MimeType)
+			if err != nil {
+				return nil, err
+			}
 		case *content.VideoURL:
-			pp = mediaPart(v.URL, v.MimeType)
+			var err error
+			pp, err = mediaPart(v.URL, v.MimeType)
+			if err != nil {
+				return nil, err
+			}
 		case *content.JSON:
 			text := string(v.Data)
 			pp.Text = &text
@@ -181,11 +194,11 @@ func convertContent(c content.Content) (p parts) {
 			// Google has implicit caching; ignore.
 			continue
 		default:
-			panic(fmt.Sprintf("unhandled content item type %T", item))
+			return nil, fmt.Errorf("unsupported content item type %T", item)
 		}
 		p = append(p, pp)
 	}
-	return p
+	return p, nil
 }
 
 func (p parts) MarshalJSON() ([]byte, error) {
@@ -271,7 +284,10 @@ func messagesFromLLM(m llms.Message) ([]message, error) {
 
 		// Handle additional content items (if any) by creating a secondary user message.
 		if len(secondaryContent) > 0 {
-			secondaryParts := convertContent(secondaryContent)
+			secondaryParts, err := convertContent(secondaryContent)
+			if err != nil {
+				return nil, err
+			}
 			if len(secondaryParts) > 0 { // Only add if there are convertible parts
 				secondaryMessage := message{
 					Role:  "user", // Faked user message for additional content
@@ -289,7 +305,10 @@ func messagesFromLLM(m llms.Message) ([]message, error) {
 		apiRole = "model" // Google uses "model" for assistant role
 	}
 
-	apiParts := convertContent(m.Content)
+	apiParts, err := convertContent(m.Content)
+	if err != nil {
+		return nil, err
+	}
 
 	// Add function calls if the message is from the assistant/model
 	if m.Role == "assistant" {

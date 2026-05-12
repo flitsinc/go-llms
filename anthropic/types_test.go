@@ -141,7 +141,8 @@ func TestMessageFromLLM_Anthropic(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := messageFromLLM(tc.input)
+			actual, err := messageFromLLM(tc.input)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected.Role, actual.Role, "Role mismatch")
 			require.Equal(t, len(tc.expected.Content), len(actual.Content), "Content length mismatch")
 

@@ -490,13 +490,13 @@ func (m *WebSocketResponsesAPI) ensureConnected(ctx context.Context) error {
 // buildResponsesToolsArray converts a toolbox and special tools into the
 // JSON-serializable tool array used by the Responses API. Shared by both
 // the SSE and WebSocket providers.
-func buildResponsesToolsArray(specialTools []ResponseTool, toolbox *tools.Toolbox) []any {
+func buildResponsesToolsArray(specialTools []ResponseTool, toolbox *tools.Toolbox) ([]any, error) {
 	var toolsArr []any
 	for _, t := range specialTools {
 		toolsArr = append(toolsArr, t)
 	}
 	if toolbox == nil {
-		return toolsArr
+		return toolsArr, nil
 	}
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
@@ -540,10 +540,10 @@ func buildResponsesToolsArray(specialTools []ResponseTool, toolbox *tools.Toolbo
 				},
 			})
 		default:
-			panic(fmt.Sprintf("unsupported grammar type: %T", g))
+			return nil, fmt.Errorf("openai responses: unsupported tool grammar type %T", g)
 		}
 	}
-	return toolsArr
+	return toolsArr, nil
 }
 
 // buildToolChoice converts a tools.Choice into the appropriate tool_choice

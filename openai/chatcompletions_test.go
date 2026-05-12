@@ -330,7 +330,8 @@ func TestToolCallDeltaToLLMPreservesMetadata(t *testing.T) {
 			Input: ptr("payload"),
 		},
 	}
-	llmCall := input.ToLLM()
+	llmCall, err := input.ToLLM()
+	require.NoError(t, err)
 	require.Equal(t, "custom_tool", llmCall.Name)
 	require.Equal(t, "payload", string(llmCall.Arguments))
 	require.Equal(t, "custom", llmCall.Metadata["openai:item_type"])
@@ -342,10 +343,16 @@ func TestToolCallDeltaToLLMPreservesMetadata(t *testing.T) {
 			Arguments: `{"query":"value"}`,
 		},
 	}
-	llmFunctionCall := functionDelta.ToLLM()
+	llmFunctionCall, err := functionDelta.ToLLM()
+	require.NoError(t, err)
 	require.Equal(t, "lookup", llmFunctionCall.Name)
 	require.Equal(t, `{"query":"value"}`, string(llmFunctionCall.Arguments))
 	require.Equal(t, "function", llmFunctionCall.Metadata["openai:item_type"])
+
+	malformed := toolCallDelta{ID: "call_bad"}
+	_, err = malformed.ToLLM()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "malformed tool call delta")
 }
 
 func TestChatCompletions_ToolChoice_Mapping(t *testing.T) {
