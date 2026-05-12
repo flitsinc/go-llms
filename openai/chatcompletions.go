@@ -169,14 +169,21 @@ func (m *ChatCompletionsAPI) BuildPayload(
 
 	var apiMessages []Message
 	if systemPrompt != nil {
+		systemContent, err := convertContentWithOptions(systemPrompt, encodingOptions)
+		if err != nil {
+			return nil, err
+		}
 		apiMessages = append(apiMessages, Message{
 			Role:    "system",
-			Content: ConvertContentWithOptions(systemPrompt, encodingOptions),
+			Content: systemContent,
 		})
 	}
 
 	for _, msg := range messages {
-		convertedMsgs := MessagesFromLLMWithOptions(msg, encodingOptions)
+		convertedMsgs, err := messagesFromLLMWithOptions(msg, encodingOptions)
+		if err != nil {
+			return nil, err
+		}
 		apiMessages = append(apiMessages, convertedMsgs...)
 	}
 

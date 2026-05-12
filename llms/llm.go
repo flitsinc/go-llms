@@ -137,6 +137,11 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 	// This goroutine owns the updateChan and ensures it's closed on exit.
 	go func() {
 		defer close(updateChan)
+		defer func() {
+			if rec := recover(); rec != nil {
+				l.err = fmt.Errorf("LLM panic: %v", rec)
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():

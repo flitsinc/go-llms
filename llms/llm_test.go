@@ -231,6 +231,28 @@ func (s *errorMockStream) Thought() content.Thought { return content.Thought{} }
 func (s *errorMockStream) ToolCall() ToolCall       { return ToolCall{} }
 func (s *errorMockStream) Usage() Usage             { return Usage{} }
 
+type panicMockProvider struct{}
+
+func (m *panicMockProvider) Company() string {
+	return "Panic Test Company"
+}
+
+func (m *panicMockProvider) Model() string {
+	return "panic-model"
+}
+
+func (m *panicMockProvider) SetHTTPClient(_ *http.Client) {}
+
+func (m *panicMockProvider) Generate(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) ProviderStream {
+	panic("provider exploded")
+}
+
 // mockEmptyIDProvider is a provider that returns tool calls with empty IDs
 type mockEmptyIDProvider struct{}
 

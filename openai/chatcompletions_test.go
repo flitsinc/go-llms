@@ -434,6 +434,43 @@ func TestBuildPayload_DefaultPromptCacheRetention(t *testing.T) {
 	require.Equal(t, "24h", payload["prompt_cache_retention"])
 }
 
+func TestBuildPayload_UnsupportedContentReturnsError(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-4o")
+	_, err := m.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+			},
+		}},
+		nil,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "openai chat completions: unsupported content item type *content.VideoURL")
+}
+
+func TestGenerate_UnsupportedContentReturnsStreamError(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-4o")
+	stream := m.Generate(
+		context.Background(),
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
+			},
+		}},
+		nil,
+		nil,
+	)
+
+	require.Error(t, stream.Err())
+	assert.Contains(t, stream.Err().Error(), "openai chat completions: unsupported content item type *content.VideoURL")
+}
+
 func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {
 	m := NewChatCompletionsAPI("", "gpt-5").
 		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")

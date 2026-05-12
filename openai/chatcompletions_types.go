@@ -56,10 +56,7 @@ func ConvertContent(c content.Content) ContentList {
 	return ConvertContentWithOptions(c, chatMessageEncodingOptions{})
 }
 
-// ConvertContentWithOptions converts content.Content to a ContentList for the
-// OpenAI-compatible Chat Completions API, with optional provider-specific
-// encodings such as cache_control on content parts.
-func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOptions) ContentList {
+func convertContentWithOptions(c content.Content, opts chatMessageEncodingOptions) (ContentList, error) {
 	cl := make(ContentList, 0, len(c))
 	for _, item := range c {
 		var cp ContentPart
@@ -89,9 +86,20 @@ func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 			}
 			continue
 		default:
-			panic(fmt.Sprintf("unhandled content item type %T", item))
+			return nil, fmt.Errorf("openai chat completions: unsupported content item type %T", item)
 		}
 		cl = append(cl, cp)
+	}
+	return cl, nil
+}
+
+// ConvertContentWithOptions converts content.Content to a ContentList for the
+// OpenAI-compatible Chat Completions API, with optional provider-specific
+// encodings such as cache_control on content parts.
+func ConvertContentWithOptions(c content.Content, opts chatMessageEncodingOptions) ContentList {
+	cl, err := convertContentWithOptions(c, opts)
+	if err != nil {
+		panic(err)
 	}
 	return cl
 }
@@ -143,6 +151,14 @@ func MessagesFromLLM(m llms.Message) []Message {
 // MessagesFromLLMWithOptions converts an llms.Message to the OpenAI-compatible
 // chat message format with optional provider-specific encodings.
 func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions) []Message {
+	messages, err := messagesFromLLMWithOptions(m, opts)
+	if err != nil {
+		panic(err)
+	}
+	return messages
+}
+
+func messagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions) ([]Message, error) {
 	if m.Role == "tool" {
 		var messagesToReturn []Message
 		var primaryResultString string
@@ -188,7 +204,10 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 		messagesToReturn = append(messagesToReturn, primaryMessage)
 
 		if len(secondaryContent) > 0 {
-			secondaryAPIContent := ConvertContentWithOptions(secondaryContent, opts)
+			secondaryAPIContent, err := convertContentWithOptions(secondaryContent, opts)
+			if err != nil {
+				return nil, err
+			}
 			if len(secondaryAPIContent) > 0 {
 				secondaryMessage := Message{
 					Role:    "user",
@@ -197,18 +216,21 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 				messagesToReturn = append(messagesToReturn, secondaryMessage)
 			}
 		}
-		return messagesToReturn
+		return messagesToReturn, nil
 	}
 
 	apiRole := m.Role
-	apiContent := ConvertContentWithOptions(m.Content, opts)
+	apiContent, err := convertContentWithOptions(m.Content, opts)
+	if err != nil {
+		return nil, err
+	}
 	var reasoningDetails []ReasoningDetail
 	if opts.assistantReasoningReplay && m.Role == "assistant" {
 		reasoningDetails = reasoningDetailsFromContent(m.Content)
 	}
 
 	if len(apiContent) == 0 && len(m.ToolCalls) == 0 && len(reasoningDetails) == 0 {
-		return []Message{}
+		return []Message{}, nil
 	}
 
 	msg := Message{
@@ -249,7 +271,7 @@ func MessagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 		}
 	}
 
-	return []Message{msg}
+	return []Message{msg}, nil
 }
 
 func reasoningDetailsFromContent(c content.Content) []ReasoningDetail {

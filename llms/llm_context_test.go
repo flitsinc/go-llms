@@ -82,3 +82,13 @@ func TestTurnContextCancellation(t *testing.T) {
 	assert.Error(t, llm.Err(), "Should return an error when context is cancelled")
 	assert.ErrorIs(t, llm.Err(), context.DeadlineExceeded, "Error should be context.DeadlineExceeded")
 }
+
+func TestProviderPanicBecomesLLMError(t *testing.T) {
+	llm := New(&panicMockProvider{})
+
+	for range llm.ChatWithContext(context.Background(), "Test message") {
+	}
+
+	require.Error(t, llm.Err())
+	assert.Contains(t, llm.Err().Error(), "LLM panic: provider exploded")
+}
