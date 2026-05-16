@@ -670,6 +670,8 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
 	messageStartYielded := false
+	doneSeen := false        // Whether the SSE terminator `data: [DONE]` was observed
+	toolReadyYielded := false // Whether StreamStatusToolCallReady was yielded; gates ErrEmptyStream so a tool's side effect isn't redone via retry
 
 	return func(rawYield func(llms.StreamStatus) bool) {
 		stopped := false
@@ -708,6 +710,21 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				if err != nil {
 					if err == io.EOF {
 						if lineBuilder.Len() == 0 {
+							// Per the Chat Completions streaming spec, providers
+							// terminate streams with `data: [DONE]`. EOF without
+							// [DONE] means the connection closed abruptly (proxy
+							// timeout, middleware swallowing an upstream error,
+							// empty response from the model).
+							//
+							// Suppress this error specifically when a tool call was
+							// already yielded as ready: the caller will have run the
+							// tool by the time we get here, and turning a missing
+							// terminator into an error would force a retry that
+							// re-runs the tool side effect. Truncated text-only
+							// streams still error, since retrying those is safe.
+							if !doneSeen && !toolReadyYielded && s.err == nil {
+								s.err = llms.ErrEmptyStream
+							}
 							return
 						}
 						break
@@ -733,6 +750,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				continue
 			}
 			if line == "[DONE]" {
+				doneSeen = true
 				// Stream ended. If we were still thinking, emit ThinkingDone.
 				if s.lastThought != nil {
 					s.lastThought = nil
@@ -742,6 +760,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}
 				// If a tool call was active, mark it as ready.
 				if activeToolCallIndex != -1 {
+					toolReadyYielded = true
 					if !yield(llms.StreamStatusToolCallReady) {
 						return
 					}
@@ -827,6 +846,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 						// If a previous tool call was active, mark it as ready now.
 						if activeToolCallIndex != -1 {
+							toolReadyYielded = true
 							if !yield(llms.StreamStatusToolCallReady) {
 								return // Abort if yield fails
 							}
@@ -880,6 +900,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				switch *chunk.Choices[0].FinishReason {
 				case "tool_calls":
 					if activeToolCallIndex != -1 {
+						toolReadyYielded = true
 						if !yield(llms.StreamStatusToolCallReady) {
 							return // Abort if yield fails
 						}
