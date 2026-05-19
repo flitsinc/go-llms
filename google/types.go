@@ -14,9 +14,10 @@ import (
 type ThinkingLevel string
 
 const (
-	ThinkingLevelLow    ThinkingLevel = "LOW"
-	ThinkingLevelMedium ThinkingLevel = "MEDIUM" // May not be available yet.
-	ThinkingLevelHigh   ThinkingLevel = "HIGH"
+	ThinkingLevelMinimal ThinkingLevel = "MINIMAL"
+	ThinkingLevelLow     ThinkingLevel = "LOW"
+	ThinkingLevelMedium  ThinkingLevel = "MEDIUM"
+	ThinkingLevelHigh    ThinkingLevel = "HIGH"
 )
 
 // MediaResolution determines the resolution of media content in the response.
