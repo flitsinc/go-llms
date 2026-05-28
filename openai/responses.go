@@ -433,10 +433,19 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 
 		flushOutput()
 
+		hasReasoning := len(seenReasoningIDs) > 0
 		for _, tc := range msg.ToolCalls {
 			itemID := tc.Metadata["openai:item_id"]
 			if itemID == "" {
 				return nil, fmt.Errorf("tool call %q is missing openai:item_id metadata for replay", tc.ID)
+			}
+			// When no reasoning items exist in this message (e.g. injected/
+			// prefilled tool calls), omit the item ID so the Responses API
+			// treats the function_call as a new item rather than a reference
+			// to a stored response item that would require a preceding
+			// reasoning item.
+			if !hasReasoning {
+				itemID = ""
 			}
 			itemType := tc.Metadata["openai:item_type"]
 			var toolItem ResponseInput
