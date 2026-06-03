@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -28,6 +29,11 @@ type imageURL struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type inputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+}
+
 type videoURL struct {
 	URL string `json:"url"`
 }
@@ -43,6 +49,7 @@ type ContentPart struct {
 	Type         string        `json:"type"`
 	Text         *string       `json:"text,omitempty"`
 	ImageURL     *imageURL     `json:"image_url,omitempty"`
+	InputAudio   *inputAudio   `json:"input_audio,omitempty"`
 	VideoURL     *videoURL     `json:"video_url,omitempty"`
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
@@ -76,6 +83,9 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 				URL:    v.URL,
 				Detail: "auto",
 			}
+		case *content.AudioURL:
+			cp.Type = "input_audio"
+			cp.InputAudio = inputAudioFromContent(v)
 		case *content.VideoURL:
 			cp.Type = "video_url"
 			cp.VideoURL = &videoURL{URL: v.URL}
@@ -99,6 +109,50 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 		cl = append(cl, cp)
 	}
 	return cl, nil
+}
+
+func inputAudioFromContent(item *content.AudioURL) *inputAudio {
+	data := item.URL
+	mimeType := item.MimeType
+	if parsedMimeType, base64Data, ok := content.ParseDataURI(item.URL); ok {
+		data = base64Data
+		if mimeType == "" {
+			mimeType = parsedMimeType
+		}
+	}
+	if mimeType == "" {
+		mimeType = content.ExtractMIMETypeFromURIOrURL(item.URL)
+	}
+	return &inputAudio{
+		Data:   data,
+		Format: audioFormatFromMIMEType(mimeType),
+	}
+}
+
+func audioFormatFromMIMEType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:i])
+	}
+	switch mimeType {
+	case "audio/mpeg", "audio/mp3":
+		return "mp3"
+	case "audio/wav", "audio/wave", "audio/x-wav", "audio/vnd.wave":
+		return "wav"
+	case "audio/aiff", "audio/x-aiff":
+		return "aiff"
+	case "audio/aac", "audio/aacp":
+		return "aac"
+	case "audio/ogg":
+		return "ogg"
+	case "audio/flac", "audio/x-flac":
+		return "flac"
+	case "audio/mp4", "audio/x-m4a":
+		return "m4a"
+	case "audio/l16":
+		return "pcm16"
+	}
+	return strings.TrimPrefix(mimeType, "audio/")
 }
 
 // ConvertContentWithOptions converts content.Content to a ContentList for the

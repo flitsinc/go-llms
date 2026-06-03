@@ -160,6 +160,42 @@ func TestNew_BuildPayload_EncodesVideoURLContent(t *testing.T) {
 	assert.Equal(t, map[string]any{"url": "data:video/mp4;base64,dmllby1ieXRlcw=="}, videoPart["video_url"])
 }
 
+func TestNew_BuildPayload_EncodesAudioURLContent(t *testing.T) {
+	p := New("", "google/gemini-3-flash-preview")
+
+	payload, err := p.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.Text{Text: "Transcribe this audio."},
+				&content.AudioURL{URL: "data:audio/wav;base64,YXVkaW8tYnl0ZXM="},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	audioPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "input_audio", audioPart["type"])
+	assert.Equal(t, map[string]any{"data": "YXVkaW8tYnl0ZXM=", "format": "wav"}, audioPart["input_audio"])
+}
+
 func TestNewWithReasoning_AddsReasoningPayload(t *testing.T) {
 	p := NewWithReasoning("", "anthropic/claude-sonnet-4", Reasoning{Effort: "medium"})
 

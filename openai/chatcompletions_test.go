@@ -54,6 +54,25 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
+			name: "User message - text and audio",
+			input: llms.Message{
+				Role: "user",
+				Content: content.Content{
+					&content.Text{Text: "Listen to this:"},
+					&content.AudioURL{URL: "data:audio/mpeg;base64,YWJj"},
+				},
+			},
+			expected: []Message{
+				{
+					Role: "user",
+					Content: ContentList{
+						{Type: "text", Text: ptr("Listen to this:")},
+						{Type: "input_audio", InputAudio: &inputAudio{Data: "YWJj", Format: "mp3"}},
+					},
+				},
+			},
+		},
+		{
 			name: "User message - text and video",
 			input: llms.Message{
 				Role: "user",
@@ -493,6 +512,41 @@ func TestBuildPayload_EncodesVideoURLContent(t *testing.T) {
 	videoPart := messageContent[1].(map[string]any)
 	assert.Equal(t, "video_url", videoPart["type"])
 	assert.Equal(t, map[string]any{"url": "https://example.com/clip.mp4"}, videoPart["video_url"])
+}
+
+func TestBuildPayload_EncodesAudioURLContent(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-4o-audio-preview")
+	payload, err := m.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.Text{Text: "Transcribe this audio."},
+				&content.AudioURL{URL: "data:audio/wav;base64,YXVkaW8tYnl0ZXM="},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	audioPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "input_audio", audioPart["type"])
+	assert.Equal(t, map[string]any{"data": "YXVkaW8tYnl0ZXM=", "format": "wav"}, audioPart["input_audio"])
 }
 
 func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {
