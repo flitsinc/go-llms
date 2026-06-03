@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -47,6 +48,7 @@ type ChatCompletionsAPI struct {
 }
 
 const defaultChatCompletionsEndpoint = "https://api.openai.com/v1/chat/completions"
+const maxRemoteAudioURLBytes = 32 << 20
 
 func NewChatCompletionsAPI(accessToken, model string) *ChatCompletionsAPI {
 	return &ChatCompletionsAPI{
@@ -156,6 +158,10 @@ func (m *ChatCompletionsAPI) Model() string {
 // BuildPayload constructs the request payload without sending it.
 // This is exported so wrapper providers (e.g. OpenRouter) can modify the payload
 // before calling DoRequest.
+//
+// BuildPayload does not fetch remote audio URLs. Use BuildPayloadWithContext or
+// Generate when content.AudioURL contains an http(s) URL that must be encoded as
+// input_audio.data.
 func (m *ChatCompletionsAPI) BuildPayload(
 	systemPrompt content.Content,
 	messages []llms.Message,
@@ -336,6 +342,157 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	return payload, nil
 }
 
+// BuildPayloadWithContext constructs the request payload and resolves http(s)
+// audio URLs to base64 data before encoding the Chat Completions request.
+func (m *ChatCompletionsAPI) BuildPayloadWithContext(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+	toolbox *tools.Toolbox,
+	jsonOutputSchema *tools.ValueSchema,
+) (map[string]any, error) {
+	resolvedSystemPrompt, resolvedMessages, err := m.resolveRemoteAudioURLs(ctx, systemPrompt, messages)
+	if err != nil {
+		return nil, err
+	}
+	return m.BuildPayload(resolvedSystemPrompt, resolvedMessages, toolbox, jsonOutputSchema)
+}
+
+func (m *ChatCompletionsAPI) resolveRemoteAudioURLs(
+	ctx context.Context,
+	systemPrompt content.Content,
+	messages []llms.Message,
+) (content.Content, []llms.Message, error) {
+	resolvedSystemPrompt, _, err := m.resolveRemoteAudioURLsInContent(ctx, systemPrompt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resolvedMessages := messages
+	var copiedMessages []llms.Message
+	for i, message := range messages {
+		resolvedContent, changed, err := m.resolveRemoteAudioURLsInContent(ctx, message.Content)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !changed {
+			continue
+		}
+		if copiedMessages == nil {
+			copiedMessages = append([]llms.Message(nil), messages...)
+			resolvedMessages = copiedMessages
+		}
+		resolvedMessages[i].Content = resolvedContent
+	}
+
+	return resolvedSystemPrompt, resolvedMessages, nil
+}
+
+func (m *ChatCompletionsAPI) resolveRemoteAudioURLsInContent(
+	ctx context.Context,
+	c content.Content,
+) (content.Content, bool, error) {
+	var resolved content.Content
+	for i, item := range c {
+		audio, ok := item.(*content.AudioURL)
+		if !ok || !isHTTPURL(audio.URL) {
+			if resolved != nil {
+				resolved = append(resolved, item)
+			}
+			continue
+		}
+
+		if resolved == nil {
+			resolved = make(content.Content, 0, len(c))
+			resolved = append(resolved, c[:i]...)
+		}
+
+		encodedAudio, err := m.fetchAudioURLAsBase64(ctx, audio)
+		if err != nil {
+			return nil, false, err
+		}
+		resolved = append(resolved, encodedAudio)
+	}
+	if resolved == nil {
+		return c, false, nil
+	}
+	return resolved, true, nil
+}
+
+func (m *ChatCompletionsAPI) fetchAudioURLAsBase64(ctx context.Context, item *content.AudioURL) (*content.AudioURL, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, item.URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("openai chat completions: create audio URL request: %w", err)
+	}
+
+	client := m.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai chat completions: fetch audio URL %q: %w", item.URL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("openai chat completions: fetch audio URL %q returned %s", item.URL, resp.Status)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxRemoteAudioURLBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("openai chat completions: read audio URL %q: %w", item.URL, err)
+	}
+	if len(data) > maxRemoteAudioURLBytes {
+		return nil, fmt.Errorf("openai chat completions: audio URL %q exceeds %d bytes", item.URL, maxRemoteAudioURLBytes)
+	}
+
+	mimeType := chooseAudioMIMEType(item.URL, item.MimeType, resp.Header.Get("Content-Type"))
+	if audioFormatFromMIMEType(mimeType) == "" {
+		return nil, fmt.Errorf("openai chat completions: could not infer supported audio format for %q", item.URL)
+	}
+
+	return &content.AudioURL{
+		URL:      base64.StdEncoding.EncodeToString(data),
+		MimeType: mimeType,
+		Metadata: item.Metadata,
+	}, nil
+}
+
+func isHTTPURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func chooseAudioMIMEType(rawURL, explicitMimeType, responseContentType string) string {
+	for _, mimeType := range []string{
+		explicitMimeType,
+		responseContentType,
+		content.ExtractMIMETypeFromURIOrURL(rawURL),
+	} {
+		cleaned := cleanMIMEType(mimeType)
+		if audioFormatFromMIMEType(cleaned) != "" {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+func cleanMIMEType(mimeType string) string {
+	mimeType = strings.TrimSpace(mimeType)
+	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:i])
+	}
+	return strings.ToLower(mimeType)
+}
+
 func (m *ChatCompletionsAPI) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
@@ -343,7 +500,7 @@ func (m *ChatCompletionsAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
-	payload, err := m.BuildPayload(systemPrompt, messages, toolbox, jsonOutputSchema)
+	payload, err := m.BuildPayloadWithContext(ctx, systemPrompt, messages, toolbox, jsonOutputSchema)
 	if err != nil {
 		return &ChatCompletionsStream{err: err}
 	}

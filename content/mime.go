@@ -61,6 +61,14 @@ func GuessMIMETypeFromURL(rawURL string) string {
 		return "audio/wav"
 	case ".ogg":
 		return "audio/ogg"
+	case ".flac":
+		return "audio/flac"
+	case ".aac":
+		return "audio/aac"
+	case ".aiff", ".aif":
+		return "audio/aiff"
+	case ".m4a":
+		return "audio/mp4"
 	default:
 		return ""
 	}

@@ -1,7 +1,11 @@
 package openrouter
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
@@ -194,6 +198,52 @@ func TestNew_BuildPayload_EncodesAudioURLContent(t *testing.T) {
 	audioPart := messageContent[1].(map[string]any)
 	assert.Equal(t, "input_audio", audioPart["type"])
 	assert.Equal(t, map[string]any{"data": "YXVkaW8tYnl0ZXM=", "format": "wav"}, audioPart["input_audio"])
+}
+
+func TestNew_BuildPayloadWithContext_EncodesRemoteAudioURLContent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/clip.mp3" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("remote-audio"))
+	}))
+	defer ts.Close()
+
+	p := New("", "google/gemini-3-flash-preview")
+	payload, err := p.BuildPayloadWithContext(
+		context.Background(),
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.Text{Text: "Transcribe this audio."},
+				&content.AudioURL{URL: ts.URL + "/clip.mp3"},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	audioPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "input_audio", audioPart["type"])
+	assert.Equal(t, map[string]any{"data": base64.StdEncoding.EncodeToString([]byte("remote-audio")), "format": "mp3"}, audioPart["input_audio"])
 }
 
 func TestNewWithReasoning_AddsReasoningPayload(t *testing.T) {

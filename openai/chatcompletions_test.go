@@ -549,6 +549,102 @@ func TestBuildPayload_EncodesAudioURLContent(t *testing.T) {
 	assert.Equal(t, map[string]any{"data": "YXVkaW8tYnl0ZXM=", "format": "wav"}, audioPart["input_audio"])
 }
 
+func TestBuildPayloadWithContext_EncodesRemoteAudioURLContent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/clip.mp3" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("remote-audio"))
+	}))
+	defer ts.Close()
+
+	m := NewChatCompletionsAPI("", "gpt-4o-audio-preview")
+	payload, err := m.BuildPayloadWithContext(
+		context.Background(),
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.Text{Text: "Transcribe this audio."},
+				&content.AudioURL{URL: ts.URL + "/clip.mp3"},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	audioPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "input_audio", audioPart["type"])
+	assert.Equal(t, map[string]any{"data": base64.StdEncoding.EncodeToString([]byte("remote-audio")), "format": "mp3"}, audioPart["input_audio"])
+}
+
+func TestGenerate_EncodesRemoteAudioURLBeforeRequest(t *testing.T) {
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/clip.wav":
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write([]byte("remote-audio"))
+		case "/chat":
+			defer r.Body.Close()
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			payloadCh <- payload
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	m := NewChatCompletionsAPI("", "gpt-4o-audio-preview").
+		WithEndpoint(ts.URL+"/chat", "Test")
+
+	stream := m.Generate(context.Background(), nil, []llms.Message{{
+		Role: "user",
+		Content: content.Content{
+			&content.Text{Text: "Transcribe this audio."},
+			&content.AudioURL{URL: ts.URL + "/clip.wav"},
+		},
+	}}, nil, nil)
+	require.NoError(t, stream.Err())
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	payload := <-payloadCh
+	messages, ok := payload["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	audioPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "input_audio", audioPart["type"])
+	assert.Equal(t, map[string]any{"data": base64.StdEncoding.EncodeToString([]byte("remote-audio")), "format": "wav"}, audioPart["input_audio"])
+}
+
 func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {
 	m := NewChatCompletionsAPI("", "gpt-5").
 		WithEndpoint("https://api.groq.com/openai/v1/chat/completions", "Groq")

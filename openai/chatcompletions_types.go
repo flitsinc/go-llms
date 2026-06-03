@@ -151,8 +151,16 @@ func audioFormatFromMIMEType(mimeType string) string {
 		return "m4a"
 	case "audio/l16":
 		return "pcm16"
+	case "audio/l24":
+		return "pcm24"
+	case "application/ogg":
+		return "ogg"
 	}
-	return strings.TrimPrefix(mimeType, "audio/")
+	if strings.HasPrefix(mimeType, "audio/") {
+		format := strings.TrimPrefix(mimeType, "audio/")
+		return strings.TrimPrefix(format, "x-")
+	}
+	return ""
 }
 
 // ConvertContentWithOptions converts content.Content to a ContentList for the
