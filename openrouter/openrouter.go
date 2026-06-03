@@ -15,7 +15,8 @@ func New(apiKey, model string) *Provider {
 	return openai.New(apiKey, model).
 		WithEndpoint("https://openrouter.ai/api/v1/chat/completions", "OpenRouter").
 		WithCacheControlPromptHints().
-		WithAssistantReasoningReplay()
+		WithAssistantReasoningReplay().
+		WithVideoURLContentParts()
 }
 
 // NewWithReasoning returns an OpenRouter-configured Chat Completions client

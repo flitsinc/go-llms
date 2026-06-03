@@ -124,6 +124,42 @@ func TestNew_BuildPayload_CachesToolResultPromptHint(t *testing.T) {
 	assert.Equal(t, map[string]any{"type": "ephemeral"}, firstPart["cache_control"])
 }
 
+func TestNew_BuildPayload_EncodesVideoURLContent(t *testing.T) {
+	p := New("", "google/gemini-3-flash-preview")
+
+	payload, err := p.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.Text{Text: "Describe this video."},
+				&content.VideoURL{URL: "data:video/mp4;base64,dmllby1ieXRlcw==", MimeType: "video/mp4"},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	videoPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "video_url", videoPart["type"])
+	assert.Equal(t, map[string]any{"url": "data:video/mp4;base64,dmllby1ieXRlcw=="}, videoPart["video_url"])
+}
+
 func TestNewWithReasoning_AddsReasoningPayload(t *testing.T) {
 	p := NewWithReasoning("", "anthropic/claude-sonnet-4", Reasoning{Effort: "medium"})
 

@@ -28,6 +28,10 @@ type imageURL struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type videoURL struct {
+	URL string `json:"url"`
+}
+
 // CacheControl represents a cache control directive on a content part.
 type CacheControl struct {
 	Type string `json:"type"`
@@ -39,6 +43,7 @@ type ContentPart struct {
 	Type         string        `json:"type"`
 	Text         *string       `json:"text,omitempty"`
 	ImageURL     *imageURL     `json:"image_url,omitempty"`
+	VideoURL     *videoURL     `json:"video_url,omitempty"`
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
@@ -48,6 +53,7 @@ type ContentList []ContentPart
 type chatMessageEncodingOptions struct {
 	cacheControlPromptHints  bool
 	assistantReasoningReplay bool
+	videoURLContentParts     bool
 }
 
 // ConvertContent converts content.Content to a ContentList for the OpenAI API.
@@ -71,6 +77,12 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 				URL:    v.URL,
 				Detail: "auto",
 			}
+		case *content.VideoURL:
+			if !opts.videoURLContentParts {
+				return nil, fmt.Errorf("openai chat completions: unsupported content item type %T", item)
+			}
+			cp.Type = "video_url"
+			cp.VideoURL = &videoURL{URL: v.URL}
 		case *content.JSON:
 			cp.Type = "text"
 			text := string(v.Data)
