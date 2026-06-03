@@ -54,6 +54,25 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
+			name: "User message - text and video",
+			input: llms.Message{
+				Role: "user",
+				Content: content.Content{
+					&content.Text{Text: "Look at this:"},
+					&content.VideoURL{URL: "data:video/mp4;base64,abc", MimeType: "video/mp4"},
+				},
+			},
+			expected: []Message{
+				{
+					Role: "user",
+					Content: ContentList{
+						{Type: "text", Text: ptr("Look at this:")},
+						{Type: "video_url", VideoURL: &videoURL{URL: "data:video/mp4;base64,abc"}},
+					},
+				},
+			},
+		},
+		{
 			name: "Assistant message - text only",
 			input: llms.Message{
 				Role:    "assistant",
@@ -441,41 +460,39 @@ func TestBuildPayload_DefaultPromptCacheRetention(t *testing.T) {
 	require.Equal(t, "24h", payload["prompt_cache_retention"])
 }
 
-func TestBuildPayload_UnsupportedContentReturnsError(t *testing.T) {
+func TestBuildPayload_EncodesVideoURLContent(t *testing.T) {
 	m := NewChatCompletionsAPI("", "gpt-4o")
-	_, err := m.BuildPayload(
+	payload, err := m.BuildPayload(
 		nil,
 		[]llms.Message{{
 			Role: "user",
 			Content: content.Content{
+				&content.Text{Text: "Describe this video."},
 				&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
 			},
 		}},
 		nil,
 		nil,
 	)
+	require.NoError(t, err)
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "openai chat completions: unsupported content item type *content.VideoURL")
-}
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
 
-func TestGenerate_UnsupportedContentReturnsStreamError(t *testing.T) {
-	m := NewChatCompletionsAPI("", "gpt-4o")
-	stream := m.Generate(
-		context.Background(),
-		nil,
-		[]llms.Message{{
-			Role: "user",
-			Content: content.Content{
-				&content.VideoURL{URL: "https://example.com/clip.mp4", MimeType: "video/mp4"},
-			},
-		}},
-		nil,
-		nil,
-	)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
 
-	require.Error(t, stream.Err())
-	assert.Contains(t, stream.Err().Error(), "openai chat completions: unsupported content item type *content.VideoURL")
+	messages, ok := raw["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 1)
+
+	message := messages[0].(map[string]any)
+	messageContent := message["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	videoPart := messageContent[1].(map[string]any)
+	assert.Equal(t, "video_url", videoPart["type"])
+	assert.Equal(t, map[string]any{"url": "https://example.com/clip.mp4"}, videoPart["video_url"])
 }
 
 func TestBuildPayload_DefaultPromptCacheRetention_NotSentToCustomEndpoint(t *testing.T) {

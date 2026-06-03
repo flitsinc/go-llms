@@ -35,8 +35,6 @@ type ChatCompletionsAPI struct {
 	cacheControlPromptHints bool
 	// When true, encode assistant Thought items as reasoning_details for replay.
 	assistantReasoningReplay bool
-	// When true, encode VideoURL items as video_url content parts.
-	videoURLContentParts bool
 
 	customPayloadValues map[string]any
 	customHeaders       map[string]string
@@ -105,13 +103,6 @@ func (m *ChatCompletionsAPI) WithAssistantReasoningReplay() *ChatCompletionsAPI 
 	return m
 }
 
-// WithVideoURLContentParts encodes content.VideoURL items as video_url content
-// parts for OpenAI-compatible providers that support video input.
-func (m *ChatCompletionsAPI) WithVideoURLContentParts() *ChatCompletionsAPI {
-	m.videoURLContentParts = true
-	return m
-}
-
 // WithPromptCacheRetention enables extended prompt caching with the given
 // retention duration (e.g. "24h") when content contains a "long" cache hint.
 // This is an OpenAI-specific feature.
@@ -174,7 +165,6 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	encodingOptions := chatMessageEncodingOptions{
 		cacheControlPromptHints:  m.cacheControlPromptHints,
 		assistantReasoningReplay: m.assistantReasoningReplay,
-		videoURLContentParts:     m.videoURLContentParts,
 	}
 
 	var apiMessages []Message

@@ -53,7 +53,6 @@ type ContentList []ContentPart
 type chatMessageEncodingOptions struct {
 	cacheControlPromptHints  bool
 	assistantReasoningReplay bool
-	videoURLContentParts     bool
 }
 
 // ConvertContent converts content.Content to a ContentList for the OpenAI API.
@@ -78,9 +77,6 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 				Detail: "auto",
 			}
 		case *content.VideoURL:
-			if !opts.videoURLContentParts {
-				return nil, fmt.Errorf("openai chat completions: unsupported content item type %T", item)
-			}
 			cp.Type = "video_url"
 			cp.VideoURL = &videoURL{URL: v.URL}
 		case *content.JSON:
