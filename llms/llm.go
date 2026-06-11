@@ -436,6 +436,7 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 		Content:      result.Content(),
 		ToolCallID:   toolCall.ID,
 		ToolCallName: toolCall.Name,
+		IsError:      result.Error() != nil,
 	}
 }
 

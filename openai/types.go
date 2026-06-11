@@ -1,6 +1,23 @@
 package openai
 
-import "github.com/flitsinc/go-llms/tools"
+import (
+	"encoding/json"
+
+	"github.com/flitsinc/go-llms/tools"
+)
+
+// errorWrappedToolOutput encodes a failed tool result for OpenAI APIs, which
+// have no native error flag on tool outputs. Plain text is wrapped in the
+// conventional {"error": ...} JSON payload; JSON payloads pass through
+// unchanged because error-producing callers (e.g. tools.Error) already encode
+// an "error" key themselves.
+func errorWrappedToolOutput(output string, outputIsJSON bool) string {
+	if outputIsJSON {
+		return output
+	}
+	wrapped, _ := json.Marshal(map[string]string{"error": output})
+	return string(wrapped)
+}
 
 type Effort string
 

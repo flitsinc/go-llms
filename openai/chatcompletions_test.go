@@ -201,6 +201,38 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
+			name: "Tool result - error wraps text in error JSON",
+			input: llms.Message{
+				Role:       "tool",
+				ToolCallID: "call_err1",
+				Content:    content.FromText("connection refused"),
+				IsError:    true,
+			},
+			expected: []Message{
+				{
+					Role:       "tool",
+					ToolCallID: "call_err1",
+					Content:    ContentList{{Type: "text", Text: ptr(`{"error":"connection refused"}`)}},
+				},
+			},
+		},
+		{
+			name: "Tool result - error passes JSON through unchanged",
+			input: llms.Message{
+				Role:       "tool",
+				ToolCallID: "call_err2",
+				Content:    content.FromRawJSON(json.RawMessage(`{"error": "connection refused"}`)),
+				IsError:    true,
+			},
+			expected: []Message{
+				{
+					Role:       "tool",
+					ToolCallID: "call_err2",
+					Content:    ContentList{{Type: "text", Text: ptr(`{"error": "connection refused"}`)}},
+				},
+			},
+		},
+		{
 			name: "Tool result - JSON primary + Text secondary",
 			input: llms.Message{
 				Role:       "tool",

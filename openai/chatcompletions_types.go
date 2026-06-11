@@ -235,6 +235,7 @@ func messagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 		var secondaryContent content.Content
 		var primaryCacheControl *CacheControl
 
+		var primaryResultIsJSON bool
 		if len(m.Content) > 0 {
 			firstItem := m.Content[0]
 			switch v := firstItem.(type) {
@@ -242,6 +243,7 @@ func messagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 				primaryResultString = v.Text
 			case *content.JSON:
 				primaryResultString = string(v.Data)
+				primaryResultIsJSON = true
 			case *content.ImageURL:
 				primaryResultString = v.URL
 			default:
@@ -264,6 +266,10 @@ func messagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 			}
 		} else {
 			primaryResultString = ""
+		}
+
+		if m.IsError {
+			primaryResultString = errorWrappedToolOutput(primaryResultString, primaryResultIsJSON)
 		}
 
 		primaryMessage := Message{

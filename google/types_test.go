@@ -165,6 +165,29 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 		},
 		{
+			name: "Tool result - error uses error key",
+			input: llms.Message{
+				Role:         "tool",
+				ToolCallName: "get_weather",
+				ToolCallID:   "call_g_err",
+				Content:      content.FromRawJSON(json.RawMessage(`{"error": "service unavailable"}`)),
+				IsError:      true,
+			},
+			expected: []message{
+				{
+					Role: "user",
+					Parts: parts{
+						{
+							FunctionResponse: &functionResponse{
+								Name:     "get_weather",
+								Response: mustMarshal(map[string]any{"name": "get_weather", "error": json.RawMessage(`{"error": "service unavailable"}`)}),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "Tool result - Non-JSON primary (Error generated)",
 			input: llms.Message{
 				Role:         "tool",

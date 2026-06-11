@@ -106,6 +106,26 @@ func TestMessageFromLLM_Anthropic(t *testing.T) {
 			},
 		},
 		{
+			name: "Tool result - error",
+			input: llms.Message{
+				Role:       "tool",
+				ToolCallID: "toolu_err",
+				Content:    content.FromText("Stock service unavailable"),
+				IsError:    true,
+			},
+			expected: message{
+				Role: "user",
+				Content: contentList{
+					{
+						Type:      "tool_result",
+						ToolUseID: "toolu_err",
+						Content:   contentList{{Type: "text", Text: "Stock service unavailable"}},
+						IsError:   true,
+					},
+				},
+			},
+		},
+		{
 			name: "Tool result - JSON + Text + Image",
 			input: llms.Message{
 				Role:       "tool",
@@ -163,6 +183,7 @@ func TestMessageFromLLM_Anthropic(t *testing.T) {
 					assert.True(t, len(actualItem.Input) == 0, "Expected nil or empty Input, got %s at index %d", actualItem.Input, i)
 				}
 				assert.Equal(t, expectedItem.ToolUseID, actualItem.ToolUseID, "Content item ToolUseID mismatch at index %d", i)
+				assert.Equal(t, expectedItem.IsError, actualItem.IsError, "Content item IsError mismatch at index %d", i)
 				// Compare nested content for tool_result
 				if expectedItem.Type == "tool_result" {
 					require.Equal(t, len(expectedItem.Content), len(actualItem.Content), "Nested content length mismatch in tool_result at index %d", i)

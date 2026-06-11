@@ -454,13 +454,18 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 	case "tool":
 		// A tool result message.
 		var outputStr string
+		var outputIsJSON bool
 		if len(msg.Content) > 0 {
 			switch v := msg.Content[0].(type) {
 			case *content.Text:
 				outputStr = v.Text
 			case *content.JSON:
 				outputStr = string(v.Data)
+				outputIsJSON = true
 			}
+		}
+		if msg.IsError {
+			outputStr = errorWrappedToolOutput(outputStr, outputIsJSON)
 		}
 
 		if len(msg.Content) > 1 {

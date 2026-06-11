@@ -945,6 +945,7 @@ func messageFromLLM(m llms.Message) (message, error) {
 					Type:      "tool_result",
 					ToolUseID: m.ToolCallID,
 					Content:   apiContent,
+					IsError:   m.IsError,
 				},
 			},
 		}, nil

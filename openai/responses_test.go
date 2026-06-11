@@ -714,3 +714,45 @@ func TestResponsesGenerate_UnsupportedVideoReturnsStreamError(t *testing.T) {
 	require.Error(t, stream.Err())
 	assert.Contains(t, stream.Err().Error(), "openai responses: unsupported content item type *content.VideoURL")
 }
+
+func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
+	items, err := convertMessageToInput(llms.Message{
+		Role:       "tool",
+		ToolCallID: "tool_call_err",
+		Content:    content.FromText("connection refused"),
+		IsError:    true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d (%#v)", len(items), items)
+	}
+	out, ok := items[0].(FunctionCallOutput)
+	if !ok || out.CallID != "tool_call_err" {
+		t.Fatalf("expected FunctionCallOutput for tool_call_err, got %#v", items[0])
+	}
+	if out.Output != `{"error":"connection refused"}` {
+		t.Fatalf("expected text error to be wrapped in error JSON, got %q", out.Output)
+	}
+
+	items, err = convertMessageToInput(llms.Message{
+		Role:       "tool",
+		ToolCallID: "tool_call_err2",
+		Content:    content.FromRawJSON(json.RawMessage(`{"error": "connection refused"}`)),
+		IsError:    true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d (%#v)", len(items), items)
+	}
+	out, ok = items[0].(FunctionCallOutput)
+	if !ok {
+		t.Fatalf("expected FunctionCallOutput, got %#v", items[0])
+	}
+	if out.Output != `{"error": "connection refused"}` {
+		t.Fatalf("expected JSON error payload to pass through unchanged, got %q", out.Output)
+	}
+}

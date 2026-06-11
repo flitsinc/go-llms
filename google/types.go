@@ -261,10 +261,16 @@ func messagesFromLLM(m llms.Message) ([]message, error) {
 			return nil, fmt.Errorf("tool response missing function name")
 		}
 
-		// Create the primary tool/function response message.
+		// Create the primary tool/function response message. Gemini has no boolean
+		// error flag; its documented convention is an "error" key in the response
+		// object, so failed tool runs swap the "content" key for "error".
+		resultKey := "content"
+		if m.IsError {
+			resultKey = "error"
+		}
 		responseWrapperJSON, err := json.Marshal(map[string]any{
 			"name":    m.ToolCallName,
-			"content": primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
+			resultKey: primaryResultJSON, // Note: primaryResultJSON is already marshaled JSON
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal google function response wrapper: %w", err)

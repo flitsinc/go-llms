@@ -27,6 +27,11 @@ type Message struct {
 	// ToolCallName is the function name corresponding to the ToolCallID when available.
 	// This is primarily used by providers (e.g., Gemini) that require function responses to reference the function name.
 	ToolCallName string `json:"tool_call_name,omitempty"`
+	// IsError indicates that this tool response (Role="tool") represents a failed
+	// tool execution. Providers encode it in their native error signal: Anthropic
+	// sets is_error on the tool_result block, Gemini receives an "error"-keyed
+	// function response, and OpenAI receives the output wrapped in {"error": ...}.
+	IsError bool `json:"is_error,omitempty"`
 	// Metadata holds provider-specific metadata that should be forwarded unchanged.
 	// Keys are prefixed with the provider name, e.g. "openai:phase".
 	Metadata map[string]string `json:"metadata,omitempty"`
