@@ -7,13 +7,19 @@ import (
 )
 
 // errorWrappedToolOutput encodes a failed tool result for OpenAI APIs, which
-// have no native error flag on tool outputs. Plain text is wrapped in the
-// conventional {"error": ...} JSON payload; JSON payloads pass through
-// unchanged because error-producing callers (e.g. tools.Error) already encode
-// an "error" key themselves.
+// have no native error flag on tool outputs. The payload is wrapped in the
+// conventional {"error": ...} JSON shape unless it is already a JSON object
+// with a top-level "error" key (e.g. produced by tools.Error).
 func errorWrappedToolOutput(output string, outputIsJSON bool) string {
 	if outputIsJSON {
-		return output
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(output), &obj); err == nil {
+			if _, ok := obj["error"]; ok {
+				return output
+			}
+		}
+		wrapped, _ := json.Marshal(map[string]json.RawMessage{"error": json.RawMessage(output)})
+		return string(wrapped)
 	}
 	wrapped, _ := json.Marshal(map[string]string{"error": output})
 	return string(wrapped)

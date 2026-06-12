@@ -188,6 +188,29 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 		},
 		{
+			name: "Tool result - text error becomes error payload",
+			input: llms.Message{
+				Role:         "tool",
+				ToolCallName: "get_weather",
+				ToolCallID:   "call_g_err_text",
+				Content:      content.FromText("service unavailable"),
+				IsError:      true,
+			},
+			expected: []message{
+				{
+					Role: "user",
+					Parts: parts{
+						{
+							FunctionResponse: &functionResponse{
+								Name:     "get_weather",
+								Response: mustMarshal(map[string]any{"name": "get_weather", "error": "service unavailable"}),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "Tool result - Non-JSON primary (Error generated)",
 			input: llms.Message{
 				Role:         "tool",

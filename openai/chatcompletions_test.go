@@ -217,7 +217,7 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 			},
 		},
 		{
-			name: "Tool result - error passes JSON through unchanged",
+			name: "Tool result - error passes error-keyed JSON through unchanged",
 			input: llms.Message{
 				Role:       "tool",
 				ToolCallID: "call_err2",
@@ -229,6 +229,22 @@ func TestMessagesFromLLM_OpenAI(t *testing.T) {
 					Role:       "tool",
 					ToolCallID: "call_err2",
 					Content:    ContentList{{Type: "text", Text: ptr(`{"error": "connection refused"}`)}},
+				},
+			},
+		},
+		{
+			name: "Tool result - error wraps JSON without error key",
+			input: llms.Message{
+				Role:       "tool",
+				ToolCallID: "call_err3",
+				Content:    content.FromRawJSON(json.RawMessage(`{"status":"failed"}`)),
+				IsError:    true,
+			},
+			expected: []Message{
+				{
+					Role:       "tool",
+					ToolCallID: "call_err3",
+					Content:    ContentList{{Type: "text", Text: ptr(`{"error":{"status":"failed"}}`)}},
 				},
 			},
 		},

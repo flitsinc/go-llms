@@ -238,8 +238,16 @@ func messagesFromLLM(m llms.Message) ([]message, error) {
 
 		// Extract primary result (must be JSON) and potential secondary content.
 		if len(m.Content) > 0 {
+			textItem, isText := m.Content[0].(*content.Text)
 			if jsonItem, ok := m.Content[0].(*content.JSON); ok {
 				primaryResultJSON = jsonItem.Data
+				if len(m.Content) > 1 {
+					secondaryContent = m.Content[1:]
+				}
+			} else if isText && m.IsError {
+				// Failed tool runs commonly carry their error as plain text;
+				// encode it as the error payload rather than the placeholder.
+				primaryResultJSON, _ = json.Marshal(textItem.Text)
 				if len(m.Content) > 1 {
 					secondaryContent = m.Content[1:]
 				}
