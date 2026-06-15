@@ -626,6 +626,21 @@ type LocalShellTool struct {
 
 func (LocalShellTool) responseTool() {}
 
+// RawTool is a ResponseTool whose JSON body is provided verbatim by the caller.
+// It exists so callers can express provider-specific server-side tools that
+// go-llms does not model with a dedicated type — for example xAI's "web_search"
+// and "x_search" Agent Tools. Body is marshaled as-is into the request's "tools"
+// array, so it must include the tool's "type" discriminator.
+type RawTool struct {
+	Body any
+}
+
+func (RawTool) responseTool() {}
+
+func (t RawTool) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.Body)
+}
+
 // Response format types
 
 // TextResponseFormat represents the text response format configuration.
