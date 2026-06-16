@@ -147,11 +147,6 @@ func (p *responsesEventProcessor) processEvent(
 					}
 				}
 			case "custom_tool_call":
-				if p.activeToolCall != nil {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return true
-					}
-				}
 				var ctc struct {
 					Type   string `json:"type"`
 					ID     string `json:"id"`
@@ -162,6 +157,20 @@ func (p *responsesEventProcessor) processEvent(
 				if err := json.Unmarshal(event.Item, &ctc); err != nil {
 					ctc.ID = item.ID
 					ctc.Name = "custom"
+				}
+				// xAI executes its Agent Tool sub-tools server-side (e.g. x_search's
+				// x_user_search / x_keyword_search) and streams them as custom_tool_calls
+				// before continuing to the final message. These are hosted, not client tools,
+				// so they must not be surfaced for execution — the turn loop would otherwise
+				// fail with "tool not found". Ignore them, mirroring how built-in items like
+				// web_search_call are ignored.
+				if isHostedResponsesToolCall(ctc.CallID) {
+					break
+				}
+				if p.activeToolCall != nil {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return true
+					}
 				}
 				metadata := map[string]string{
 					"openai:item_id":   ctc.ID,
@@ -420,4 +429,13 @@ func (p *responsesEventProcessor) processEvent(
 	}
 
 	return false
+}
+
+// isHostedResponsesToolCall reports whether a Responses API custom_tool_call is a
+// provider-executed (hosted) Agent Tool call rather than a client tool the caller must
+// run. xAI streams its server-side x_search sub-tools (x_user_search, x_keyword_search,
+// x_semantic_search, x_thread_fetch) as custom_tool_calls with a call_id prefixed "xs_";
+// the client must not try to execute them.
+func isHostedResponsesToolCall(callID string) bool {
+	return strings.HasPrefix(callID, "xs_")
 }
