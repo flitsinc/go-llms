@@ -178,6 +178,15 @@ func (p *responsesEventProcessor) processEvent(
 				// fail with "tool not found". Instead, track them so the search query can be
 				// surfaced as StreamStatusSearch once the call completes.
 				if isHostedResponsesToolCall(ctc.CallID) {
+					// A new output item finalizes any still-active client tool call, the
+					// same invariant the non-hosted paths keep below; otherwise a client
+					// tool could stay open across the hosted call until response.completed.
+					if p.activeToolCall != nil {
+						if !yield(llms.StreamStatusToolCallReady) {
+							return true
+						}
+						p.activeToolCall = nil
+					}
 					if p.hostedSearch == nil {
 						p.hostedSearch = map[string]*hostedSearchCall{}
 					}
@@ -256,14 +265,15 @@ func (p *responsesEventProcessor) processEvent(
 			ItemID string `json:"item_id"`
 		}
 		if err := json.Unmarshal(rawJSON, &delta); err == nil {
-			if p.activeToolCall != nil {
+			// Route by item id: a tracked hosted x_search sub-call owns its deltas even if a
+			// client tool is still active, so its query is never merged into the wrong tool.
+			if tracked := p.hostedSearch[delta.ItemID]; tracked != nil {
+				tracked.input.WriteString(delta.Delta)
+			} else if p.activeToolCall != nil {
 				p.activeToolCall.Arguments = append(p.activeToolCall.Arguments, []byte(delta.Delta)...)
 				if !yield(llms.StreamStatusToolCallDelta) {
 					return true
 				}
-			} else if tracked := p.hostedSearch[delta.ItemID]; tracked != nil {
-				// Hosted x_search sub-call: accumulate its query, surfaced on completion.
-				tracked.input.WriteString(delta.Delta)
 			}
 		}
 
