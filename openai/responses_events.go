@@ -23,6 +23,19 @@ type responsesEventProcessor struct {
 	debugger          llms.Debugger
 	err               error
 	processedImageIDs map[string]bool
+	// lastSearch holds the most recently completed provider-run search (web_search / x_search),
+	// surfaced via StreamStatusSearch so a UI can show what the model looked up.
+	lastSearch llms.SearchActivity
+	// hostedSearch tracks in-flight provider-executed search sub-calls (xAI's x_search runs
+	// x_user_search / x_keyword_search server-side) by their output item id, so the streamed
+	// query can be accumulated and surfaced once the call completes.
+	hostedSearch map[string]*hostedSearchCall
+}
+
+// hostedSearchCall accumulates a provider-executed search sub-call until it completes.
+type hostedSearchCall struct {
+	source string
+	input  strings.Builder
 }
 
 // processImageItem processes a single image_generation_call item and yields
@@ -147,11 +160,6 @@ func (p *responsesEventProcessor) processEvent(
 					}
 				}
 			case "custom_tool_call":
-				if p.activeToolCall != nil {
-					if !yield(llms.StreamStatusToolCallReady) {
-						return true
-					}
-				}
 				var ctc struct {
 					Type   string `json:"type"`
 					ID     string `json:"id"`
@@ -162,6 +170,35 @@ func (p *responsesEventProcessor) processEvent(
 				if err := json.Unmarshal(event.Item, &ctc); err != nil {
 					ctc.ID = item.ID
 					ctc.Name = "custom"
+				}
+				// xAI executes its Agent Tool sub-tools server-side (e.g. x_search's
+				// x_user_search / x_keyword_search) and streams them as custom_tool_calls
+				// before continuing to the final message. These are hosted, not client tools,
+				// so they must not be surfaced for execution — the turn loop would otherwise
+				// fail with "tool not found". Instead, track them so the search query can be
+				// surfaced as StreamStatusSearch once the call completes.
+				if isHostedResponsesToolCall(ctc.CallID) {
+					// A new output item finalizes any still-active client tool call, the
+					// same invariant the non-hosted paths keep below; otherwise a client
+					// tool could stay open across the hosted call until response.completed.
+					if p.activeToolCall != nil {
+						if !yield(llms.StreamStatusToolCallReady) {
+							return true
+						}
+						p.activeToolCall = nil
+					}
+					if p.hostedSearch == nil {
+						p.hostedSearch = map[string]*hostedSearchCall{}
+					}
+					tracked := &hostedSearchCall{source: "x"}
+					tracked.input.WriteString(ctc.Input)
+					p.hostedSearch[ctc.ID] = tracked
+					break
+				}
+				if p.activeToolCall != nil {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return true
+					}
 				}
 				metadata := map[string]string{
 					"openai:item_id":   ctc.ID,
@@ -223,11 +260,16 @@ func (p *responsesEventProcessor) processEvent(
 		}
 
 	case "response.custom_tool_call_input.delta":
-		if p.activeToolCall != nil {
-			var delta struct {
-				Delta string `json:"delta"`
-			}
-			if err := json.Unmarshal(rawJSON, &delta); err == nil {
+		var delta struct {
+			Delta  string `json:"delta"`
+			ItemID string `json:"item_id"`
+		}
+		if err := json.Unmarshal(rawJSON, &delta); err == nil {
+			// Route by item id: a tracked hosted x_search sub-call owns its deltas even if a
+			// client tool is still active, so its query is never merged into the wrong tool.
+			if tracked := p.hostedSearch[delta.ItemID]; tracked != nil {
+				tracked.input.WriteString(delta.Delta)
+			} else if p.activeToolCall != nil {
 				p.activeToolCall.Arguments = append(p.activeToolCall.Arguments, []byte(delta.Delta)...)
 				if !yield(llms.StreamStatusToolCallDelta) {
 					return true
@@ -236,6 +278,16 @@ func (p *responsesEventProcessor) processEvent(
 		}
 
 	case "response.custom_tool_call_input.done":
+		var done struct {
+			ItemID string `json:"item_id"`
+		}
+		_ = json.Unmarshal(rawJSON, &done)
+		// A hosted x_search sub-call's done belongs to that hosted item, not a client tool, so
+		// it must not finalize an unrelated client tool whose deltas are still streaming. The
+		// hosted query surfaces later on output_item.done.
+		if p.hostedSearch[done.ItemID] != nil {
+			break
+		}
 		if p.activeToolCall != nil {
 			if !yield(llms.StreamStatusToolCallReady) {
 				return true
@@ -296,9 +348,52 @@ func (p *responsesEventProcessor) processEvent(
 		var itemHdr struct {
 			Type   string `json:"type"`
 			Status string `json:"status"`
+			ID     string `json:"id"`
 		}
 		if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
 			switch itemHdr.Type {
+			case "web_search_call":
+				// A completed provider-run web search. The query lives in the search action,
+				// which also carries the result sources; open_page / find actions carry a URL
+				// instead, so they yield no query.
+				var wsc struct {
+					Action struct {
+						Type    string `json:"type"`
+						Query   string `json:"query"`
+						Sources []struct {
+							URL   string `json:"url"`
+							Title string `json:"title"`
+						} `json:"sources"`
+					} `json:"action"`
+				}
+				if err := json.Unmarshal(event.Item, &wsc); err == nil && wsc.Action.Query != "" {
+					sources := make([]llms.SearchSource, 0, len(wsc.Action.Sources))
+					for _, source := range wsc.Action.Sources {
+						if source.URL != "" {
+							sources = append(sources, llms.SearchSource{Title: source.Title, URL: source.URL})
+						}
+					}
+					p.lastSearch = llms.SearchActivity{
+						Source:      "web",
+						Query:       wsc.Action.Query,
+						ResultCount: len(sources),
+						Sources:     sources,
+					}
+					if !yield(llms.StreamStatusSearch) {
+						return true
+					}
+				}
+			case "custom_tool_call":
+				// A completed hosted x_search sub-call: surface its accumulated query.
+				if tracked := p.hostedSearch[itemHdr.ID]; tracked != nil {
+					delete(p.hostedSearch, itemHdr.ID)
+					if query := extractSearchQuery(tracked.input.String()); query != "" {
+						p.lastSearch = llms.SearchActivity{Source: tracked.source, Query: query}
+						if !yield(llms.StreamStatusSearch) {
+							return true
+						}
+					}
+				}
 			case "image_generation_call":
 				if p.processImageItem(event.Item, yield) {
 					return true
@@ -420,4 +515,37 @@ func (p *responsesEventProcessor) processEvent(
 	}
 
 	return false
+}
+
+// isHostedResponsesToolCall reports whether a Responses API custom_tool_call is a
+// provider-executed (hosted) Agent Tool call rather than a client tool the caller must
+// run. xAI streams its server-side x_search sub-tools (x_user_search, x_keyword_search,
+// x_semantic_search, x_thread_fetch) as custom_tool_calls with a call_id prefixed "xs_";
+// the client must not try to execute them.
+func isHostedResponsesToolCall(callID string) bool {
+	return strings.HasPrefix(callID, "xs_")
+}
+
+// extractSearchQuery pulls the human-readable query out of a hosted search sub-call's JSON input
+// (e.g. x_user_search's {"query":"..."}). It falls back across the field names xAI's x_search
+// sub-tools use, and returns "" when the input is empty, not JSON, or carries no recognizable query.
+func extractSearchQuery(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return ""
+	}
+	var fields struct {
+		Query   string `json:"query"`
+		Keyword string `json:"keyword"`
+		Handle  string `json:"handle"`
+	}
+	if err := json.Unmarshal([]byte(input), &fields); err != nil {
+		return ""
+	}
+	for _, candidate := range []string{fields.Query, fields.Keyword, fields.Handle} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

@@ -20,6 +20,7 @@ const (
 	UpdateTypeThinking     UpdateType = "thinking"
 	UpdateTypeThinkingDone UpdateType = "thinking_done"
 	UpdateTypeMessageStart UpdateType = "message_start"
+	UpdateTypeSearch       UpdateType = "search"
 )
 
 type Update interface {
@@ -116,4 +117,32 @@ type MessageStartUpdate struct {
 
 func (u MessageStartUpdate) Type() UpdateType {
 	return UpdateTypeMessageStart
+}
+
+// SearchSource is one result a provider-run search drew on, when the provider reports them.
+type SearchSource struct {
+	Title string
+	URL   string
+}
+
+// SearchActivity describes a single provider-run search the model performed (e.g. xAI's
+// web_search / x_search Agent Tools). It is informational: these searches run server-side, so
+// the caller never executes anything, but surfacing the query lets a UI show what was looked up.
+type SearchActivity struct {
+	// Source is the surface searched, e.g. "web" or "x".
+	Source string
+	// Query is the search query the model issued.
+	Query string
+	// ResultCount is how many results the search returned, or 0 when the provider omits it.
+	ResultCount int
+	// Sources are the result sources when the provider includes them, otherwise empty.
+	Sources []SearchSource
+}
+
+type SearchUpdate struct {
+	SearchActivity
+}
+
+func (u SearchUpdate) Type() UpdateType {
+	return UpdateTypeSearch
 }

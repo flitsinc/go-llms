@@ -23,4 +23,7 @@ const (
 	StreamStatusThinkingDone
 	// StreamStatusMessageStart means the stream surfaced the server-assigned message ID.
 	StreamStatusMessageStart
+	// StreamStatusSearch means the stream surfaced a provider-run search the model performed
+	// (e.g. xAI's web_search / x_search Agent Tools), with its query and any result count.
+	StreamStatusSearch
 )
