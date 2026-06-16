@@ -278,6 +278,16 @@ func (p *responsesEventProcessor) processEvent(
 		}
 
 	case "response.custom_tool_call_input.done":
+		var done struct {
+			ItemID string `json:"item_id"`
+		}
+		_ = json.Unmarshal(rawJSON, &done)
+		// A hosted x_search sub-call's done belongs to that hosted item, not a client tool, so
+		// it must not finalize an unrelated client tool whose deltas are still streaming. The
+		// hosted query surfaces later on output_item.done.
+		if p.hostedSearch[done.ItemID] != nil {
+			break
+		}
 		if p.activeToolCall != nil {
 			if !yield(llms.StreamStatusToolCallReady) {
 				return true
