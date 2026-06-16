@@ -49,6 +49,10 @@ func (s *WebSocketStream) Thought() content.Thought {
 	return content.Thought{}
 }
 
+func (s *WebSocketStream) Search() llms.SearchActivity {
+	return s.lastSearch
+}
+
 func (s *WebSocketStream) Usage() llms.Usage {
 	if s.usage == nil {
 		return llms.Usage{}

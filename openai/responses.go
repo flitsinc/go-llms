@@ -286,6 +286,12 @@ func (s *ResponsesStream) Thought() content.Thought {
 	return content.Thought{}
 }
 
+// Search returns the most recently completed provider-run search (web_search / x_search),
+// read by the turn loop when it sees StreamStatusSearch.
+func (s *ResponsesStream) Search() llms.SearchActivity {
+	return s.lastSearch
+}
+
 func (s *ResponsesStream) Usage() llms.Usage {
 	if s.usage == nil {
 		return llms.Usage{}

@@ -336,6 +336,14 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		case StreamStatusThinkingDone:
 			updateChan <- ThinkingDoneUpdate{}
 
+		case StreamStatusSearch:
+			// Provider-run search (e.g. xAI web_search / x_search) is informational: it runs
+			// server-side, so there is nothing to execute. Only providers that surface it
+			// implement Search(), so this is an optional capability rather than an interface method.
+			if searcher, ok := stream.(interface{ Search() SearchActivity }); ok {
+				updateChan <- SearchUpdate{searcher.Search()}
+			}
+
 		case StreamStatusToolCallBegin:
 			toolCall := stream.ToolCall()
 			if toolCall.ID == "" {
