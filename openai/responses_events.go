@@ -333,16 +333,32 @@ func (p *responsesEventProcessor) processEvent(
 		if err := json.Unmarshal(event.Item, &itemHdr); err == nil {
 			switch itemHdr.Type {
 			case "web_search_call":
-				// A completed provider-run web search. The query lives in the search action;
-				// open_page / find actions carry a URL instead, so they yield no query.
+				// A completed provider-run web search. The query lives in the search action,
+				// which also carries the result sources; open_page / find actions carry a URL
+				// instead, so they yield no query.
 				var wsc struct {
 					Action struct {
-						Type  string `json:"type"`
-						Query string `json:"query"`
+						Type    string `json:"type"`
+						Query   string `json:"query"`
+						Sources []struct {
+							URL   string `json:"url"`
+							Title string `json:"title"`
+						} `json:"sources"`
 					} `json:"action"`
 				}
 				if err := json.Unmarshal(event.Item, &wsc); err == nil && wsc.Action.Query != "" {
-					p.lastSearch = llms.SearchActivity{Source: "web", Query: wsc.Action.Query}
+					sources := make([]llms.SearchSource, 0, len(wsc.Action.Sources))
+					for _, source := range wsc.Action.Sources {
+						if source.URL != "" {
+							sources = append(sources, llms.SearchSource{Title: source.Title, URL: source.URL})
+						}
+					}
+					p.lastSearch = llms.SearchActivity{
+						Source:      "web",
+						Query:       wsc.Action.Query,
+						ResultCount: len(sources),
+						Sources:     sources,
+					}
 					if !yield(llms.StreamStatusSearch) {
 						return true
 					}

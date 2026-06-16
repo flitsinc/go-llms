@@ -22,7 +22,7 @@ const xaiHostedXSearchSSE = `data: {"type":"response.created","response":{"id":"
 
 data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"ws_1","status":"in_progress","action":{"type":"search","query":"Paul Graham Y Combinator"}}}
 
-data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"Paul Graham Y Combinator"}}}
+data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"Paul Graham Y Combinator","sources":[{"type":"url","url":"https://en.wikipedia.org/wiki/Paul_Graham_(programmer)"},{"type":"url","url":"https://www.paulgraham.com/"}]}}}
 
 data: {"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"ctc_1","call_id":"xs_call-abc-0","name":"x_user_search","input":"","status":"in_progress"},"output_index":1}
 
@@ -92,6 +92,14 @@ func TestResponsesXAISearchActivitySurfaced(t *testing.T) {
 
 	require.NoError(t, llm.Err())
 	require.Len(t, searches, 2)
-	assert.Equal(t, llms.SearchActivity{Source: "web", Query: "Paul Graham Y Combinator"}, searches[0])
+	assert.Equal(t, llms.SearchActivity{
+		Source:      "web",
+		Query:       "Paul Graham Y Combinator",
+		ResultCount: 2,
+		Sources: []llms.SearchSource{
+			{URL: "https://en.wikipedia.org/wiki/Paul_Graham_(programmer)"},
+			{URL: "https://www.paulgraham.com/"},
+		},
+	}, searches[0])
 	assert.Equal(t, llms.SearchActivity{Source: "x", Query: "paulg"}, searches[1])
 }
