@@ -1009,3 +1009,100 @@ func TestDoRequest_OpenRouterErrorMetadata(t *testing.T) {
 func intPtr(v int) *int {
 	return &v
 }
+
+// TestChatCompletionsStream_EOFWithoutDone covers the case where the upstream
+// closes the SSE connection cleanly but never sends the `data: [DONE]`
+// terminator. This is what we observed on `openrouter/claude-4.6-opus-*`
+// and `gpt-5.*`: the stream returns 200, the connection closes, and our
+// iterator used to exit silently — yielding `success=true` with zero
+// tokens and an empty assistant message. The fix surfaces this as
+// `llms.ErrEmptyStream` so callers can retry or fail loud.
+func TestChatCompletionsStream_EOFWithoutDone(t *testing.T) {
+	t.Run("no chunks at all", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
+	})
+
+	t.Run("text content but no DONE", func(t *testing.T) {
+		// Truncated text-only stream: no tool was executed, so retrying
+		// is safe. We surface the missing terminator as ErrEmptyStream
+		// so the caller can either retry or fail loud — not silently
+		// accept a half-stream as success.
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.ErrorIs(t, stream.Err(), llms.ErrEmptyStream)
+	})
+
+	t.Run("tool call followed by EOF without DONE preserves work", func(t *testing.T) {
+		// Stream completes a tool call (which the caller will have
+		// already executed) and then the connection drops before [DONE].
+		// Erroring here would make the caller retry and re-run the tool;
+		// the side effect must not be undone.
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"foo\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		var sawToolCallReady bool
+		for status := range stream.Iter() {
+			if status == llms.StreamStatusToolCallReady {
+				sawToolCallReady = true
+			}
+		}
+		require.NoError(t, stream.Err())
+		assert.True(t, sawToolCallReady, "tool call should have been yielded as ready")
+	})
+
+	t.Run("DONE marker keeps clean exit", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{}}]}\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+		defer ts.Close()
+
+		stream := New("", "test-model").WithEndpoint(ts.URL, "Test").DoRequest(context.Background(), map[string]any{
+			"model":    "test-model",
+			"messages": []Message{},
+			"stream":   true,
+		})
+		require.NoError(t, stream.Err())
+		for range stream.Iter() {
+		}
+		require.NoError(t, stream.Err())
+	})
+}
