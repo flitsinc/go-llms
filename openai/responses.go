@@ -144,6 +144,7 @@ func (m *ResponsesAPI) Generate(
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
+	reasoningEnabled := m.reasoningEffort != ""
 
 	// Build the input array
 	var input []ResponseInput
@@ -161,7 +162,7 @@ func (m *ResponsesAPI) Generate(
 			Role:    "system",
 			Content: systemPrompt,
 		}
-		systemInputs, err := convertMessageToInput(systemMsg)
+		systemInputs, err := convertMessageToInput(systemMsg, reasoningEnabled)
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert system message: %w", err))
 		}
@@ -170,7 +171,7 @@ func (m *ResponsesAPI) Generate(
 
 	// Convert messages to input items
 	for _, msg := range messages {
-		msgInputs, err := convertMessageToInput(msg)
+		msgInputs, err := convertMessageToInput(msg, reasoningEnabled)
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err))
 		}
@@ -372,8 +373,12 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	}
 }
 
-// convertMessageToInput converts an llms.Message to ResponseInput items
-func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
+// convertMessageToInput converts an llms.Message to ResponseInput items.
+// reasoningEnabled should be true when the provider is configured with a
+// non-empty reasoning effort (i.e. a reasoning model like gpt-5.5-concise
+// or o4-mini). It controls whether injected tool calls without preceding
+// reasoning items need special handling.
+func convertMessageToInput(msg llms.Message, reasoningEnabled bool) ([]ResponseInput, error) {
 	var items []ResponseInput
 
 	switch msg.Role {
@@ -439,10 +444,18 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 
 		flushOutput()
 
+		hasReasoning := len(seenReasoningIDs) > 0
 		for _, tc := range msg.ToolCalls {
 			itemID := tc.Metadata["openai:item_id"]
 			if itemID == "" {
 				return nil, fmt.Errorf("tool call %q is missing openai:item_id metadata for replay", tc.ID)
+			}
+			// Reasoning models require every function_call with an ID to be
+			// preceded by a reasoning item referencing a stored response.
+			// Injected/prefilled tool calls have no stored reasoning item.
+			// Omit the item ID so the API treats them as new items.
+			if reasoningEnabled && !hasReasoning {
+				itemID = ""
 			}
 			itemType := tc.Metadata["openai:item_type"]
 			var toolItem ResponseInput

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -270,7 +272,7 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -358,7 +360,7 @@ func TestConvertMessageToInput_MissingOpenAIItemIDReturnsError(t *testing.T) {
 		},
 	}
 
-	_, err := convertMessageToInput(msg)
+	_, err := convertMessageToInput(msg, false)
 	if err == nil {
 		t.Fatalf("expected error for tool call missing openai:item_id metadata, got nil")
 	}
@@ -385,7 +387,7 @@ func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 			},
 		},
 	}
-	items, err := convertMessageToInput(msg)
+	items, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -404,6 +406,91 @@ func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 	}
 	if fc.CallID != "call1" {
 		t.Fatalf("expected FunctionCall CallID 'call1', got %q", fc.CallID)
+	}
+}
+
+func TestConvertMessageToInput_OmitsItemIDForToolCallsWithoutReasoning(t *testing.T) {
+	msg := llms.Message{
+		Role:    "assistant",
+		Content: content.Content{},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_abc",
+				Name:      "readModule",
+				Arguments: json.RawMessage(`{"module_name":"Main"}`),
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_abc",
+					"openai:item_type": "function_call",
+				},
+			},
+			{
+				ID:        "call_def",
+				Name:      "readModule",
+				Arguments: json.RawMessage(`{"module_name":"Other"}`),
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_def",
+					"openai:item_type": "function_call",
+				},
+			},
+		},
+	}
+	// reasoningEnabled=true: this simulates the reasoning model case
+	items, err := convertMessageToInput(msg, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items (2 tool calls with omitted IDs), got %d: %#v", len(items), items)
+	}
+	fc1, ok := items[0].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected first item to be FunctionCall, got %T", items[0])
+	}
+	if fc1.ID != "" {
+		t.Fatalf("expected FunctionCall ID to be empty (omitted) when no reasoning, got %q", fc1.ID)
+	}
+	if fc1.CallID != "call_abc" {
+		t.Fatalf("expected FunctionCall CallID 'call_abc', got %q", fc1.CallID)
+	}
+	fc2, ok := items[1].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected second item to be FunctionCall, got %T", items[1])
+	}
+	if fc2.ID != "" {
+		t.Fatalf("expected FunctionCall ID to be empty (omitted) when no reasoning, got %q", fc2.ID)
+	}
+}
+
+func TestConvertMessageToInput_KeepsItemIDForNonReasoningModels(t *testing.T) {
+	msg := llms.Message{
+		Role:    "assistant",
+		Content: content.Content{},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_abc",
+				Name:      "readModule",
+				Arguments: json.RawMessage(`{"module_name":"Main"}`),
+				Metadata: map[string]string{
+					"openai:item_id":   "fc_abc",
+					"openai:item_type": "function_call",
+				},
+			},
+		},
+	}
+	// reasoningEnabled=false: non-reasoning model should preserve IDs
+	items, err := convertMessageToInput(msg, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d: %#v", len(items), items)
+	}
+	fc, ok := items[0].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", items[0])
+	}
+	if fc.ID != "fc_abc" {
+		t.Fatalf("expected FunctionCall ID 'fc_abc' to be preserved for non-reasoning model, got %q", fc.ID)
 	}
 }
 
@@ -436,7 +523,7 @@ func TestConvertMessageToInput_PreservesReasoningOrderAcrossToolCalls(t *testing
 		},
 	}
 
-	items, err := convertMessageToInput(msg)
+	items, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -499,7 +586,7 @@ func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.
 
 	var sequence []ResponseInput
 	for i, msg := range messages {
-		items, err := convertMessageToInput(msg)
+		items, err := convertMessageToInput(msg, false)
 		if err != nil {
 			t.Fatalf("message %d conversion failed: %v", i+1, err)
 		}
@@ -571,7 +658,7 @@ func TestConvertMessageToInput_PhasePreservedRoundTrip(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -600,7 +687,7 @@ func TestConvertMessageToInput_CommentaryPhase(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -626,7 +713,7 @@ func TestConvertMessageToInput_NoPhaseOmitted(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -676,7 +763,7 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, false)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -698,6 +785,66 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 	}
 	if _, ok := inputs[2].(FunctionCall); !ok {
 		t.Fatalf("expected third item to be FunctionCall, got %T", inputs[2])
+	}
+}
+
+// TestResponsesAPI_ReasoningModelWithPrefilledToolCalls verifies that a reasoning model
+// accepts history containing injected tool calls (no reasoning items in the original
+// message). Requires OPENAI_API_KEY.
+func TestResponsesAPI_ReasoningModelWithPrefilledToolCalls(t *testing.T) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		t.Skip("OPENAI_API_KEY not set")
+	}
+
+	api := NewResponsesAPI(apiKey, "o4-mini").
+		WithThinking(EffortLow)
+
+	type readModuleParams struct {
+		ModuleName string `json:"module_name" description:"Module name"`
+	}
+	readModule := tools.Func("Read Module", "Read a module", "readModule",
+		func(r tools.Runner, p readModuleParams) tools.Result {
+			return tools.Success(map[string]any{"code": "function main() { return 42; }"})
+		},
+	)
+	tb := tools.Box(readModule)
+
+	messages := []llms.Message{
+		{Role: "user", Content: content.FromText("Refactor the main entity from Kund to Häfte.")},
+		{
+			Role:    "assistant",
+			Content: content.Content{},
+			ToolCalls: []llms.ToolCall{
+				{
+					ID:        "call_prefill_1",
+					Name:      "readModule",
+					Arguments: json.RawMessage(`{"module_name":"Main"}`),
+					Metadata: map[string]string{
+						"openai:item_id":   "fc_prefill_1",
+						"openai:item_type": "function_call",
+					},
+				},
+			},
+		},
+		{
+			Role:       "tool",
+			ToolCallID: "call_prefill_1",
+			Content:    content.FromText(`{"code":"function main() { return 42; }"}`),
+		},
+	}
+
+	systemPrompt := content.FromText("You are a helpful coding assistant.")
+	stream := api.Generate(context.Background(), systemPrompt, messages, tb, nil)
+	var gotText bool
+	for range stream.Iter() {
+		gotText = true
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("expected no error from reasoning model with prefilled tool calls, got: %v", err)
+	}
+	if !gotText {
+		t.Log("warning: stream produced no updates (model may have returned empty)")
 	}
 }
 

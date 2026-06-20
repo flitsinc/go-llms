@@ -314,6 +314,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	if debugger == nil {
 		debugger = m.debugger
 	}
+	reasoningEnabled := m.reasoningEffort != ""
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -331,7 +332,7 @@ func (m *WebSocketResponsesAPI) Generate(
 		messages[m.lastMessageCount].Role == "assistant" {
 		// Incremental: only send new messages after the last response.
 		for _, msg := range messages[m.lastMessageCount+1:] {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, reasoningEnabled)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -341,7 +342,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	} else if m.lastResponseID != "" && m.lastMessageCount == 0 {
 		// Warmup case: send full messages but chain off the warmup response.
 		for _, msg := range messages {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, reasoningEnabled)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -351,7 +352,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	} else {
 		// Full payload: convert all messages.
 		for _, msg := range messages {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, reasoningEnabled)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -365,7 +366,7 @@ func (m *WebSocketResponsesAPI) Generate(
 		instructions = text
 	} else {
 		systemMsg := llms.Message{Role: "system", Content: systemPrompt}
-		systemInputs, err := convertMessageToInput(systemMsg)
+		systemInputs, err := convertMessageToInput(systemMsg, reasoningEnabled)
 		if err != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert system message: %w", err))
 		}
@@ -396,7 +397,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			// system prompt, without previous_response_id.
 			var fullInput []ResponseInput
 			for _, msg := range messages {
-				msgInputs, convErr := convertMessageToInput(msg)
+				msgInputs, convErr := convertMessageToInput(msg, reasoningEnabled)
 				if convErr != nil {
 					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect convert: %w", convErr))
 				}
@@ -405,7 +406,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			// Re-apply non-text system prompt if needed.
 			if instructions == "" {
 				systemMsg := llms.Message{Role: "system", Content: systemPrompt}
-				systemInputs, sysErr := convertMessageToInput(systemMsg)
+				systemInputs, sysErr := convertMessageToInput(systemMsg, reasoningEnabled)
 				if sysErr != nil {
 					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect system: %w", sysErr))
 				}
