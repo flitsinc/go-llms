@@ -232,7 +232,7 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 	// because warmup doesn't send conversation messages; the empty input
 	// is set explicitly below. tool_choice may be included alongside
 	// tools, which is harmless since generate:false skips generation.
-	payload, err := m.buildResponsesPayload(nil, instructions, toolbox, nil)
+	payload, err := m.buildResponsesPayload(ctx, nil, instructions, toolbox, nil)
 	if err != nil {
 		m.mu.Unlock()
 		return "", fmt.Errorf("warmup: payload: %w", err)
@@ -372,7 +372,7 @@ func (m *WebSocketResponsesAPI) Generate(
 		input = append(systemInputs, input...)
 	}
 
-	jsonData, err := m.buildRequestEnvelope(input, instructions, previousResponseID, toolbox, jsonOutputSchema)
+	jsonData, err := m.buildRequestEnvelope(ctx, input, instructions, previousResponseID, toolbox, jsonOutputSchema)
 	if err != nil {
 		return newWebSocketStreamError(err)
 	}
@@ -411,7 +411,7 @@ func (m *WebSocketResponsesAPI) Generate(
 				}
 				fullInput = append(systemInputs, fullInput...)
 			}
-			jsonData, err = m.buildRequestEnvelope(fullInput, instructions, "", toolbox, jsonOutputSchema)
+			jsonData, err = m.buildRequestEnvelope(ctx, fullInput, instructions, "", toolbox, jsonOutputSchema)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: reconnect: %w", err))
 			}
@@ -448,13 +448,14 @@ func (m *WebSocketResponsesAPI) Generate(
 // buildRequestEnvelope builds the full response.create JSON envelope from the
 // given parameters. It handles text format, tools, tool choice, and wrapping.
 func (m *WebSocketResponsesAPI) buildRequestEnvelope(
+	ctx context.Context,
 	input []ResponseInput,
 	instructions string,
 	previousResponseID string,
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) ([]byte, error) {
-	payload, err := m.buildResponsesPayload(input, instructions, toolbox, jsonOutputSchema)
+	payload, err := m.buildResponsesPayload(ctx, input, instructions, toolbox, jsonOutputSchema)
 	if err != nil {
 		return nil, err
 	}
