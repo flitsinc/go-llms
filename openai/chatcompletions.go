@@ -925,7 +925,13 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 			if !messageStartYielded {
 				messageStartYielded = true
-				s.message.ID = chunk.ID
+				// Note: chunk.ID is a completion-level identifier (e.g.
+				// "chatcmpl-..." from OpenAI, "gen-..." from OpenRouter) — NOT a
+				// per-message ID. Do not propagate it as Message.ID because
+				// downstream consumers (OpenAI Responses API) reject IDs that
+				// don't start with "msg_". The frontend pre-generates a valid
+				// "msg_<random>" placeholder that persists when no provider
+				// message ID is supplied.
 				if !yield(llms.StreamStatusMessageStart) {
 					return
 				}
