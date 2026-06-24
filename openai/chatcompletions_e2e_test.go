@@ -116,6 +116,11 @@ func TestOpenAIE2E(t *testing.T) {
 			verifyStreamOutput: func(t *testing.T, collectedStatuses []llms.StreamStatus, finalToolCall llms.ToolCall, finalText string, stream llms.ProviderStream) {
 				assert.Equal(t, "This is a streamed response.", finalText, "Final text output mismatch")
 				assert.Empty(t, finalToolCall.ID, "No tool call should be present in basic text generation")
+				// Chat Completions chunk IDs (e.g. "chatcmpl-text-1") are completion-level
+				// identifiers, NOT per-message IDs. They must NOT be propagated as
+				// Message.ID because downstream consumers (OpenAI Responses API) reject
+				// IDs that don't start with "msg_".
+				assert.Empty(t, stream.Message().ID, "Chat Completions chunk ID should NOT be propagated as Message.ID")
 			},
 		},
 		{
