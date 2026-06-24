@@ -826,6 +826,13 @@ func cloneThoughtMetadata(in map[string]string) map[string]string {
 func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	reader := bufio.NewReader(s.stream)
 	var activeToolCallIndex = -1 // Track the index of the tool call being processed
+	// xAI runs its x_search Agent Tool sub-tools (x_user_search, x_keyword_search, ...) server-side
+	// and streams them as tool calls with an "xs_"-prefixed id (e.g. via OpenRouter's chat-completions
+	// passthrough). They are hosted, not client tools, so they are skipped rather than executed.
+	// hostedToolIndices marks which provider tool-call indices are hosted; toolCallLocalIndex maps a
+	// provider index to its position in message.ToolCalls (they diverge once a hosted call is skipped).
+	hostedToolIndices := map[int]bool{}
+	toolCallLocalIndex := map[int]int{}
 	messageStartYielded := false
 
 	return func(rawYield func(llms.StreamStatus) bool) {
@@ -982,11 +989,14 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				}
 				for _, toolDelta := range delta.ToolCalls {
-					if toolDelta.Index >= len(s.message.ToolCalls) {
-						// This is a new tool call starting
-						if toolDelta.Index != len(s.message.ToolCalls) {
-							s.err = fmt.Errorf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index)
-							return
+					localIndex, started := toolCallLocalIndex[toolDelta.Index]
+					if !started && !hostedToolIndices[toolDelta.Index] {
+						// A new tool call starting. A non-empty id is provided on its first delta;
+						// xAI's hosted x_search sub-tools carry an "xs_"-prefixed id and run
+						// server-side, so skip them instead of surfacing them for client execution.
+						if isHostedResponsesToolCall(toolDelta.ID) {
+							hostedToolIndices[toolDelta.Index] = true
+							continue
 						}
 						// If a previous tool call was active, mark it as ready now.
 						if activeToolCallIndex != -1 {
@@ -1001,13 +1011,18 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							return
 						}
 						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
+						localIndex = len(s.message.ToolCalls) - 1
+						toolCallLocalIndex[toolDelta.Index] = localIndex
 						activeToolCallIndex = toolDelta.Index // Mark new tool call as active
 						if !yield(llms.StreamStatusToolCallBegin) {
 							return // Abort if yield fails
 						}
+					} else if hostedToolIndices[toolDelta.Index] {
+						// Hosted search sub-call: ignore its streamed arguments, nothing to run.
+						continue
 					} else {
 						// This is appending arguments to an existing tool call
-						existing := &s.message.ToolCalls[toolDelta.Index]
+						existing := &s.message.ToolCalls[localIndex]
 						if toolDelta.Type != "" {
 							if existing.Metadata == nil {
 								existing.Metadata = make(map[string]string)
