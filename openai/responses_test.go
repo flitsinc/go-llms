@@ -343,27 +343,92 @@ func TestResponsesStream_UsageWithCachedTokens(t *testing.T) {
 	}
 }
 
-func TestConvertMessageToInput_MissingOpenAIItemIDReturnsError(t *testing.T) {
+func TestConvertMessageToInput_ForeignToolCallOmitsResponsesItemID(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",
 		Content: content.Content{
-			&content.Thought{ID: "rs_missing", Text: "Planning..."},
+			&content.Thought{Text: "Planning..."},
 		},
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "toolu_01foreign",
+				Name:      "run_shell_cmd",
+				Arguments: json.RawMessage(`{"command":"ls"}`),
+				Metadata:  map[string]string{"openai:item_type": "function"},
+			},
+		},
+	}
+
+	items, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one function call, got %d (%#v)", len(items), items)
+	}
+	fc, ok := items[0].(FunctionCall)
+	if !ok {
+		t.Fatalf("expected FunctionCall, got %T", items[0])
+	}
+	if fc.ID != "" {
+		t.Fatalf("expected foreign tool call item ID to be omitted, got %q", fc.ID)
+	}
+	if fc.CallID != "toolu_01foreign" {
+		t.Fatalf("expected original call ID to be preserved, got %q", fc.CallID)
+	}
+}
+
+func TestConvertMessageToInput_NativeResponsesToolCallMissingItemIDReturnsError(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
 		ToolCalls: []llms.ToolCall{
 			{
 				ID:        "call_missing",
 				Name:      "run_shell_cmd",
 				Arguments: json.RawMessage(`{"command":"ls"}`),
+				Metadata:  map[string]string{"openai:item_type": "function_call"},
 			},
 		},
 	}
 
 	_, err := convertMessageToInput(msg)
 	if err == nil {
-		t.Fatalf("expected error for tool call missing openai:item_id metadata, got nil")
+		t.Fatal("expected native Responses tool call without an item ID to fail")
 	}
 	if !strings.Contains(err.Error(), "missing openai:item_id metadata") {
 		t.Fatalf("expected missing openai:item_id metadata error, got %v", err)
+	}
+}
+
+func TestConvertMessageToInput_ChatCompletionsCustomToolCallOmitsItemID(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_custom",
+				Name:      "code_exec",
+				Arguments: json.RawMessage(`print("hello")`),
+				Metadata:  map[string]string{"openai:item_type": "custom"},
+			},
+		},
+	}
+
+	items, err := convertMessageToInput(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one custom tool call, got %d (%#v)", len(items), items)
+	}
+	custom, ok := items[0].(CustomToolCall)
+	if !ok {
+		t.Fatalf("expected CustomToolCall, got %T", items[0])
+	}
+	if custom.ID != "" {
+		t.Fatalf("expected Chat Completions custom tool item ID to be omitted, got %q", custom.ID)
+	}
+	if custom.CallID != "call_custom" {
+		t.Fatalf("expected original call ID to be preserved, got %q", custom.CallID)
 	}
 }
 

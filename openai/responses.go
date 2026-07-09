@@ -440,14 +440,23 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 		flushOutput()
 
 		for _, tc := range msg.ToolCalls {
-			itemID := tc.Metadata["openai:item_id"]
-			if itemID == "" {
-				return nil, fmt.Errorf("tool call %q is missing openai:item_id metadata for replay", tc.ID)
-			}
 			itemType := tc.Metadata["openai:item_type"]
+			itemID := ""
+			if itemType == "function_call" || itemType == "custom_tool_call" {
+				itemID = tc.Metadata["openai:item_id"]
+				if itemID == "" {
+					return nil, fmt.Errorf("Responses API tool call %q is missing openai:item_id metadata for replay", tc.ID)
+				}
+			}
+
+			// Native Responses API output items must retain their original item
+			// IDs. Tool calls from Chat Completions or another provider have no
+			// Responses item identity, so leave ID empty and let the Responses API
+			// treat them as newly supplied history items. call_id still links each
+			// call to its function_call_output.
 			var toolItem ResponseInput
 			switch itemType {
-			case "custom_tool_call":
+			case "custom", "custom_tool_call":
 				toolItem = CustomToolCall{Type: "custom_tool_call", ID: itemID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
 			default:
 				toolItem = FunctionCall{Type: "function_call", ID: itemID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}
