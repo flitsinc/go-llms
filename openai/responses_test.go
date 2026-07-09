@@ -400,6 +400,24 @@ func TestConvertMessageToInput_NativeResponsesToolCallMissingItemIDReturnsError(
 	}
 }
 
+func TestConvertMessageToInput_ChatCompletionsCustomToolCallReturnsError(t *testing.T) {
+	msg := llms.Message{
+		Role: "assistant",
+		ToolCalls: []llms.ToolCall{
+			{
+				ID:        "call_custom",
+				Name:      "code_exec",
+				Arguments: json.RawMessage(`print("hello")`),
+				Metadata:  map[string]string{"openai:item_type": "custom"},
+			},
+		},
+	}
+
+	if _, err := convertMessageToInput(msg); err == nil {
+		t.Fatal("expected Chat Completions custom tool replay to fail")
+	}
+}
+
 func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",

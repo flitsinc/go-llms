@@ -441,6 +441,9 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 
 		for _, tc := range msg.ToolCalls {
 			itemType := tc.Metadata["openai:item_type"]
+			if itemType == "custom" {
+				return nil, fmt.Errorf("openai responses: replaying Chat Completions custom tool call %q is unsupported", tc.ID)
+			}
 			itemID := ""
 			if itemType == "function_call" || itemType == "custom_tool_call" {
 				itemID = tc.Metadata["openai:item_id"]
