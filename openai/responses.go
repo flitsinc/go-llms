@@ -456,7 +456,7 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 			// call to its function_call_output.
 			var toolItem ResponseInput
 			switch itemType {
-			case "custom", "custom_tool_call":
+			case "custom_tool_call":
 				toolItem = CustomToolCall{Type: "custom_tool_call", ID: itemID, Name: tc.Name, Input: string(tc.Arguments), CallID: tc.ID}
 			default:
 				toolItem = FunctionCall{Type: "function_call", ID: itemID, Name: tc.Name, Arguments: string(tc.Arguments), CallID: tc.ID}

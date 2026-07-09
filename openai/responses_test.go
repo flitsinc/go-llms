@@ -400,38 +400,6 @@ func TestConvertMessageToInput_NativeResponsesToolCallMissingItemIDReturnsError(
 	}
 }
 
-func TestConvertMessageToInput_ChatCompletionsCustomToolCallOmitsItemID(t *testing.T) {
-	msg := llms.Message{
-		Role: "assistant",
-		ToolCalls: []llms.ToolCall{
-			{
-				ID:        "call_custom",
-				Name:      "code_exec",
-				Arguments: json.RawMessage(`print("hello")`),
-				Metadata:  map[string]string{"openai:item_type": "custom"},
-			},
-		},
-	}
-
-	items, err := convertMessageToInput(msg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected one custom tool call, got %d (%#v)", len(items), items)
-	}
-	custom, ok := items[0].(CustomToolCall)
-	if !ok {
-		t.Fatalf("expected CustomToolCall, got %T", items[0])
-	}
-	if custom.ID != "" {
-		t.Fatalf("expected Chat Completions custom tool item ID to be omitted, got %q", custom.ID)
-	}
-	if custom.CallID != "call_custom" {
-		t.Fatalf("expected original call ID to be preserved, got %q", custom.CallID)
-	}
-}
-
 func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 	msg := llms.Message{
 		Role: "assistant",

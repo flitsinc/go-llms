@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -58,15 +59,18 @@ func crossProviderToolbox() *tools.Toolbox {
 }
 
 func TestResponsesAPI_CrossProviderToolCallReplay(t *testing.T) {
-	var payload map[string]any
+	type capturedRequest struct {
+		payload map[string]any
+		err     error
+	}
+	captured := make(chan capturedRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read request: %v", err)
+		var payload map[string]any
+		if err == nil {
+			err = json.Unmarshal(body, &payload)
 		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		captured <- capturedRequest{payload: payload, err: err}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\"}\n\n")
 	}))
@@ -86,10 +90,14 @@ func TestResponsesAPI_CrossProviderToolCallReplay(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatalf("cross-provider replay failed: %v", err)
 	}
+	request := <-captured
+	if request.err != nil {
+		t.Fatalf("capture request: %v", request.err)
+	}
 
-	inputs, ok := payload["input"].([]any)
+	inputs, ok := request.payload["input"].([]any)
 	if !ok {
-		t.Fatalf("expected input array, got %T", payload["input"])
+		t.Fatalf("expected input array, got %T", request.payload["input"])
 	}
 	var functionCall map[string]any
 	var functionOutput map[string]any
@@ -124,12 +132,14 @@ func TestResponsesAPI_CrossProviderToolCallReplayLive(t *testing.T) {
 	if apiKey == "" {
 		t.Skip("OPENAI_API_KEY is not set")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
 	stream := NewResponsesAPI(apiKey, "gpt-5.6-luna").
 		WithMaxOutputTokens(128).
 		WithStore(false).
 		Generate(
-			context.Background(),
+			ctx,
 			content.FromText("Reply with exactly OK."),
 			crossProviderReplayMessages(),
 			crossProviderToolbox(),
