@@ -50,6 +50,8 @@ type mockProvider struct {
 	toolboxToolsCount      int
 	toolCallsToMake        []string // Names of tools to simulate calls for on the *first* Generate call
 	processedToolResponses bool     // Tracks if we've seen tool responses in messages
+	finalizationExpected   bool
+	finalArguments         json.RawMessage
 }
 
 func (m *mockProvider) Company() string {
@@ -100,18 +102,22 @@ func (m *mockProvider) Generate(
 	}
 
 	return &mockStream{
-		provider:       m,
-		textToGenerate: textToGenerate,
-		toolCalls:      toolCallsToUse,
+		provider:             m,
+		textToGenerate:       textToGenerate,
+		toolCalls:            toolCallsToUse,
+		finalizationExpected: m.finalizationExpected && !m.processedToolResponses,
+		finalArguments:       m.finalArguments,
 	}
 }
 
 // mockStream is a simple implementation of ProviderStream for testing
 type mockStream struct {
-	provider       *mockProvider
-	textToGenerate string
-	toolCalls      []string
-	message        Message
+	provider             *mockProvider
+	textToGenerate       string
+	toolCalls            []string
+	message              Message
+	finalizationExpected bool
+	finalArguments       json.RawMessage
 }
 
 func (s *mockStream) Err() error { return nil }
@@ -181,6 +187,10 @@ func (s *mockStream) ToolCall() ToolCall {
 		return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 	}
 	return ToolCall{}
+}
+
+func (s *mockStream) ToolArgumentFinalization() (json.RawMessage, bool) {
+	return s.finalArguments, s.finalizationExpected
 }
 
 func (s *mockStream) Usage() Usage {

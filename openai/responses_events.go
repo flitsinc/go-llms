@@ -13,16 +13,17 @@ import (
 // Responses API streaming events. It is embedded by both ResponsesStream (SSE)
 // and WebSocketStream (WebSocket) to avoid duplicating event-handling code.
 type responsesEventProcessor struct {
-	message           llms.Message
-	lastText          string
-	lastImage         struct{ URL, MIME string }
-	usage             *responsesUsage
-	lastThought       *content.Thought
-	activeToolCall    *llms.ToolCall
-	responseID        string
-	debugger          llms.Debugger
-	err               error
-	processedImageIDs map[string]bool
+	message              llms.Message
+	lastText             string
+	lastImage            struct{ URL, MIME string }
+	usage                *responsesUsage
+	lastThought          *content.Thought
+	activeToolCall       *llms.ToolCall
+	argumentFinalization *toolArgumentFinalization
+	responseID           string
+	debugger             llms.Debugger
+	err                  error
+	processedImageIDs    map[string]bool
 	// lastSearch holds the most recently completed provider-run search (web_search / x_search),
 	// surfaced via StreamStatusSearch so a UI can show what the model looked up.
 	lastSearch llms.SearchActivity
@@ -30,6 +31,10 @@ type responsesEventProcessor struct {
 	// x_user_search / x_keyword_search server-side) by their output item id, so the streamed
 	// query can be accumulated and surfaced once the call completes.
 	hostedSearch map[string]*hostedSearchCall
+}
+
+type toolArgumentFinalization struct {
+	arguments json.RawMessage
 }
 
 // hostedSearchCall accumulates a provider-executed search sub-call until it completes.
@@ -155,6 +160,7 @@ func (p *responsesEventProcessor) processEvent(
 					}
 					p.message.ToolCalls = append(p.message.ToolCalls, llmToolCall)
 					p.activeToolCall = &p.message.ToolCalls[len(p.message.ToolCalls)-1]
+					p.argumentFinalization = &toolArgumentFinalization{}
 					if !yield(llms.StreamStatusToolCallBegin) {
 						return true
 					}
@@ -187,6 +193,7 @@ func (p *responsesEventProcessor) processEvent(
 						}
 						p.activeToolCall = nil
 					}
+					p.argumentFinalization = nil
 					if p.hostedSearch == nil {
 						p.hostedSearch = map[string]*hostedSearchCall{}
 					}
@@ -212,6 +219,7 @@ func (p *responsesEventProcessor) processEvent(
 				}
 				p.message.ToolCalls = append(p.message.ToolCalls, llmToolCall)
 				p.activeToolCall = &p.message.ToolCalls[len(p.message.ToolCalls)-1]
+				p.argumentFinalization = nil
 				if !yield(llms.StreamStatusToolCallBegin) {
 					return true
 				}
@@ -253,6 +261,14 @@ func (p *responsesEventProcessor) processEvent(
 
 	case "response.function_call_arguments.done":
 		if p.activeToolCall != nil {
+			var done struct {
+				Arguments *string `json:"arguments"`
+			}
+			if err := json.Unmarshal(rawJSON, &done); err == nil &&
+				done.Arguments != nil && p.argumentFinalization != nil {
+				p.argumentFinalization.arguments = make(json.RawMessage, len(*done.Arguments))
+				copy(p.argumentFinalization.arguments, *done.Arguments)
+			}
 			if !yield(llms.StreamStatusToolCallReady) {
 				return true
 			}

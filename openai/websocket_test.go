@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -149,6 +151,88 @@ func TestWebSocketStream_ToolCallStreaming(t *testing.T) {
 	if string(tc.Arguments) != `{"city":"NYC"}` {
 		t.Fatalf("expected arguments '{\"city\":\"NYC\"}', got %q", string(tc.Arguments))
 	}
+}
+
+func TestWebSocketStream_PreservesProviderFinalArgumentsSeparately(t *testing.T) {
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_tc"}}`,
+		`{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","name":"get_weather","call_id":"call_1","arguments":""}}`,
+		`{"type":"response.function_call_arguments.delta","delta":"{\"city\":\"NYC\"}"}`,
+		`{"type":"response.function_call_arguments.done","arguments":"{\"city\":\"OSL\"}"}`,
+		`{"type":"response.completed"}`,
+	}
+	toolCall, finalArguments, finalizationExpected := captureWebSocketToolArgumentFinalization(t, events)
+	assert.JSONEq(t, `{"city":"NYC"}`, string(toolCall.Arguments))
+	assert.True(t, finalizationExpected)
+	assert.JSONEq(t, `{"city":"OSL"}`, string(finalArguments))
+}
+
+func TestWebSocketStream_DistinguishesMissingAndEmptyProviderFinalArguments(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		doneEvent string
+		wantEmpty bool
+	}{
+		{name: "no finalization event"},
+		{name: "finalization event missing arguments", doneEvent: `{"type":"response.function_call_arguments.done"}`},
+		{name: "observed empty arguments", doneEvent: `{"type":"response.function_call_arguments.done","arguments":""}`, wantEmpty: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			events := []string{
+				`{"type":"response.created","response":{"id":"resp_tc"}}`,
+				`{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","name":"get_weather","call_id":"call_1","arguments":""}}`,
+				`{"type":"response.function_call_arguments.delta","delta":"{\"city\":\"NYC\"}"}`,
+			}
+			if test.doneEvent != "" {
+				events = append(events, test.doneEvent)
+			}
+			events = append(events, `{"type":"response.completed"}`)
+
+			_, finalArguments, finalizationExpected := captureWebSocketToolArgumentFinalization(t, events)
+			assert.True(t, finalizationExpected)
+			if test.wantEmpty {
+				require.NotNil(t, finalArguments)
+				assert.Empty(t, finalArguments)
+				return
+			}
+			assert.Nil(t, finalArguments)
+		})
+	}
+}
+
+func captureWebSocketToolArgumentFinalization(
+	t *testing.T,
+	events []string,
+) (llms.ToolCall, json.RawMessage, bool) {
+	t.Helper()
+	server := newTestWSServer(t, events)
+	t.Cleanup(server.Close)
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").
+		WithEndpoint(wsEndpoint(server), "Test")
+	t.Cleanup(func() {
+		_ = provider.Close()
+	})
+
+	stream := provider.Generate(
+		context.Background(),
+		content.FromText("You are helpful"),
+		[]llms.Message{{Role: "user", Content: content.FromText("Weather?")}},
+		nil, nil,
+	)
+	var finalArguments json.RawMessage
+	var finalizationExpected bool
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusToolCallReady {
+			finalizer, ok := stream.(interface {
+				ToolArgumentFinalization() (json.RawMessage, bool)
+			})
+			require.True(t, ok)
+			finalArguments, finalizationExpected = finalizer.ToolArgumentFinalization()
+		}
+	}
+	require.NoError(t, stream.Err())
+	return stream.ToolCall(), finalArguments, finalizationExpected
 }
 
 func TestWebSocketStream_ChainingWithPreviousResponseID(t *testing.T) {
