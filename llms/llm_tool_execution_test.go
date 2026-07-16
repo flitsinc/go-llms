@@ -324,3 +324,33 @@ func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	require.True(t, ok, "Update 6 should be TextUpdate")
 	assert.Equal(t, "I've processed the results from the tool.", textUpdate2.Text, "Final text mismatch")
 }
+
+func TestLLMPreservesObservedEmptyToolArgumentFinalization(t *testing.T) {
+	const toolName = "empty_finalization_tool"
+	mockProv := &mockProvider{
+		toolCallsToMake:      []string{toolName},
+		finalizationExpected: true,
+		finalArguments:       json.RawMessage{},
+	}
+	tool := tools.Func(toolName, "Tool for checking empty finalization", toolName,
+		func(r tools.Runner, p TestToolParams) tools.Result {
+			return tools.Success(nil)
+		})
+	llm, _ := setupTestLLM(t, mockProv, tool)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Check empty tool argument finalization")
+	require.NoError(t, llm.Err())
+
+	for _, update := range updates {
+		finalization, ok := update.(ToolArgumentFinalizationUpdate)
+		if !ok {
+			continue
+		}
+		require.NotNil(t, finalization.Arguments)
+		assert.Empty(t, finalization.Arguments)
+		return
+	}
+	t.Fatal("expected ToolArgumentFinalizationUpdate")
+}
