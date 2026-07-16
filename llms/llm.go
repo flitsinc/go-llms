@@ -375,6 +375,20 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				updateChan <- ToolDeltaUpdate{toolCall.ID, toolCall.Arguments[toolCallDeltaSentBytes:]}
 				toolCallDeltaSentBytes = argLen
 			}
+			var finalArguments json.RawMessage
+			finalizationExpected := false
+			if finalizer, ok := stream.(interface {
+				ToolArgumentFinalization() (json.RawMessage, bool)
+			}); ok {
+				finalArguments, finalizationExpected = finalizer.ToolArgumentFinalization()
+			}
+			if finalizationExpected {
+				update := ToolArgumentFinalizationUpdate{ToolCallID: toolCall.ID}
+				if finalArguments != nil {
+					update.Arguments = append(json.RawMessage{}, finalArguments...)
+				}
+				updateChan <- update
+			}
 			toolMessage := l.runToolCall(ctx, l.toolbox, toolCall, updateChan)
 			toolMessages = append(toolMessages, toolMessage)
 		}

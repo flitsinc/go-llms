@@ -241,9 +241,12 @@ func TestToolCallInContext(t *testing.T) {
 // tool argument deltas received from the provider stream.
 func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	const toolName = "delta_check_tool"
+	providerFinalArguments := json.RawMessage(`{"provider":"final"}`)
 	// Arrange: Mock provider configured to call a specific tool
 	mockProv := &mockProvider{
-		toolCallsToMake: []string{toolName},
+		toolCallsToMake:      []string{toolName},
+		finalizationExpected: true,
+		finalArguments:       providerFinalArguments,
 	}
 
 	// Define the tool that will be called
@@ -263,9 +266,9 @@ func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	assert.NoError(t, llm.Err())
 
 	// Assert: Correct number of updates.
-	// Turn 1: InitialText, ToolStart, Delta1, Delta2, ToolDone
+	// Turn 1: InitialText, ToolStart, Delta1, Delta2, ToolArgumentFinalization, ToolDone
 	// Turn 2: FinalText
-	require.Len(t, updates, 6, "Should receive exactly 6 updates for a single tool call with deltas")
+	require.Len(t, updates, 7, "Should receive exactly 7 updates for a single tool call with deltas")
 
 	// Define expected arguments based on mockStream behavior
 	expectedFullArgsStr := fmt.Sprintf(`{"test_param":"test_value_%s"}`, toolName)
@@ -298,9 +301,17 @@ func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	assert.Equal(t, receivedToolCallID, deltaUpdate2.ToolCallID, "ToolCallID mismatch in second delta")
 	assert.Equal(t, secondHalfArgs, string(deltaUpdate2.Delta), "Second delta content mismatch")
 
-	// 5. ToolDoneUpdate
-	doneUpdate, ok := updates[4].(ToolDoneUpdate)
-	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+	// 5. ToolArgumentFinalizationUpdate
+	finalizationUpdate, ok := updates[4].(ToolArgumentFinalizationUpdate)
+	require.True(t, ok, "Update 4 should be ToolArgumentFinalizationUpdate")
+	assert.Equal(t, receivedToolCallID, finalizationUpdate.ToolCallID)
+	assert.Equal(t, providerFinalArguments, finalizationUpdate.Arguments)
+	providerFinalArguments[0] = '!'
+	assert.NotEqual(t, providerFinalArguments, finalizationUpdate.Arguments)
+
+	// 6. ToolDoneUpdate
+	doneUpdate, ok := updates[5].(ToolDoneUpdate)
+	require.True(t, ok, "Update 5 should be ToolDoneUpdate")
 	assert.Equal(t, receivedToolCallID, doneUpdate.ToolCallID, "ToolCallID mismatch in done update")
 	assert.Equal(t, toolName, doneUpdate.Tool.FuncName())
 	require.NoError(t, doneUpdate.Result.Error())
@@ -308,8 +319,8 @@ func TestLLMReceivesToolArgumentDeltas(t *testing.T) {
 	resultJSON := extractJSONFromResult(t, doneUpdate.Result)
 	assert.JSONEq(t, fmt.Sprintf(`{"processed_param":"test_value_%s"}`, toolName), string(resultJSON))
 
-	// 6. Final TextUpdate
-	textUpdate2, ok := updates[5].(TextUpdate)
-	require.True(t, ok, "Update 5 should be TextUpdate")
+	// 7. Final TextUpdate
+	textUpdate2, ok := updates[6].(TextUpdate)
+	require.True(t, ok, "Update 6 should be TextUpdate")
 	assert.Equal(t, "I've processed the results from the tool.", textUpdate2.Text, "Final text mismatch")
 }

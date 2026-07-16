@@ -279,6 +279,15 @@ func (s *ResponsesStream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
+// ToolArgumentFinalization returns the independent provider-final argument
+// snapshot for the active function call, when the protocol expects one.
+func (s *ResponsesStream) ToolArgumentFinalization() (json.RawMessage, bool) {
+	if s.argumentFinalization == nil {
+		return nil, false
+	}
+	return s.argumentFinalization.arguments, true
+}
+
 func (s *ResponsesStream) Thought() content.Thought {
 	if s.lastThought != nil {
 		return *s.lastThought

@@ -23,6 +23,8 @@ const (
 	UpdateTypeSearch       UpdateType = "search"
 )
 
+const UpdateTypeToolArgumentFinalization UpdateType = "tool_argument_finalization"
+
 type Update interface {
 	Type() UpdateType
 }
@@ -39,6 +41,19 @@ func (u ToolStartUpdate) Type() UpdateType {
 type ToolDeltaUpdate struct {
 	ToolCallID string
 	Delta      json.RawMessage
+}
+
+// ToolArgumentFinalizationUpdate carries an independent provider-final
+// argument snapshot. The update is emitted only when the provider protocol is
+// expected to supply such a snapshot. A nil Arguments value means the snapshot
+// was not observed; a non-nil empty value is an observed empty snapshot.
+type ToolArgumentFinalizationUpdate struct {
+	ToolCallID string
+	Arguments  json.RawMessage
+}
+
+func (u ToolArgumentFinalizationUpdate) Type() UpdateType {
+	return UpdateTypeToolArgumentFinalization
 }
 
 func (u ToolDeltaUpdate) Type() UpdateType {
