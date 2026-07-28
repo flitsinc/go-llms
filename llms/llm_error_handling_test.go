@@ -2,6 +2,7 @@ package llms
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -168,6 +169,11 @@ func TestTurnUnknownToolTruncatedStream(t *testing.T) {
 	require.NotEmpty(t, lastAssistant.ToolCalls, "The truncated turn should still have recorded its tool call")
 	for _, toolCall := range lastAssistant.ToolCalls {
 		assert.True(t, results[toolCall.ID], "Tool call %q was left without a result", toolCall.ID)
+		// The stream cut the arguments off mid-value. Providers copy them
+		// straight into the replayed call, so leaving them unparseable would
+		// break encoding of the very request this turn continues into.
+		assert.True(t, json.Valid(toolCall.Arguments),
+			"Tool call %q kept unparseable arguments: %s", toolCall.ID, toolCall.Arguments)
 	}
 }
 

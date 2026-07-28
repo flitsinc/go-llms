@@ -452,6 +452,8 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		return false, ctx.Err()
 	}
 
+	message := stream.Message()
+
 	// A tool call that began but never reached StreamStatusToolCallReady (a
 	// provider truncating the stream, say) leaves the assistant message with a
 	// tool call that has no result, which providers reject on the next request.
@@ -460,14 +462,26 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// ToolStartUpdate that never settles. Calls to tools that do exist can't be
 	// finished this way, since running one needs its arguments.
 	for _, toolCall := range begunUnknownToolCalls {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
 		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
 			continue
+		}
+		// Whatever arguments the stream did deliver were cut off mid-value, so
+		// they may not parse. Providers put them straight into the replayed
+		// call, where invalid JSON fails to encode, and nothing is going to run
+		// them anyway.
+		for i := range message.ToolCalls {
+			if message.ToolCalls[i].ID == toolCall.ID && !json.Valid(message.ToolCalls[i].Arguments) {
+				message.ToolCalls[i].Arguments = json.RawMessage(`{}`)
+			}
 		}
 		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
 	}
 
 	// Add the fully assembled message plus tool call results to the message history.
-	l.lastSentMessages = append(l.lastSentMessages, stream.Message())
+	l.lastSentMessages = append(l.lastSentMessages, message)
 	// Role "tool" must always come first.
 	slices.SortStableFunc(toolMessages, func(a, b Message) int {
 		if a.Role == "tool" && b.Role != "tool" {

@@ -531,7 +531,12 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 		if !yield(StreamStatusToolCallBegin) {
 			return
 		}
-		s.message.ToolCalls[0].Arguments = json.RawMessage(`{"test_param":"value"}`)
+		args := `{"test_param":"value"}`
+		if s.truncate {
+			// Cut off mid-value, so the delivered arguments don't parse.
+			args = `{"test_param":`
+		}
+		s.message.ToolCalls[0].Arguments = json.RawMessage(args)
 		if !yield(StreamStatusToolCallDelta) {
 			return
 		}
