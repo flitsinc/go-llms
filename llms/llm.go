@@ -15,7 +15,16 @@ import (
 var (
 	ErrMaxTurnsReached            = errors.New("max turns reached")
 	ErrToolsAndJSONOutputConflict = errors.New("cannot specify both tools and a JSON output schema")
+	// ErrTooManyUnknownTools is returned when the model spent several turns in
+	// a row calling only tools that don't exist. A single such call is handed
+	// back to the model as a tool error it can recover from; this is the guard
+	// against it never recovering.
+	ErrTooManyUnknownTools = errors.New("too many consecutive turns calling unknown tools")
 )
+
+// defaultMaxUnknownToolTurns is how many turns in a row may consist solely of
+// calls to tools that don't exist before the chat gives up.
+const defaultMaxUnknownToolTurns = 3
 
 func cloneMetadata(src map[string]string) map[string]string {
 	if len(src) == 0 {
@@ -38,6 +47,11 @@ type LLM struct {
 
 	turns, maxTurns  int
 	lastSentMessages []Message
+
+	// unknownToolTurns counts consecutive turns where every tool call named a
+	// tool that isn't in the toolbox. It resets as soon as a turn calls at least
+	// one real tool.
+	unknownToolTurns, maxUnknownToolTurns int
 
 	err error // Last error encountered during operation
 
@@ -82,8 +96,9 @@ func New(provider Provider, allTools ...tools.Tool) *LLM {
 		toolbox = tools.Box(allTools...)
 	}
 	return &LLM{
-		provider: provider,
-		toolbox:  toolbox,
+		provider:            provider,
+		toolbox:             toolbox,
+		maxUnknownToolTurns: defaultMaxUnknownToolTurns,
 	}
 }
 
@@ -223,6 +238,16 @@ func (l *LLM) WithMaxTurns(maxTurns int) *LLM {
 	return l
 }
 
+// WithMaxUnknownToolTurns sets how many turns in a row may consist solely of
+// calls to tools that aren't in the toolbox before the chat ends with
+// ErrTooManyUnknownTools. Such calls are normally handed back to the model as a
+// "tool not found" tool result so it can correct itself; this bounds how long
+// it gets to keep trying. A value of 0 means no limit.
+func (l *LLM) WithMaxUnknownToolTurns(maxUnknownToolTurns int) *LLM {
+	l.maxUnknownToolTurns = maxUnknownToolTurns
+	return l
+}
+
 // Err returns the last error encountered during LLM operation. This is useful
 // for checking errors after a Chat loop completes. Returns nil if no error
 // occurred.
@@ -282,6 +307,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// deltas. We probably want to move this into the responsibility of each
 	// provider so we can reduce allocations.
 	var toolCallDeltaSentBytes int
+
+	// Tracks how the tool calls in this turn split between tools that exist and
+	// tools that don't, so a model that only ever calls tools that don't exist
+	// doesn't loop forever (see maxUnknownToolTurns).
+	var knownToolCalls, unknownToolCalls int
 
 	for status := range stream.Iter() {
 		// For now assume the first event we get on the stream is the first token.
@@ -351,7 +381,17 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 			tool := l.toolbox.Get(toolCall.Name)
 			if tool == nil {
-				return false, fmt.Errorf("tool %q not found", toolCall.Name)
+				// The model named a tool that doesn't exist, either because it
+				// hallucinated the name or because the tool was removed while
+				// the conversation history still mentions it. Rather than
+				// aborting the turn, stand in a placeholder so the call runs
+				// nothing and produces the same "tool not found" result
+				// Toolbox.Run would have; the model sees that on its next turn
+				// and can pick a different tool.
+				tool = tools.Unknown(toolCall.Name)
+				unknownToolCalls++
+			} else {
+				knownToolCalls++
 			}
 			toolCallDeltaSentBytes = 0
 			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool}
@@ -418,6 +458,19 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	})
 	l.lastSentMessages = append(l.lastSentMessages, toolMessages...)
 
+	// Handing back a "tool not found" result lets the model recover, but only if
+	// it actually does. A model that spends turn after turn calling nothing but
+	// tools that don't exist is not recovering, so stop instead of letting it
+	// spin.
+	if unknownToolCalls > 0 && knownToolCalls == 0 {
+		l.unknownToolTurns++
+		if l.maxUnknownToolTurns > 0 && l.unknownToolTurns >= l.maxUnknownToolTurns {
+			return false, fmt.Errorf("%w (%d in a row)", ErrTooManyUnknownTools, l.unknownToolTurns)
+		}
+	} else {
+		l.unknownToolTurns = 0
+	}
+
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil
 }
@@ -435,6 +488,13 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	}
 
 	t := toolbox.Get(toolCall.Name)
+	if t == nil {
+		// Keep the updates below consistent with the ToolStartUpdate that was
+		// already sent for this call: a placeholder tool instead of nil. The
+		// result comes from Toolbox.Run, which reports the same "tool not
+		// found" error without running anything.
+		t = tools.Unknown(toolCall.Name)
+	}
 	// Create a new context with the ToolCall value
 	ctxWithValue := context.WithValue(ctx, ToolCallContextKey, toolCall)
 	runner := tools.NewRunner(ctxWithValue, toolbox, func(status string) {

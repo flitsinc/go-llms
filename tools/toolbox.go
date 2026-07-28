@@ -61,8 +61,7 @@ func (t *Toolbox) Get(funcName string) Tool {
 func (t *Toolbox) Run(r Runner, funcName string, params json.RawMessage) Result {
 	tool := t.Get(funcName)
 	if tool == nil {
-		err := fmt.Errorf("tool %q not found", funcName)
-		return Error(err)
+		return Error(&NotFoundError{FuncName: funcName})
 	}
 	return tool.Run(r, params)
 }

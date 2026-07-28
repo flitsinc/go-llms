@@ -154,6 +154,31 @@ func main() {
 }
 ```
 
+### Tools that don't exist
+
+Models sometimes call a tool that isn't in the toolbox — a mangled name, or a
+real tool that was removed while the conversation history still mentions it.
+This doesn't end the chat: the call produces a `tool "name" not found` error
+result, which the model sees on its next turn so it can pick a different tool.
+
+The `ToolStartUpdate` and `ToolDoneUpdate` for such a call carry a placeholder
+tool. **Nothing is executed for it**, so if you do anything at `tool_start`
+(spawn a worker, kick off a workflow), check for the placeholder first:
+
+```go
+case llms.ToolStartUpdate:
+    if tools.IsUnknown(update.Tool) {
+        // There is no tool to run; the result is already an error.
+        break
+    }
+    startExecuting(update.Tool)
+```
+
+Use `errors.As` with `*tools.NotFoundError` to tell this apart from an error a
+real tool returned. A model that spends several turns in a row calling only
+tools that don't exist ends the chat with `llms.ErrTooManyUnknownTools`; tune
+how many turns it gets with `llm.WithMaxUnknownToolTurns(n)`.
+
 ## External Tools
 
 Sometimes, you might have a set of predefined tool schemas (perhaps from an external source or another system) that you want the LLM to be able to use. `AddExternalTools` allows you to provide these schemas along with a single handler function.

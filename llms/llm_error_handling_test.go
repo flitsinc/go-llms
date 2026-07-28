@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,10 +52,12 @@ func TestEmptyToolCallIDError(t *testing.T) {
 	assert.Contains(t, llm.Err().Error(), "test_tool", "Error should include the tool name")
 }
 
-// TestTurnToolNotFound tests the error path when a called tool is not in the toolbox.
+// TestTurnToolNotFound tests that calling a tool that is not in the toolbox
+// produces an error tool result the model can recover from, instead of aborting
+// the turn.
 func TestTurnToolNotFound(t *testing.T) {
-	// Arrange: Provider that yields a non-existent tool, LLM with *some other* tool
-	provider := &mockProviderToolNotFound{}
+	// Arrange: Provider that calls a non-existent tool, LLM with *some other* tool
+	provider := &mockProvider{toolCallsToMake: []string{"tool_does_not_exist"}}
 	llm, _ := setupTestLLM(t, provider, testTool) // LLM has 'test_tool', provider calls 'tool_does_not_exist'
 
 	// Act: Run chat
@@ -62,14 +65,80 @@ func TestTurnToolNotFound(t *testing.T) {
 	defer cancel()
 	updates := runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: Should get text update, then an error
-	require.NotEmpty(t, updates, "Should receive at least one update before error")
-	require.Len(t, updates, 1)
+	// Assert: The turn ran to completion and continued into a second turn.
+	assert.NoError(t, llm.Err(), "An unknown tool should not abort the chat")
+
+	// Turn 1: Text, ToolStart, 2xToolDelta, ToolDone. Turn 2: Text.
+	require.Len(t, updates, 6)
 	_, isText := updates[0].(TextUpdate)
 	assert.True(t, isText, "First update should be text")
 
-	require.Error(t, llm.Err(), "LLM should have an error")
-	assert.Contains(t, llm.Err().Error(), "tool \"tool_does_not_exist\" not found", "Error message should indicate tool not found")
+	startUpdate, ok := updates[1].(ToolStartUpdate)
+	require.True(t, ok, "Update 1 should be ToolStartUpdate")
+	require.NotNil(t, startUpdate.Tool, "Unknown tools still need a Tool for consumers to display")
+	assert.True(t, tools.IsUnknown(startUpdate.Tool), "The started tool should be flagged as unknown")
+	assert.Equal(t, "tool_does_not_exist", startUpdate.Tool.FuncName())
+
+	doneUpdate, ok := updates[4].(ToolDoneUpdate)
+	require.True(t, ok, "Update 4 should be ToolDoneUpdate")
+	assert.True(t, tools.IsUnknown(doneUpdate.Tool), "The finished tool should be flagged as unknown")
+	require.Error(t, doneUpdate.Result.Error(), "The result should carry the not-found error")
+	assert.Contains(t, doneUpdate.Result.Error().Error(), "tool \"tool_does_not_exist\" not found")
+	var notFound *tools.NotFoundError
+	require.ErrorAs(t, doneUpdate.Result.Error(), &notFound, "The error should be identifiable as a not-found error")
+	assert.Equal(t, "tool_does_not_exist", notFound.FuncName)
+
+	_, isText = updates[5].(TextUpdate)
+	assert.True(t, isText, "The model should have gotten another turn after the error result")
+
+	// Assert: The error was fed back to the model as a tool result.
+	var toolMessages []Message
+	for _, msg := range provider.messages {
+		if msg.Role == "tool" {
+			toolMessages = append(toolMessages, msg)
+		}
+	}
+	require.Len(t, toolMessages, 1, "The unknown call should still produce a tool result")
+	assert.Equal(t, "tool_does_not_exist", toolMessages[0].ToolCallName)
+	assert.True(t, toolMessages[0].IsError, "The tool result should be marked as an error")
+}
+
+// TestTurnUnknownToolLoopStops tests that a model which only ever calls tools
+// that don't exist eventually gives up instead of looping forever.
+func TestTurnUnknownToolLoopStops(t *testing.T) {
+	// Arrange: Provider that calls a non-existent tool on every single turn.
+	provider := &mockAlwaysUnknownToolProvider{}
+	llm, _ := setupTestLLM(t, provider, testTool)
+	llm.WithMaxUnknownToolTurns(2)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: Stopped after the configured number of turns, with a clear error.
+	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
+	assert.Equal(t, 2, provider.generateCount, "Should have stopped after 2 unknown-only turns")
+	// Each turn: Text, ToolStart, ToolDelta, ToolDone.
+	assert.Len(t, updates, 8)
+}
+
+// TestTurnUnknownToolLoopResets tests that turns which call a real tool reset
+// the unknown tool counter, so recovering models aren't cut off.
+func TestTurnUnknownToolLoopResets(t *testing.T) {
+	// Arrange: Provider that alternates between an unknown tool and a real one.
+	provider := &mockAlwaysUnknownToolProvider{realToolEveryOtherTurn: true, maxTurns: 6}
+	llm, _ := setupTestLLM(t, provider, testTool)
+	llm.WithMaxUnknownToolTurns(2)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: The chat was never cut short by the unknown tool guard.
+	assert.NoError(t, llm.Err())
+	assert.Equal(t, 6, provider.generateCount)
 }
 
 // TestRunToolCallWithError tests the behavior when a called tool returns an error.
