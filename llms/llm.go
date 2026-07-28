@@ -317,6 +317,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// doesn't loop forever (see maxUnknownToolTurns).
 	var knownToolCalls, unknownToolCalls int
 
+	// Tracks the calls to tools that don't exist, so any that never reached
+	// StreamStatusToolCallReady can still be finished below.
+	var begunUnknownToolCalls []ToolCall
+
 	for status := range stream.Iter() {
 		// For now assume the first event we get on the stream is the first token.
 		if shouldReportTTFT {
@@ -394,6 +398,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				// and can pick a different tool.
 				tool = tools.Unknown(toolCall.Name)
 				unknownToolCalls++
+				begunUnknownToolCalls = append(begunUnknownToolCalls, toolCall)
 			} else {
 				knownToolCalls++
 			}
@@ -445,6 +450,20 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// even if the iterator itself didn't return an error.
 	if ctx.Err() != nil {
 		return false, ctx.Err()
+	}
+
+	// A tool call that began but never reached StreamStatusToolCallReady (a
+	// provider truncating the stream, say) leaves the assistant message with a
+	// tool call that has no result, which providers reject on the next request.
+	// An unknown tool's result doesn't depend on its arguments, so finish those
+	// here rather than leaving the call dangling and the consumer holding a
+	// ToolStartUpdate that never settles. Calls to tools that do exist can't be
+	// finished this way, since running one needs its arguments.
+	for _, toolCall := range begunUnknownToolCalls {
+		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			continue
+		}
+		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
 	}
 
 	// Add the fully assembled message plus tool call results to the message history.

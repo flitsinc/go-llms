@@ -463,12 +463,17 @@ func runTestChat(ctx context.Context, t *testing.T, llm *LLM, message string) []
 // gets back.
 type mockAlwaysUnknownToolProvider struct {
 	generateCount int
+	// lastMessages is the history handed to the most recent Generate call.
+	lastMessages []Message
 	// realToolEveryOtherTurn makes every second turn call a tool that does
 	// exist, so the model looks like it's making progress in between.
 	realToolEveryOtherTurn bool
 	// maxTurns, when non-zero, is the turn on which the provider stops calling
 	// tools so the chat can end on its own.
 	maxTurns int
+	// truncate ends the stream after the tool call has begun, without ever
+	// reaching StreamStatusToolCallReady.
+	truncate bool
 }
 
 func (m *mockAlwaysUnknownToolProvider) Company() string { return "Test Company" }
@@ -485,7 +490,8 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 	jsonOutputSchema *tools.ValueSchema,
 ) ProviderStream {
 	m.generateCount++
-	s := &mockStreamUnknownTool{turn: m.generateCount}
+	m.lastMessages = messages
+	s := &mockStreamUnknownTool{turn: m.generateCount, truncate: m.truncate}
 	if m.maxTurns > 0 && m.generateCount >= m.maxTurns {
 		s.noToolCall = true
 	} else if m.realToolEveryOtherTurn && m.generateCount%2 == 0 {
@@ -500,6 +506,7 @@ type mockStreamUnknownTool struct {
 	turn       int
 	toolName   string
 	noToolCall bool
+	truncate   bool
 	message    Message
 }
 
@@ -526,6 +533,11 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 		}
 		s.message.ToolCalls[0].Arguments = json.RawMessage(`{"test_param":"value"}`)
 		if !yield(StreamStatusToolCallDelta) {
+			return
+		}
+		if s.truncate {
+			// The stream ends mid-call, without error, as a provider cutting the
+			// connection short would.
 			return
 		}
 		yield(StreamStatusToolCallReady)

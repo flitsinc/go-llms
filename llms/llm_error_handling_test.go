@@ -132,6 +132,45 @@ func TestTurnUnknownToolLoopStops(t *testing.T) {
 	assert.Equal(t, []bool{true, false}, turnSuccess)
 }
 
+// TestTurnUnknownToolTruncatedStream tests that an unknown tool call which
+// never reaches ToolCallReady still gets a result, so the assistant message
+// isn't left with a tool call that no tool result answers (which providers
+// reject on the next request).
+func TestTurnUnknownToolTruncatedStream(t *testing.T) {
+	// Arrange: Provider whose stream ends mid-call, without an error.
+	provider := &mockAlwaysUnknownToolProvider{truncate: true, maxTurns: 2}
+	llm, _ := setupTestLLM(t, provider, testTool)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	updates := runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: The call was settled even though the stream never finished it.
+	assert.NoError(t, llm.Err())
+	require.Len(t, updates, 5) // Text, ToolStart, ToolDelta, ToolDone, Text
+	doneUpdate, ok := updates[3].(ToolDoneUpdate)
+	require.True(t, ok, "The started tool call should still be settled")
+	assert.True(t, tools.IsUnknown(doneUpdate.Tool))
+	require.Error(t, doneUpdate.Result.Error())
+
+	// Assert: Every tool call in the history has a matching tool result.
+	var lastAssistant Message
+	results := map[string]bool{}
+	for _, msg := range provider.lastMessages {
+		if msg.Role == "assistant" {
+			lastAssistant = msg
+		}
+		if msg.Role == "tool" {
+			results[msg.ToolCallID] = true
+		}
+	}
+	require.NotEmpty(t, lastAssistant.ToolCalls, "The truncated turn should still have recorded its tool call")
+	for _, toolCall := range lastAssistant.ToolCalls {
+		assert.True(t, results[toolCall.ID], "Tool call %q was left without a result", toolCall.ID)
+	}
+}
+
 // TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
 // doesn't leak into the next chat on the same LLM, which would cut that chat off
 // on its first unknown tool call.
