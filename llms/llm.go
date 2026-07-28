@@ -446,7 +446,6 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	success = true
 
 	// Add the fully assembled message plus tool call results to the message history.
 	l.lastSentMessages = append(l.lastSentMessages, stream.Message())
@@ -474,6 +473,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	} else {
 		l.unknownToolTurns = 0
 	}
+
+	// Set last, so that every error return above (including the unknown tool
+	// guard) reports the turn as unsuccessful to TrackUsage.
+	success = true
 
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil

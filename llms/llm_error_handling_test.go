@@ -111,6 +111,11 @@ func TestTurnUnknownToolLoopStops(t *testing.T) {
 	llm, _ := setupTestLLM(t, provider, testTool)
 	llm.WithMaxUnknownToolTurns(2)
 
+	var turnSuccess []bool
+	llm.TrackUsage = func(ctx context.Context, usage Usage, success bool) {
+		turnSuccess = append(turnSuccess, success)
+	}
+
 	// Act: Run chat
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -121,6 +126,10 @@ func TestTurnUnknownToolLoopStops(t *testing.T) {
 	assert.Equal(t, 2, provider.generateCount, "Should have stopped after 2 unknown-only turns")
 	// Each turn: Text, ToolStart, ToolDelta, ToolDone.
 	assert.Len(t, updates, 8)
+
+	// Assert: The turn that gave up is reported as unsuccessful, so usage
+	// tracking agrees with the error the caller sees.
+	assert.Equal(t, []bool{true, false}, turnSuccess)
 }
 
 // TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
