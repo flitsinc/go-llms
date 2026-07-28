@@ -478,6 +478,12 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 		}
 		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
+		// runToolCall drops its ToolDoneUpdate if the context went away while
+		// it ran, so check again rather than falling through to the guard below
+		// and reporting an unknown tool loop instead of the cancellation.
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
 	}
 
 	// Add the fully assembled message plus tool call results to the message history.
