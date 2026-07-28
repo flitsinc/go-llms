@@ -138,6 +138,10 @@ func (l *LLM) ChatUsingMessages(ctx context.Context, messages []Message) <-chan 
 	l.lastSentMessages = messages
 	// Reset error state for new chat
 	l.err = nil
+	// The unknown tool streak measures a model failing to recover within one
+	// chat, so a new chat starts it over. (Unlike turns, which is a budget for
+	// the lifetime of the LLM.)
+	l.unknownToolTurns = 0
 
 	updateChan := make(chan Update)
 

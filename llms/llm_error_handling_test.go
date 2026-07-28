@@ -123,6 +123,31 @@ func TestTurnUnknownToolLoopStops(t *testing.T) {
 	assert.Len(t, updates, 8)
 }
 
+// TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
+// doesn't leak into the next chat on the same LLM, which would cut that chat off
+// on its first unknown tool call.
+func TestTurnUnknownToolLoopResetsBetweenChats(t *testing.T) {
+	// Arrange: Provider that calls a non-existent tool on every single turn.
+	provider := &mockAlwaysUnknownToolProvider{}
+	llm, _ := setupTestLLM(t, provider, testTool)
+	llm.WithMaxUnknownToolTurns(2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Act: Run a chat that exhausts the allowance, then start a fresh one.
+	_ = runTestChat(ctx, t, llm, "Test message")
+	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
+	require.Equal(t, 2, provider.generateCount)
+
+	_ = runTestChat(ctx, t, llm, "Another message")
+
+	// Assert: The second chat got the full allowance again, rather than
+	// stopping after a single turn.
+	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
+	assert.Equal(t, 4, provider.generateCount, "The new chat should start the streak over")
+}
+
 // TestTurnUnknownToolLoopResets tests that turns which call a real tool reset
 // the unknown tool counter, so recovering models aren't cut off.
 func TestTurnUnknownToolLoopResets(t *testing.T) {
