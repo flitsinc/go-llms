@@ -20,6 +20,10 @@ var (
 	// back to the model as a tool error it can recover from; this is the guard
 	// against it never recovering.
 	ErrTooManyUnknownTools = errors.New("too many consecutive turns calling unknown tools")
+	// ErrIncompleteToolCall is returned when the provider ended the stream
+	// while a tool call was still in progress, which leaves that call with no
+	// result to answer it. Retrying the turn is usually the right response.
+	ErrIncompleteToolCall = errors.New("provider ended the stream mid tool call")
 )
 
 // defaultMaxUnknownToolTurns is how many turns in a row may consist solely of
@@ -465,18 +469,20 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		// The arguments may not parse, whether the stream cut them off
-		// mid-value or the model simply emitted something malformed. Providers
-		// put them straight into the replayed call, where invalid JSON fails to
-		// encode, and nothing is going to run them anyway. This applies however
-		// the call ended, so it happens before the finished ones are skipped.
+		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			continue
+		}
+		// The stream stopped partway through the arguments, so whatever it did
+		// deliver is a fragment that may not parse. Providers put them straight
+		// into the replayed call, where invalid JSON fails to encode, and
+		// nothing is going to run them anyway. Arguments the model did finish
+		// are left alone even when they don't parse as JSON: a grammar-based
+		// tool's arguments are free-form text by design, and only the provider
+		// knows how it serializes them.
 		for i := range message.ToolCalls {
 			if message.ToolCalls[i].ID == toolCall.ID && !json.Valid(message.ToolCalls[i].Arguments) {
 				message.ToolCalls[i].Arguments = json.RawMessage(`{}`)
 			}
-		}
-		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
-			continue
 		}
 		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
 		// runToolCall drops its ToolDoneUpdate if the context went away while
@@ -484,6 +490,18 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		// and reporting an unknown tool loop instead of the cancellation.
 		if ctx.Err() != nil {
 			return false, ctx.Err()
+		}
+	}
+
+	// Every call the model made needs a result to go back with it. One that
+	// began but never finished has none, and providers reject a request that
+	// leaves a call unanswered, so the turn can't be used and the history it
+	// would produce can't be sent again. Unknown calls are settled above; a
+	// call to a tool that does exist can't be, since running it needs the
+	// arguments the stream never delivered.
+	for _, toolCall := range message.ToolCalls {
+		if !slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			return false, fmt.Errorf("%w: %q (%s)", ErrIncompleteToolCall, toolCall.ID, toolCall.Name)
 		}
 	}
 
@@ -517,18 +535,6 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// Set last, so that every error return above (including the unknown tool
 	// guard) reports the turn as unsuccessful to TrackUsage.
 	success = true
-
-	// Going another round only makes sense if the model can see a result for
-	// every call it made. A call that began but never finished has none, and
-	// providers reject a request that leaves one unanswered, so stop rather
-	// than send one that can't succeed. Unknown calls are settled above; a call
-	// to a tool that does exist can't be, since running it needs the arguments
-	// the stream never delivered.
-	for _, toolCall := range message.ToolCalls {
-		if !slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
-			return false, nil
-		}
-	}
 
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil

@@ -474,9 +474,9 @@ type mockAlwaysUnknownToolProvider struct {
 	// truncate ends the stream after the tool call has begun, without ever
 	// reaching StreamStatusToolCallReady.
 	truncate bool
-	// malformedArgs delivers arguments that don't parse, but still finishes the
-	// call properly.
-	malformedArgs bool
+	// freeFormArgs delivers arguments that aren't JSON at all, as a
+	// grammar-based tool would, and still finishes the call properly.
+	freeFormArgs bool
 	// danglingKnownCall begins a call to a tool that does exist after the
 	// unknown one has finished, and then ends the stream without finishing it.
 	danglingKnownCall bool
@@ -500,7 +500,7 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 	s := &mockStreamUnknownTool{
 		turn:              m.generateCount,
 		truncate:          m.truncate,
-		malformedArgs:     m.malformedArgs,
+		freeFormArgs:      m.freeFormArgs,
 		danglingKnownCall: m.danglingKnownCall,
 	}
 	if m.maxTurns > 0 && m.generateCount >= m.maxTurns {
@@ -518,7 +518,7 @@ type mockStreamUnknownTool struct {
 	toolName          string
 	noToolCall        bool
 	truncate          bool
-	malformedArgs     bool
+	freeFormArgs      bool
 	danglingKnownCall bool
 	message           Message
 }
@@ -545,9 +545,12 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 			return
 		}
 		args := `{"test_param":"value"}`
-		if s.truncate || s.malformedArgs {
+		if s.truncate {
 			// Cut off mid-value, so the delivered arguments don't parse.
 			args = `{"test_param":`
+		} else if s.freeFormArgs {
+			// Not JSON at all, as a grammar-based tool's arguments would be.
+			args = `custom input`
 		}
 		s.message.ToolCalls[0].Arguments = json.RawMessage(args)
 		if !yield(StreamStatusToolCallDelta) {

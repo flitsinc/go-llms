@@ -177,12 +177,13 @@ func TestTurnUnknownToolTruncatedStream(t *testing.T) {
 	}
 }
 
-// TestTurnUnknownToolMalformedArguments tests that arguments which don't parse
-// are neutralized even when the call finishes normally, since the assistant
-// message is replayed on the next request either way.
-func TestTurnUnknownToolMalformedArguments(t *testing.T) {
-	// Arrange: Provider whose unknown call completes, but with bad arguments.
-	provider := &mockAlwaysUnknownToolProvider{malformedArgs: true, maxTurns: 2}
+// TestTurnUnknownToolFreeFormArguments tests that arguments the model actually
+// finished are left alone even when they aren't JSON, since a grammar-based
+// tool's arguments are free-form text by design and only the provider knows
+// how it serializes them.
+func TestTurnUnknownToolFreeFormArguments(t *testing.T) {
+	// Arrange: Provider whose unknown call completes with non-JSON arguments.
+	provider := &mockAlwaysUnknownToolProvider{freeFormArgs: true, maxTurns: 2}
 	llm, _ := setupTestLLM(t, provider, testTool)
 
 	// Act: Run chat
@@ -190,35 +191,53 @@ func TestTurnUnknownToolMalformedArguments(t *testing.T) {
 	defer cancel()
 	_ = runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: The turn continued, and what it sent back is encodable.
+	// Assert: The turn continued, carrying the arguments through untouched.
 	assert.NoError(t, llm.Err())
 	require.Equal(t, 2, provider.generateCount, "The model should have gotten another turn")
+	var seen bool
 	for _, msg := range provider.lastMessages {
 		for _, toolCall := range msg.ToolCalls {
-			assert.True(t, json.Valid(toolCall.Arguments),
-				"Tool call %q kept unparseable arguments: %s", toolCall.ID, toolCall.Arguments)
+			seen = true
+			assert.Equal(t, "custom input", string(toolCall.Arguments),
+				"Finished arguments should be passed through as the model wrote them")
 		}
 	}
+	assert.True(t, seen, "The replayed history should contain the tool call")
 }
 
-// TestTurnDanglingKnownToolStopsTurn tests that settling unknown calls doesn't
+// TestTurnDanglingKnownToolErrors tests that settling unknown calls doesn't
 // carry an unfinished call to a real tool into the next request, which the
 // provider would reject for having no matching tool result.
-func TestTurnDanglingKnownToolStopsTurn(t *testing.T) {
+func TestTurnDanglingKnownToolErrors(t *testing.T) {
 	// Arrange: Provider that finishes an unknown call, then begins a call to a
 	// real tool and never finishes it.
 	provider := &mockAlwaysUnknownToolProvider{danglingKnownCall: true}
 	llm, _ := setupTestLLM(t, provider, testTool)
 
+	var turnSuccess []bool
+	llm.TrackUsage = func(ctx context.Context, usage Usage, success bool) {
+		turnSuccess = append(turnSuccess, success)
+	}
+
 	// Act: Run chat
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: The chat stopped rather than sending a request that can't succeed.
-	assert.NoError(t, llm.Err())
+	// Assert: Reported rather than quietly continuing into a doomed request.
+	require.ErrorIs(t, llm.Err(), ErrIncompleteToolCall)
+	assert.Contains(t, llm.Err().Error(), "test_tool", "The error should name the unfinished call")
 	assert.Equal(t, 1, provider.generateCount,
 		"Should not have continued with a tool call that has no result")
+	assert.Equal(t, []bool{false}, turnSuccess, "The turn should not count as successful")
+
+	// Assert: The unusable history was not kept, so a later chat doesn't replay it.
+	for _, msg := range llm.lastSentMessages {
+		for _, toolCall := range msg.ToolCalls {
+			assert.NotEqual(t, "known-id-1", toolCall.ID,
+				"The unanswered call should not have been recorded")
+		}
+	}
 }
 
 // TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
