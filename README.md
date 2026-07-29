@@ -175,8 +175,12 @@ case llms.ToolStartUpdate:
 ```
 
 Use `errors.As` with `*tools.NotFoundError` to tell this apart from an error a
-real tool returned. A model that keeps calling tools that don't exist is bound
-by `WithMaxTurns`, the same as any other unproductive loop.
+real tool returned.
+
+A model that keeps calling tools that don't exist gets no rule of its own: like
+any other unproductive loop, it runs until `WithMaxTurns` stops it. That limit
+is unlimited by default, so set one if you don't already — otherwise a model
+that never stops inventing tool names never stops.
 
 ## External Tools
 
