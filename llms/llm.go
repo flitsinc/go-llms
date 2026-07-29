@@ -15,6 +15,10 @@ import (
 var (
 	ErrMaxTurnsReached            = errors.New("max turns reached")
 	ErrToolsAndJSONOutputConflict = errors.New("cannot specify both tools and a JSON output schema")
+	// ErrIncompleteToolCall is returned when the provider ended the stream
+	// while a tool call was still in progress, which leaves that call with no
+	// result to answer it. Retrying the turn is usually the right response.
+	ErrIncompleteToolCall = errors.New("provider ended the stream mid tool call")
 )
 
 func cloneMetadata(src map[string]string) map[string]string {
@@ -283,6 +287,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// provider so we can reduce allocations.
 	var toolCallDeltaSentBytes int
 
+	// Tracks the calls to tools that don't exist, so any that never reached
+	// StreamStatusToolCallReady can still be finished below.
+	var begunUnknownToolCalls []ToolCall
+
 	for status := range stream.Iter() {
 		// For now assume the first event we get on the stream is the first token.
 		if shouldReportTTFT {
@@ -351,7 +359,15 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 			tool := l.toolbox.Get(toolCall.Name)
 			if tool == nil {
-				return false, fmt.Errorf("tool %q not found", toolCall.Name)
+				// The model named a tool that doesn't exist, either because it
+				// hallucinated the name or because the tool was removed while
+				// the conversation history still mentions it. Rather than
+				// aborting the turn, stand in a placeholder so the call runs
+				// nothing and produces the same "tool not found" result
+				// Toolbox.Run would have; the model sees that on its next turn
+				// and can pick a different tool.
+				tool = tools.Unknown(toolCall.Name)
+				begunUnknownToolCalls = append(begunUnknownToolCalls, toolCall)
 			}
 			toolCallDeltaSentBytes = 0
 			updateChan <- ToolStartUpdate{ToolCallID: toolCall.ID, Tool: tool}
@@ -402,10 +418,58 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	success = true
+
+	message := stream.Message()
+
+	// A tool call that began but never reached StreamStatusToolCallReady (a
+	// provider truncating the stream, say) leaves the assistant message with a
+	// tool call that has no result, which providers reject on the next request.
+	// An unknown tool's result doesn't depend on its arguments, so finish those
+	// here rather than leaving the call dangling and the consumer holding a
+	// ToolStartUpdate that never settles. Calls to tools that do exist can't be
+	// finished this way, since running one needs its arguments.
+	for _, toolCall := range begunUnknownToolCalls {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			continue
+		}
+		// The stream stopped partway through the arguments, so whatever it did
+		// deliver is a fragment that may not parse. Providers put them straight
+		// into the replayed call, where invalid JSON fails to encode, and
+		// nothing is going to run them anyway. Arguments the model did finish
+		// are left alone even when they don't parse as JSON: a grammar-based
+		// tool's arguments are free-form text by design, and only the provider
+		// knows how it serializes them.
+		for i := range message.ToolCalls {
+			if message.ToolCalls[i].ID == toolCall.ID && !json.Valid(message.ToolCalls[i].Arguments) {
+				message.ToolCalls[i].Arguments = json.RawMessage(`{}`)
+			}
+		}
+		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
+		// runToolCall drops its ToolDoneUpdate if the context went away while it
+		// ran, so check again rather than recording a turn whose result the
+		// consumer never saw.
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+	}
+
+	// Every call the model made needs a result to go back with it. One that
+	// began but never finished has none, and providers reject a request that
+	// leaves a call unanswered, so the turn can't be used and the history it
+	// would produce can't be sent again. Unknown calls are settled above; a
+	// call to a tool that does exist can't be, since running it needs the
+	// arguments the stream never delivered.
+	for _, toolCall := range message.ToolCalls {
+		if !slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			return false, fmt.Errorf("%w: %q (%s)", ErrIncompleteToolCall, toolCall.ID, toolCall.Name)
+		}
+	}
 
 	// Add the fully assembled message plus tool call results to the message history.
-	l.lastSentMessages = append(l.lastSentMessages, stream.Message())
+	l.lastSentMessages = append(l.lastSentMessages, message)
 	// Role "tool" must always come first.
 	slices.SortStableFunc(toolMessages, func(a, b Message) int {
 		if a.Role == "tool" && b.Role != "tool" {
@@ -417,6 +481,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		return 0
 	})
 	l.lastSentMessages = append(l.lastSentMessages, toolMessages...)
+
+	// Set last, so that every error return above reports the turn as
+	// unsuccessful to TrackUsage.
+	success = true
 
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil
@@ -435,6 +503,13 @@ func (l *LLM) runToolCall(ctx context.Context, toolbox *tools.Toolbox, toolCall 
 	}
 
 	t := toolbox.Get(toolCall.Name)
+	if t == nil {
+		// Keep the updates below consistent with the ToolStartUpdate that was
+		// already sent for this call: a placeholder tool instead of nil. The
+		// result comes from Toolbox.Run, which reports the same "tool not
+		// found" error without running anything.
+		t = tools.Unknown(toolCall.Name)
+	}
 	// Create a new context with the ToolCall value
 	ctxWithValue := context.WithValue(ctx, ToolCallContextKey, toolCall)
 	runner := tools.NewRunner(ctxWithValue, toolbox, func(status string) {

@@ -458,78 +458,140 @@ func runTestChat(ctx context.Context, t *testing.T, llm *LLM, message string) []
 
 // --- Mocks for Tool Not Found Test ---
 
-// mockStreamToolNotFound yields a call to a non-existent tool.
-type mockStreamToolNotFound struct {
-	message Message // Store message locally
+// mockAlwaysUnknownToolProvider calls a tool that isn't in the toolbox on every
+// turn, i.e. a model that never learns from the "tool not found" results it
+// gets back.
+type mockAlwaysUnknownToolProvider struct {
+	generateCount int
+	// lastMessages is the history handed to the most recent Generate call.
+	lastMessages []Message
+	// maxTurns, when non-zero, is the turn on which the provider stops calling
+	// tools so the chat can end on its own.
+	maxTurns int
+	// truncate ends the stream after the tool call has begun, without ever
+	// reaching StreamStatusToolCallReady.
+	truncate bool
+	// freeFormArgs delivers arguments that aren't JSON at all, as a
+	// grammar-based tool would, and still finishes the call properly.
+	freeFormArgs bool
+	// danglingKnownCall begins a call to a tool that does exist after the
+	// unknown one has finished, and then ends the stream without finishing it.
+	danglingKnownCall bool
 }
 
-func (s *mockStreamToolNotFound) Err() error { return nil }
+func (m *mockAlwaysUnknownToolProvider) Company() string { return "Test Company" }
 
-func (s *mockStreamToolNotFound) Iter() func(func(StreamStatus) bool) {
-	return func(yield func(StreamStatus) bool) {
-		// Yield text first
-		if !yield(StreamStatusText) {
-			return
-		}
-		// Prepare the non-existent tool call in the message
-		s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
-			ID:        "not-found-id-1",
-			Name:      "tool_does_not_exist", // This tool is not added to the LLM
-			Arguments: json.RawMessage(`{}`),
-		})
-		// Yield begin, which should trigger the error in the turn method
-		yield(StreamStatusToolCallBegin)
-		// Do not yield Ready, as the error should occur before that
-	}
-}
+func (m *mockAlwaysUnknownToolProvider) Model() string { return "test-model" }
 
-func (s *mockStreamToolNotFound) Message() Message {
-	if s.message.Content == nil {
-		s.message = Message{
-			Role:      "assistant",
-			Content:   content.FromText("Trying a tool..."),
-			ToolCalls: s.message.ToolCalls,
-		}
-	}
-	return s.message
-}
+func (m *mockAlwaysUnknownToolProvider) SetHTTPClient(_ *http.Client) {}
 
-func (s *mockStreamToolNotFound) Text() string { return "Trying a tool..." }
-
-func (s *mockStreamToolNotFound) Audio() (string, string) { return "", "" }
-func (s *mockStreamToolNotFound) Image() (string, string) { return "", "" }
-
-func (s *mockStreamToolNotFound) Thought() content.Thought { return content.Thought{} }
-
-func (s *mockStreamToolNotFound) ToolCall() ToolCall {
-	if len(s.message.ToolCalls) > 0 {
-		return s.message.ToolCalls[len(s.message.ToolCalls)-1]
-	}
-	return ToolCall{}
-}
-
-func (s *mockStreamToolNotFound) Usage() Usage { return Usage{} }
-
-// mockProviderToolNotFound returns the mockStreamToolNotFound.
-type mockProviderToolNotFound struct {
-	mockProvider // Embed basic mockProvider
-}
-
-func (m *mockProviderToolNotFound) Generate(
+func (m *mockAlwaysUnknownToolProvider) Generate(
 	ctx context.Context,
 	systemPrompt content.Content,
 	messages []Message,
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) ProviderStream {
-	// Manually update embedded mockProvider fields
-	m.mockProvider.generateCalled = true
-	m.mockProvider.systemPrompt = systemPrompt
-	m.mockProvider.messages = messages
-	m.mockProvider.toolbox = toolbox
-	m.mockProvider.jsonOutputSchema = jsonOutputSchema // Store schema
-	return &mockStreamToolNotFound{}
+	m.generateCount++
+	m.lastMessages = messages
+	s := &mockStreamUnknownTool{
+		turn:              m.generateCount,
+		truncate:          m.truncate,
+		freeFormArgs:      m.freeFormArgs,
+		danglingKnownCall: m.danglingKnownCall,
+	}
+	if m.maxTurns > 0 && m.generateCount >= m.maxTurns {
+		s.noToolCall = true
+	}
+	return s
 }
+
+// mockStreamUnknownTool yields text plus a single tool call, by default to a
+// tool that doesn't exist.
+type mockStreamUnknownTool struct {
+	turn              int
+	noToolCall        bool
+	truncate          bool
+	freeFormArgs      bool
+	danglingKnownCall bool
+	message           Message
+}
+
+func (s *mockStreamUnknownTool) Err() error { return nil }
+
+func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
+	return func(yield func(StreamStatus) bool) {
+		if !yield(StreamStatusText) {
+			return
+		}
+		if s.noToolCall {
+			return
+		}
+		s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
+			ID:   fmt.Sprintf("unknown-id-%d", s.turn),
+			Name: fmt.Sprintf("tool_does_not_exist_%d", s.turn),
+		})
+		if !yield(StreamStatusToolCallBegin) {
+			return
+		}
+		args := `{"test_param":"value"}`
+		if s.truncate {
+			// Cut off mid-value, so the delivered arguments don't parse.
+			args = `{"test_param":`
+		} else if s.freeFormArgs {
+			// Not JSON at all, as a grammar-based tool's arguments would be.
+			args = `custom input`
+		}
+		s.message.ToolCalls[0].Arguments = json.RawMessage(args)
+		if !yield(StreamStatusToolCallDelta) {
+			return
+		}
+		if s.truncate {
+			// The stream ends mid-call, without error, as a provider cutting the
+			// connection short would.
+			return
+		}
+		if !yield(StreamStatusToolCallReady) {
+			return
+		}
+		if s.danglingKnownCall {
+			// A second call, to a tool that does exist, which the stream never
+			// finishes.
+			s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
+				ID:   fmt.Sprintf("known-id-%d", s.turn),
+				Name: "test_tool",
+			})
+			yield(StreamStatusToolCallBegin)
+		}
+	}
+}
+
+func (s *mockStreamUnknownTool) Message() Message {
+	if s.message.Content == nil {
+		s.message = Message{
+			Role:      "assistant",
+			Content:   content.FromText(s.Text()),
+			ToolCalls: s.message.ToolCalls,
+		}
+	}
+	return s.message
+}
+
+func (s *mockStreamUnknownTool) Text() string { return "Trying a tool..." }
+
+func (s *mockStreamUnknownTool) Audio() (string, string) { return "", "" }
+func (s *mockStreamUnknownTool) Image() (string, string) { return "", "" }
+
+func (s *mockStreamUnknownTool) Thought() content.Thought { return content.Thought{} }
+
+func (s *mockStreamUnknownTool) ToolCall() ToolCall {
+	if len(s.message.ToolCalls) > 0 {
+		return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+	}
+	return ToolCall{}
+}
+
+func (s *mockStreamUnknownTool) Usage() Usage { return Usage{} }
 
 // mockToolForStatusTest is a simple tool used for testing status updates path.
 var mockToolForStatusTest = tools.Func("Status Tool", "A tool used for status test", "status_tool",
