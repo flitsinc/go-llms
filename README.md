@@ -175,9 +175,8 @@ case llms.ToolStartUpdate:
 ```
 
 Use `errors.As` with `*tools.NotFoundError` to tell this apart from an error a
-real tool returned. A model that spends several turns in a row calling only
-tools that don't exist ends the chat with `llms.ErrTooManyUnknownTools`; tune
-how many turns it gets with `llm.WithMaxUnknownToolTurns(n)`.
+real tool returned. A model that keeps calling tools that don't exist is bound
+by `WithMaxTurns`, the same as any other unproductive loop.
 
 ## External Tools
 

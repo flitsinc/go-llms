@@ -465,9 +465,6 @@ type mockAlwaysUnknownToolProvider struct {
 	generateCount int
 	// lastMessages is the history handed to the most recent Generate call.
 	lastMessages []Message
-	// realToolEveryOtherTurn makes every second turn call a tool that does
-	// exist, so the model looks like it's making progress in between.
-	realToolEveryOtherTurn bool
 	// maxTurns, when non-zero, is the turn on which the provider stops calling
 	// tools so the chat can end on its own.
 	maxTurns int
@@ -505,8 +502,6 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 	}
 	if m.maxTurns > 0 && m.generateCount >= m.maxTurns {
 		s.noToolCall = true
-	} else if m.realToolEveryOtherTurn && m.generateCount%2 == 0 {
-		s.toolName = "test_tool"
 	}
 	return s
 }
@@ -515,7 +510,6 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 // tool that doesn't exist.
 type mockStreamUnknownTool struct {
 	turn              int
-	toolName          string
 	noToolCall        bool
 	truncate          bool
 	freeFormArgs      bool
@@ -533,13 +527,9 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 		if s.noToolCall {
 			return
 		}
-		name := s.toolName
-		if name == "" {
-			name = fmt.Sprintf("tool_does_not_exist_%d", s.turn)
-		}
 		s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
 			ID:   fmt.Sprintf("unknown-id-%d", s.turn),
-			Name: name,
+			Name: fmt.Sprintf("tool_does_not_exist_%d", s.turn),
 		})
 		if !yield(StreamStatusToolCallBegin) {
 			return

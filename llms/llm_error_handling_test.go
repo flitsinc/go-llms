@@ -104,33 +104,25 @@ func TestTurnToolNotFound(t *testing.T) {
 	assert.True(t, toolMessages[0].IsError, "The tool result should be marked as an error")
 }
 
-// TestTurnUnknownToolLoopStops tests that a model which only ever calls tools
-// that don't exist eventually gives up instead of looping forever.
-func TestTurnUnknownToolLoopStops(t *testing.T) {
+// TestTurnUnknownToolLoopBoundedByMaxTurns tests that a model which only ever
+// calls tools that don't exist is bounded the same way any other unproductive
+// loop is, rather than by a rule of its own.
+func TestTurnUnknownToolLoopBoundedByMaxTurns(t *testing.T) {
 	// Arrange: Provider that calls a non-existent tool on every single turn.
 	provider := &mockAlwaysUnknownToolProvider{}
 	llm, _ := setupTestLLM(t, provider, testTool)
-	llm.WithMaxUnknownToolTurns(2)
-
-	var turnSuccess []bool
-	llm.TrackUsage = func(ctx context.Context, usage Usage, success bool) {
-		turnSuccess = append(turnSuccess, success)
-	}
+	llm.WithMaxTurns(2)
 
 	// Act: Run chat
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	updates := runTestChat(ctx, t, llm, "Test message")
 
-	// Assert: Stopped after the configured number of turns, with a clear error.
-	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
-	assert.Equal(t, 2, provider.generateCount, "Should have stopped after 2 unknown-only turns")
+	// Assert: Stopped by the turn budget.
+	require.ErrorIs(t, llm.Err(), ErrMaxTurnsReached)
+	assert.Equal(t, 2, provider.generateCount)
 	// Each turn: Text, ToolStart, ToolDelta, ToolDone.
 	assert.Len(t, updates, 8)
-
-	// Assert: The turn that gave up is reported as unsuccessful, so usage
-	// tracking agrees with the error the caller sees.
-	assert.Equal(t, []bool{true, false}, turnSuccess)
 }
 
 // TestTurnUnknownToolTruncatedStream tests that an unknown tool call which
@@ -238,49 +230,6 @@ func TestTurnDanglingKnownToolErrors(t *testing.T) {
 				"The unanswered call should not have been recorded")
 		}
 	}
-}
-
-// TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
-// doesn't leak into the next chat on the same LLM, which would cut that chat off
-// on its first unknown tool call.
-func TestTurnUnknownToolLoopResetsBetweenChats(t *testing.T) {
-	// Arrange: Provider that calls a non-existent tool on every single turn.
-	provider := &mockAlwaysUnknownToolProvider{}
-	llm, _ := setupTestLLM(t, provider, testTool)
-	llm.WithMaxUnknownToolTurns(2)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Act: Run a chat that exhausts the allowance, then start a fresh one.
-	_ = runTestChat(ctx, t, llm, "Test message")
-	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
-	require.Equal(t, 2, provider.generateCount)
-
-	_ = runTestChat(ctx, t, llm, "Another message")
-
-	// Assert: The second chat got the full allowance again, rather than
-	// stopping after a single turn.
-	require.ErrorIs(t, llm.Err(), ErrTooManyUnknownTools)
-	assert.Equal(t, 4, provider.generateCount, "The new chat should start the streak over")
-}
-
-// TestTurnUnknownToolLoopResets tests that turns which call a real tool reset
-// the unknown tool counter, so recovering models aren't cut off.
-func TestTurnUnknownToolLoopResets(t *testing.T) {
-	// Arrange: Provider that alternates between an unknown tool and a real one.
-	provider := &mockAlwaysUnknownToolProvider{realToolEveryOtherTurn: true, maxTurns: 6}
-	llm, _ := setupTestLLM(t, provider, testTool)
-	llm.WithMaxUnknownToolTurns(2)
-
-	// Act: Run chat
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = runTestChat(ctx, t, llm, "Test message")
-
-	// Assert: The chat was never cut short by the unknown tool guard.
-	assert.NoError(t, llm.Err())
-	assert.Equal(t, 6, provider.generateCount)
 }
 
 // TestRunToolCallWithError tests the behavior when a called tool returns an error.
