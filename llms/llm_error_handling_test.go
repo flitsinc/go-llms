@@ -177,6 +177,50 @@ func TestTurnUnknownToolTruncatedStream(t *testing.T) {
 	}
 }
 
+// TestTurnUnknownToolMalformedArguments tests that arguments which don't parse
+// are neutralized even when the call finishes normally, since the assistant
+// message is replayed on the next request either way.
+func TestTurnUnknownToolMalformedArguments(t *testing.T) {
+	// Arrange: Provider whose unknown call completes, but with bad arguments.
+	provider := &mockAlwaysUnknownToolProvider{malformedArgs: true, maxTurns: 2}
+	llm, _ := setupTestLLM(t, provider, testTool)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: The turn continued, and what it sent back is encodable.
+	assert.NoError(t, llm.Err())
+	require.Equal(t, 2, provider.generateCount, "The model should have gotten another turn")
+	for _, msg := range provider.lastMessages {
+		for _, toolCall := range msg.ToolCalls {
+			assert.True(t, json.Valid(toolCall.Arguments),
+				"Tool call %q kept unparseable arguments: %s", toolCall.ID, toolCall.Arguments)
+		}
+	}
+}
+
+// TestTurnDanglingKnownToolStopsTurn tests that settling unknown calls doesn't
+// carry an unfinished call to a real tool into the next request, which the
+// provider would reject for having no matching tool result.
+func TestTurnDanglingKnownToolStopsTurn(t *testing.T) {
+	// Arrange: Provider that finishes an unknown call, then begins a call to a
+	// real tool and never finishes it.
+	provider := &mockAlwaysUnknownToolProvider{danglingKnownCall: true}
+	llm, _ := setupTestLLM(t, provider, testTool)
+
+	// Act: Run chat
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runTestChat(ctx, t, llm, "Test message")
+
+	// Assert: The chat stopped rather than sending a request that can't succeed.
+	assert.NoError(t, llm.Err())
+	assert.Equal(t, 1, provider.generateCount,
+		"Should not have continued with a tool call that has no result")
+}
+
 // TestTurnUnknownToolLoopResetsBetweenChats tests that the unknown tool streak
 // doesn't leak into the next chat on the same LLM, which would cut that chat off
 // on its first unknown tool call.

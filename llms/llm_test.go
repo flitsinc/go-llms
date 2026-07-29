@@ -474,6 +474,12 @@ type mockAlwaysUnknownToolProvider struct {
 	// truncate ends the stream after the tool call has begun, without ever
 	// reaching StreamStatusToolCallReady.
 	truncate bool
+	// malformedArgs delivers arguments that don't parse, but still finishes the
+	// call properly.
+	malformedArgs bool
+	// danglingKnownCall begins a call to a tool that does exist after the
+	// unknown one has finished, and then ends the stream without finishing it.
+	danglingKnownCall bool
 }
 
 func (m *mockAlwaysUnknownToolProvider) Company() string { return "Test Company" }
@@ -491,7 +497,12 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 ) ProviderStream {
 	m.generateCount++
 	m.lastMessages = messages
-	s := &mockStreamUnknownTool{turn: m.generateCount, truncate: m.truncate}
+	s := &mockStreamUnknownTool{
+		turn:              m.generateCount,
+		truncate:          m.truncate,
+		malformedArgs:     m.malformedArgs,
+		danglingKnownCall: m.danglingKnownCall,
+	}
 	if m.maxTurns > 0 && m.generateCount >= m.maxTurns {
 		s.noToolCall = true
 	} else if m.realToolEveryOtherTurn && m.generateCount%2 == 0 {
@@ -503,11 +514,13 @@ func (m *mockAlwaysUnknownToolProvider) Generate(
 // mockStreamUnknownTool yields text plus a single tool call, by default to a
 // tool that doesn't exist.
 type mockStreamUnknownTool struct {
-	turn       int
-	toolName   string
-	noToolCall bool
-	truncate   bool
-	message    Message
+	turn              int
+	toolName          string
+	noToolCall        bool
+	truncate          bool
+	malformedArgs     bool
+	danglingKnownCall bool
+	message           Message
 }
 
 func (s *mockStreamUnknownTool) Err() error { return nil }
@@ -532,7 +545,7 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 			return
 		}
 		args := `{"test_param":"value"}`
-		if s.truncate {
+		if s.truncate || s.malformedArgs {
 			// Cut off mid-value, so the delivered arguments don't parse.
 			args = `{"test_param":`
 		}
@@ -545,7 +558,18 @@ func (s *mockStreamUnknownTool) Iter() func(func(StreamStatus) bool) {
 			// connection short would.
 			return
 		}
-		yield(StreamStatusToolCallReady)
+		if !yield(StreamStatusToolCallReady) {
+			return
+		}
+		if s.danglingKnownCall {
+			// A second call, to a tool that does exist, which the stream never
+			// finishes.
+			s.message.ToolCalls = append(s.message.ToolCalls, ToolCall{
+				ID:   fmt.Sprintf("known-id-%d", s.turn),
+				Name: "test_tool",
+			})
+			yield(StreamStatusToolCallBegin)
+		}
 	}
 }
 

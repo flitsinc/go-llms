@@ -465,17 +465,18 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
-			continue
-		}
-		// Whatever arguments the stream did deliver were cut off mid-value, so
-		// they may not parse. Providers put them straight into the replayed
-		// call, where invalid JSON fails to encode, and nothing is going to run
-		// them anyway.
+		// The arguments may not parse, whether the stream cut them off
+		// mid-value or the model simply emitted something malformed. Providers
+		// put them straight into the replayed call, where invalid JSON fails to
+		// encode, and nothing is going to run them anyway. This applies however
+		// the call ended, so it happens before the finished ones are skipped.
 		for i := range message.ToolCalls {
 			if message.ToolCalls[i].ID == toolCall.ID && !json.Valid(message.ToolCalls[i].Arguments) {
 				message.ToolCalls[i].Arguments = json.RawMessage(`{}`)
 			}
+		}
+		if slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			continue
 		}
 		toolMessages = append(toolMessages, l.runToolCall(ctx, l.toolbox, toolCall, updateChan))
 		// runToolCall drops its ToolDoneUpdate if the context went away while
@@ -516,6 +517,18 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	// Set last, so that every error return above (including the unknown tool
 	// guard) reports the turn as unsuccessful to TrackUsage.
 	success = true
+
+	// Going another round only makes sense if the model can see a result for
+	// every call it made. A call that began but never finished has none, and
+	// providers reject a request that leaves one unanswered, so stop rather
+	// than send one that can't succeed. Unknown calls are settled above; a call
+	// to a tool that does exist can't be, since running it needs the arguments
+	// the stream never delivered.
+	for _, toolCall := range message.ToolCalls {
+		if !slices.ContainsFunc(toolMessages, func(m Message) bool { return m.ToolCallID == toolCall.ID }) {
+			return false, nil
+		}
+	}
 
 	// Return true if there were tool calls, since the LLM should look at the results.
 	return len(toolMessages) > 0, nil
