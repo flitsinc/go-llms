@@ -1045,6 +1045,65 @@ func TestChatCompletionsStream_EncryptedReasoningReplaysVerbatim(t *testing.T) {
 	assert.Equal(t, "openai-responses-v1", detail.Format)
 }
 
+// TestChatCompletionsStream_LegacyReasoningFieldDeduped covers OpenRouter's habit
+// of sending the same reasoning twice per chunk: once in the legacy "reasoning"
+// string and once as a structured reasoning_details entry. Only the structured
+// form may reach the message, or the thinking text is doubled on screen and the
+// replayed assistant message grows an extra reasoning.text detail.
+func TestChatCompletionsStream_LegacyReasoningFieldDeduped(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"Solving ","reasoning_details":[{"type":"reasoning.summary","summary":"Solving ","format":"openai-responses-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"it.","reasoning_details":[{"type":"reasoning.summary","summary":"it.","format":"openai-responses-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"42"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 2)
+	thought, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "Solving it.", thought.Text)
+
+	replayed, err := NewChatCompletionsAPI("", "test-model").
+		WithAssistantReasoningReplay().
+		BuildPayload(nil, []llms.Message{msg}, nil, nil)
+	require.NoError(t, err)
+	messages := replayed["messages"].([]Message)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	assert.Equal(t, "reasoning.summary", messages[0].ReasoningDetails[0].Type)
+	assert.Equal(t, "Solving it.", messages[0].ReasoningDetails[0].Summary)
+}
+
+// TestChatCompletionsStream_LegacyReasoningFieldAloneStillStreams keeps the
+// legacy path alive for providers that only send the plain "reasoning" string.
+func TestChatCompletionsStream_LegacyReasoningFieldAloneStillStreams(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"Thinking hard."}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"42"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	var thoughts []content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			thoughts = append(thoughts, stream.Thought())
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 1)
+	assert.Equal(t, "Thinking hard.", thoughts[0].Text)
+}
+
 func intPtr(v int) *int {
 	return &v
 }

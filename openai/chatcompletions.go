@@ -928,20 +928,24 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 			// Handle reasoning/thinking tokens from providers that include them
 			// in the OpenAI-compatible streaming format. delta.Reasoning is the
-			// legacy plaintext field; reasoning_details carries structured replay data.
-			if delta.Reasoning != nil && *delta.Reasoning != "" {
+			// legacy plaintext field; reasoning_details carries structured replay
+			// data. OpenRouter sends both, with the same text in each, so a chunk
+			// that has details takes them as the only source: emitting the legacy
+			// field as well duplicates every thinking token and, worse, adds an
+			// untyped reasoning.text detail to the replayed message that upstreams
+			// reject (OpenAI's Responses API refuses a reasoning item that carries
+			// both encrypted content and a content array).
+			if len(delta.ReasoningDetails) > 0 {
+				for _, rd := range delta.ReasoningDetails {
+					if !s.emitReasoningDetail(rd, yield) {
+						return
+					}
+				}
+			} else if delta.Reasoning != nil && *delta.Reasoning != "" {
 				if !s.emitReasoningDetail(ReasoningDetail{
 					Type: "reasoning.text",
 					Text: *delta.Reasoning,
 				}, yield) {
-					return
-				}
-			}
-			for _, rd := range delta.ReasoningDetails {
-				if delta.Reasoning != nil && *delta.Reasoning != "" && rd.Text != "" {
-					rd.Text = ""
-				}
-				if !s.emitReasoningDetail(rd, yield) {
 					return
 				}
 			}
