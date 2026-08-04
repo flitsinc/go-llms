@@ -728,7 +728,10 @@ func TestBuildPayload_WithPromptCacheRetention_SentToCustomEndpointWhenExplicit(
 }
 
 func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
-	encrypted := base64.StdEncoding.EncodeToString([]byte("encrypted-reasoning"))
+	// A URL-safe base64 token, the shape OpenAI's Responses reasoning blobs take
+	// when OpenRouter relays them: it is not decodable as standard base64, and it
+	// must reach the next request byte for byte.
+	const encrypted = "gAAAAABqccT0GkPaBas6YYMfXhseiAeD64kXBk_j5VUy2r2InH9o7tzAzuFF-Q=="
 	sse := strings.Join([]string{
 		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
 		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","id":"r1","text":"Hello ","format":"anthropic-claude-v1","index":0}]}}]}`,
@@ -766,7 +769,7 @@ func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
 
 	assert.Equal(t, "r2", thoughts[2].ID)
 	assert.Equal(t, "(Redacted)", thoughts[2].Text)
-	assert.Equal(t, []byte("encrypted-reasoning"), thoughts[2].Encrypted)
+	assert.Equal(t, encrypted, thoughts[2].Encrypted)
 	assert.Equal(t, "enc-sig", thoughts[2].Signature)
 	assert.True(t, thoughts[2].Summary)
 	assert.Equal(t, "1", thoughts[2].Metadata["openai:reasoning_index"])
@@ -789,7 +792,7 @@ func TestChatCompletionsStream_ReasoningDetailsDeltaAndAggregate(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "r2", secondThought.ID)
 	assert.Equal(t, "(Redacted)", secondThought.Text)
-	assert.Equal(t, []byte("encrypted-reasoning"), secondThought.Encrypted)
+	assert.Equal(t, encrypted, secondThought.Encrypted)
 	assert.Equal(t, "enc-sig", secondThought.Signature)
 	assert.True(t, secondThought.Summary)
 	assert.Equal(t, "1", secondThought.Metadata["openai:reasoning_index"])
@@ -845,13 +848,12 @@ func TestChatCompletionsStream_ApplyReasoningDetail_DoesNotMatchDifferentIDByInd
 		},
 	}
 
-	thought, err := stream.applyReasoningDetail(ReasoningDetail{
+	thought := stream.applyReasoningDetail(ReasoningDetail{
 		Type:  "reasoning.text",
 		ID:    "r2",
 		Index: intPtr(0),
 		Text:  "new",
 	})
-	require.NoError(t, err)
 	require.NotNil(t, thought)
 	assert.Equal(t, "r2", thought.ID)
 	assert.Equal(t, "new", thought.Text)
@@ -891,7 +893,7 @@ func TestBuildPayload_WithCacheControlPromptHintsAndAssistantReasoningReplay(t *
 				&content.Thought{
 					ID:        "t2",
 					Text:      "(Redacted)",
-					Encrypted: []byte("secret"),
+					Encrypted: "gAAAAABopaque-token_-",
 					Summary:   true,
 					Metadata:  map[string]string{"openai:reasoning_index": "1"},
 				},
@@ -1004,6 +1006,102 @@ func TestDoRequest_OpenRouterErrorMetadata(t *testing.T) {
 	assert.Equal(t, json.RawMessage(`{"error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}`), httpErr.Metadata.Raw)
 	assert.Equal(t, "invalid_request_error", httpErr.Metadata.RawErrorType)
 	assert.Equal(t, "prompt is too long: 250000 tokens > 200000 maximum", httpErr.Metadata.RawErrorMessage)
+}
+
+// TestChatCompletionsStream_EncryptedReasoningReplaysVerbatim covers the full
+// round trip for an OpenAI Responses reasoning blob relayed by OpenRouter: the
+// token arrives as URL-safe base64 (a Fernet token, which standard base64 cannot
+// decode), and the assistant replay has to hand the exact same string back so the
+// upstream can decrypt it.
+func TestChatCompletionsStream_EncryptedReasoningReplaysVerbatim(t *testing.T) {
+	const token = "gAAAAABqccT0GkPaBas6YYMfXhseiAeD64kXBk_j5VUy2r2InH9o7tzAzuFF-Q=="
+	_, err := base64.StdEncoding.DecodeString(token)
+	require.Error(t, err, "fixture must not be decodable as standard base64")
+
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"rs_1","data":"` + token + `","format":"openai-responses-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"42"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	replayed, err := NewChatCompletionsAPI("", "test-model").
+		WithAssistantReasoningReplay().
+		BuildPayload(nil, []llms.Message{stream.Message()}, nil, nil)
+	require.NoError(t, err)
+
+	messages := replayed["messages"].([]Message)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	detail := messages[0].ReasoningDetails[0]
+	assert.Equal(t, "reasoning.encrypted", detail.Type)
+	assert.Equal(t, token, detail.Data)
+	assert.Equal(t, "openai-responses-v1", detail.Format)
+}
+
+// TestChatCompletionsStream_LegacyReasoningFieldDeduped covers OpenRouter's habit
+// of sending the same reasoning twice per chunk: once in the legacy "reasoning"
+// string and once as a structured reasoning_details entry. Only the structured
+// form may reach the message, or the thinking text is doubled on screen and the
+// replayed assistant message grows an extra reasoning.text detail.
+func TestChatCompletionsStream_LegacyReasoningFieldDeduped(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"Solving ","reasoning_details":[{"type":"reasoning.summary","summary":"Solving ","format":"openai-responses-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"it.","reasoning_details":[{"type":"reasoning.summary","summary":"it.","format":"openai-responses-v1","index":0}]}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"42"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	msg := stream.Message()
+	require.Len(t, msg.Content, 2)
+	thought, ok := msg.Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, "Solving it.", thought.Text)
+
+	replayed, err := NewChatCompletionsAPI("", "test-model").
+		WithAssistantReasoningReplay().
+		BuildPayload(nil, []llms.Message{msg}, nil, nil)
+	require.NoError(t, err)
+	messages := replayed["messages"].([]Message)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	assert.Equal(t, "reasoning.summary", messages[0].ReasoningDetails[0].Type)
+	assert.Equal(t, "Solving it.", messages[0].ReasoningDetails[0].Summary)
+}
+
+// TestChatCompletionsStream_LegacyReasoningFieldAloneStillStreams keeps the
+// legacy path alive for providers that only send the plain "reasoning" string.
+func TestChatCompletionsStream_LegacyReasoningFieldAloneStillStreams(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"chat_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"reasoning":"Thinking hard."}}]}`,
+		`data: {"id":"chat_1","choices":[{"delta":{"content":"42"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	var thoughts []content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			thoughts = append(thoughts, stream.Thought())
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, thoughts, 1)
+	assert.Equal(t, "Thinking hard.", thoughts[0].Text)
 }
 
 func intPtr(v int) *int {

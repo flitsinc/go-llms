@@ -89,9 +89,16 @@ func (j *JSON) Type() Type {
 }
 
 type Thought struct {
-	ID        string `json:"id,omitempty"`
-	Text      string `json:"text,omitempty"`
-	Encrypted []byte `json:"encrypted,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Text string `json:"text,omitempty"`
+	// Encrypted is the provider's opaque encrypted-reasoning token exactly as it
+	// appeared on the wire (Anthropic's redacted_thinking "data", OpenRouter's
+	// reasoning.encrypted "data"). It is replayed verbatim, because the token's
+	// encoding belongs to the upstream that issued it: Anthropic sends standard
+	// base64, while OpenAI Responses blobs relayed by OpenRouter are URL-safe
+	// base64 Fernet tokens. Decoding one alphabet and re-encoding as the other
+	// both rejects valid tokens and hands the upstream a token it cannot decrypt.
+	Encrypted string `json:"encrypted,omitempty"`
 	Signature string `json:"signature,omitempty"`
 	// Metadata holds protocol-specific metadata that should be forwarded unchanged.
 	// Keys are prefixed with the protocol/provider name, e.g. "openai:format".
@@ -178,7 +185,7 @@ func (c *Content) Append(text string) {
 // otherwise it adds a new thought item to the end of the list.
 func (c *Content) AppendThought(text string) {
 	if l := len(*c); l > 0 {
-		if tc, ok := (*c)[l-1].(*Thought); ok && len(tc.Encrypted) == 0 {
+		if tc, ok := (*c)[l-1].(*Thought); ok && tc.Encrypted == "" {
 			tc.Text += text
 			return
 		}
@@ -212,7 +219,7 @@ func (c *Content) AppendThoughtWithID(id, text string, summary bool) *Thought {
 // otherwise it adds a new thought item to the end of the list.
 func (c *Content) SetThoughtSummary(text, signature string) {
 	if l := len(*c); l > 0 {
-		if tc, ok := (*c)[l-1].(*Thought); ok && len(tc.Encrypted) == 0 {
+		if tc, ok := (*c)[l-1].(*Thought); ok && tc.Encrypted == "" {
 			tc.Text = text
 			tc.Signature = signature
 			tc.Summary = true

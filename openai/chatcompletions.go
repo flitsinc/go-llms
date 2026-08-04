@@ -645,11 +645,7 @@ func (s *ChatCompletionsStream) emitReasoningDetail(
 	rd ReasoningDetail,
 	yield func(llms.StreamStatus) bool,
 ) bool {
-	thought, err := s.applyReasoningDetail(rd)
-	if err != nil {
-		s.err = err
-		return false
-	}
+	thought := s.applyReasoningDetail(rd)
 	if thought == nil {
 		return true
 	}
@@ -657,7 +653,7 @@ func (s *ChatCompletionsStream) emitReasoningDetail(
 	return yield(llms.StreamStatusThinking)
 }
 
-func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*content.Thought, error) {
+func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) *content.Thought {
 	aggregate := s.findReasoningThought(rd)
 	if aggregate == nil {
 		aggregate = &content.Thought{ID: rd.ID}
@@ -670,18 +666,12 @@ func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*conte
 	switch rd.Type {
 	case "reasoning.encrypted":
 		if rd.Data == "" && rd.Signature == "" {
-			return nil, nil
+			return nil
 		}
-		var deltaEncrypted []byte
 		if rd.Data != "" {
-			decodedData, err := base64.StdEncoding.DecodeString(rd.Data)
-			if err != nil {
-				return nil, fmt.Errorf("error decoding encrypted reasoning data: %w", err)
-			}
-			aggregate.Encrypted = decodedData
+			aggregate.Encrypted = rd.Data
 			aggregate.Text = "(Redacted)"
 			aggregate.Summary = true
-			deltaEncrypted = append([]byte(nil), decodedData...)
 		}
 		if rd.Signature != "" {
 			aggregate.Signature = rd.Signature
@@ -689,14 +679,14 @@ func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*conte
 		return &content.Thought{
 			ID:        aggregate.ID,
 			Text:      aggregate.Text,
-			Encrypted: deltaEncrypted,
+			Encrypted: rd.Data,
 			Signature: rd.Signature,
 			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
 			Summary:   aggregate.Summary,
-		}, nil
+		}
 	case "reasoning.summary":
 		if rd.Summary == "" && rd.Signature == "" {
-			return nil, nil
+			return nil
 		}
 		aggregate.Summary = true
 		aggregate.Text += rd.Summary
@@ -709,10 +699,10 @@ func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*conte
 			Signature: rd.Signature,
 			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
 			Summary:   true,
-		}, nil
+		}
 	default:
 		if rd.Text == "" && rd.Signature == "" {
-			return nil, nil
+			return nil
 		}
 		aggregate.Text += rd.Text
 		if rd.Signature != "" {
@@ -724,7 +714,7 @@ func (s *ChatCompletionsStream) applyReasoningDetail(rd ReasoningDetail) (*conte
 			Signature: rd.Signature,
 			Metadata:  cloneThoughtMetadata(aggregate.Metadata),
 			Summary:   aggregate.Summary,
-		}, nil
+		}
 	}
 }
 
@@ -804,11 +794,11 @@ func thoughtMatchesReasoningDetail(thought *content.Thought, rd ReasoningDetail)
 	}
 	switch rd.Type {
 	case "reasoning.encrypted":
-		return len(thought.Encrypted) > 0
+		return thought.Encrypted != ""
 	case "reasoning.summary":
-		return thought.Summary && len(thought.Encrypted) == 0
+		return thought.Summary && thought.Encrypted == ""
 	default:
-		return !thought.Summary && len(thought.Encrypted) == 0
+		return !thought.Summary && thought.Encrypted == ""
 	}
 }
 
@@ -938,20 +928,24 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			}
 			// Handle reasoning/thinking tokens from providers that include them
 			// in the OpenAI-compatible streaming format. delta.Reasoning is the
-			// legacy plaintext field; reasoning_details carries structured replay data.
-			if delta.Reasoning != nil && *delta.Reasoning != "" {
+			// legacy plaintext field; reasoning_details carries structured replay
+			// data. OpenRouter sends both, with the same text in each, so a chunk
+			// that has details takes them as the only source: emitting the legacy
+			// field as well duplicates every thinking token and, worse, adds an
+			// untyped reasoning.text detail to the replayed message that upstreams
+			// reject (OpenAI's Responses API refuses a reasoning item that carries
+			// both encrypted content and a content array).
+			if len(delta.ReasoningDetails) > 0 {
+				for _, rd := range delta.ReasoningDetails {
+					if !s.emitReasoningDetail(rd, yield) {
+						return
+					}
+				}
+			} else if delta.Reasoning != nil && *delta.Reasoning != "" {
 				if !s.emitReasoningDetail(ReasoningDetail{
 					Type: "reasoning.text",
 					Text: *delta.Reasoning,
 				}, yield) {
-					return
-				}
-			}
-			for _, rd := range delta.ReasoningDetails {
-				if delta.Reasoning != nil && *delta.Reasoning != "" && rd.Text != "" {
-					rd.Text = ""
-				}
-				if !s.emitReasoningDetail(rd, yield) {
 					return
 				}
 			}

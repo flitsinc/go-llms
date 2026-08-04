@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -368,9 +367,9 @@ func reasoningDetailsFromContent(c content.Content) []ReasoningDetail {
 			detail.Index = &idx
 		}
 		switch {
-		case len(t.Encrypted) > 0:
+		case t.Encrypted != "":
 			detail.Type = "reasoning.encrypted"
-			detail.Data = base64.StdEncoding.EncodeToString(t.Encrypted)
+			detail.Data = t.Encrypted
 		case t.Summary:
 			detail.Type = "reasoning.summary"
 			detail.Summary = t.Text
@@ -466,7 +465,7 @@ type ReasoningDetail struct {
 	ID        string `json:"id,omitempty"`        // stable identifier for replaying a logical reasoning block
 	Summary   string `json:"summary,omitempty"`   // summary text for reasoning.summary blocks
 	Text      string `json:"text,omitempty"`      // reasoning text (streamed per chunk)
-	Data      string `json:"data,omitempty"`      // base64-encoded encrypted thinking
+	Data      string `json:"data,omitempty"`      // opaque encrypted reasoning token, replayed verbatim
 	Signature string `json:"signature,omitempty"` // Anthropic signature (final chunk only)
 	Format    string `json:"format,omitempty"`    // e.g. "anthropic-claude-v1"
 	Index     *int   `json:"index,omitempty"`
