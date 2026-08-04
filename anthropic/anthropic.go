@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -718,14 +717,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 				case "redacted_thinking":
 					if event.ContentBlock.Data != "" {
-						decodedData, err := base64.StdEncoding.DecodeString(event.ContentBlock.Data)
-						if err != nil {
-							s.err = fmt.Errorf("error decoding redacted_thinking data: %w", err)
-							return
-						}
 						thought := &content.Thought{
 							Text:      "(Redacted)",
-							Encrypted: decodedData,
+							Encrypted: event.ContentBlock.Data,
 							Summary:   true,
 						}
 						s.lastThought = thought
@@ -901,9 +895,9 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 			ci.Type = "text"
 			ci.Text = string(v.Data)
 		case *content.Thought:
-			if len(v.Encrypted) > 0 {
+			if v.Encrypted != "" {
 				ci.Type = "redacted_thinking"
-				ci.Data = base64.StdEncoding.EncodeToString(v.Encrypted)
+				ci.Data = v.Encrypted
 			} else {
 				ci.Type = "thinking"
 				ci.Thinking = v.Text

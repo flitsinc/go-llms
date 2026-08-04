@@ -454,6 +454,43 @@ func TestAnthropicStreamHandling(t *testing.T) {
 	})
 }
 
+// TestAnthropicRedactedThinkingRoundTrip pins the redacted_thinking "data" blob
+// as an opaque token: Anthropic has to receive on replay exactly the string it
+// sent, so the stream stores it as-is instead of decoding and re-encoding it.
+// The fixture is deliberately not decodable as standard base64, so reintroducing
+// a decode/re-encode step fails here instead of silently corrupting the token.
+func TestAnthropicRedactedThinkingRoundTrip(t *testing.T) {
+	const token = "EroBCkYIBBgCKkDvRedacted_Thinking-BlobEgz"
+
+	var streamContent strings.Builder
+	streamContent.WriteString(sseEvent(streamEvent{
+		Type:    "message_start",
+		Message: &messageEvent{Role: "assistant"},
+	}))
+	streamContent.WriteString(sseEvent(streamEvent{
+		Type:         "content_block_start",
+		Index:        0,
+		ContentBlock: &contentBlock{Type: "redacted_thinking", Data: token},
+	}))
+	streamContent.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
+	streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", streamContent.String())
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	thought, ok := stream.Message().Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Equal(t, token, thought.Encrypted)
+
+	apiContent, err := contentFromLLM(stream.Message().Content)
+	require.NoError(t, err)
+	require.Len(t, apiContent, 1)
+	assert.Equal(t, "redacted_thinking", apiContent[0].Type)
+	assert.Equal(t, token, apiContent[0].Data)
+}
+
 func TestContentFromLLMEdgeCases(t *testing.T) {
 	t.Run("Empty Text Content", func(t *testing.T) {
 		llmContent := content.FromText("")

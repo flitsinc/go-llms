@@ -155,7 +155,7 @@ func cloneContent(c content.Content) content.Content {
 			out = append(out, &content.Thought{
 				ID:        v.ID,
 				Text:      v.Text,
-				Encrypted: append([]byte(nil), v.Encrypted...),
+				Encrypted: v.Encrypted,
 				Signature: v.Signature,
 				Metadata:  cloneMetadata(v.Metadata),
 				Summary:   v.Summary,

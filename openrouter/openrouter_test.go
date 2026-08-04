@@ -33,7 +33,7 @@ func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
 				&content.Thought{
 					ID:        "t2",
 					Text:      "(Redacted)",
-					Encrypted: []byte("secret"),
+					Encrypted: "gAAAAABopaque-token_-",
 					Summary:   true,
 					Metadata:  map[string]string{"openai:reasoning_format": "anthropic-claude-v1", "openai:reasoning_index": "1"},
 				},
@@ -81,7 +81,7 @@ func TestNew_BuildPayload_UsesOpenRouterEncoding(t *testing.T) {
 	second := reasoningDetails[1].(map[string]any)
 	assert.Equal(t, "reasoning.encrypted", second["type"])
 	assert.Equal(t, "t2", second["id"])
-	assert.NotEmpty(t, second["data"])
+	assert.Equal(t, "gAAAAABopaque-token_-", second["data"])
 
 	third := reasoningDetails[2].(map[string]any)
 	assert.Equal(t, "reasoning.text", third["type"])
