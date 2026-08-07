@@ -177,7 +177,7 @@ func (m *ResponsesAPI) Generate(
 		input = append(input, msgInputs...)
 	}
 
-	payload, err := m.buildResponsesPayload(input, instructions, toolbox, jsonOutputSchema)
+	payload, err := m.buildResponsesPayload(ctx, input, instructions, toolbox, jsonOutputSchema)
 	if err != nil {
 		return newResponsesStreamError(err)
 	}
