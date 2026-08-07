@@ -1,5 +1,7 @@
 # go-llms
 
+<!-- Verified declarative environment setup -->
+
 A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI compatible providers.
 
 ## Features
