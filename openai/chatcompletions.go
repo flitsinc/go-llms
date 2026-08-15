@@ -187,6 +187,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	encodingOptions := chatMessageEncodingOptions{
 		cacheControlPromptHints:  m.cacheControlPromptHints,
 		assistantReasoningReplay: m.assistantReasoningReplay,
+		flatCustomTools:          m.flatCustomTools,
 	}
 
 	var apiMessages []Message

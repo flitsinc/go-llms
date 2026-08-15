@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -85,6 +86,32 @@ func TestToolsFromToolbox_NestedCustomToolsUnchanged(t *testing.T) {
 		return
 	}
 	t.Fatal("no custom tool found in nested mode")
+}
+
+func TestFlatCustomReplayKeepsRawFunctionArguments(t *testing.T) {
+	// On flat-custom-tools endpoints (OpenRouter), grammar-tool calls come
+	// back function-shaped with raw non-JSON arguments; replaying them must
+	// not sanitize the input away.
+	rawPatch := "*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch\n"
+	msg := llms.Message{
+		Role: "assistant",
+		ToolCalls: []llms.ToolCall{{
+			ID:        "call_1",
+			Name:      "apply_patch",
+			Arguments: json.RawMessage(rawPatch),
+			Metadata:  map[string]string{"openai:item_type": "function"},
+		}},
+	}
+
+	flat := MessagesFromLLMWithOptions(msg, chatMessageEncodingOptions{flatCustomTools: true})
+	if got := flat[0].ToolCalls[0].Function.Arguments; got != rawPatch {
+		t.Fatalf("flat mode must replay raw arguments verbatim, got %q", got)
+	}
+
+	nested := MessagesFromLLMWithOptions(msg, chatMessageEncodingOptions{})
+	if got := nested[0].ToolCalls[0].Function.Arguments; got != "{}" {
+		t.Fatalf("non-flat mode must keep sanitizing invalid JSON, got %q", got)
+	}
 }
 
 func TestChatToolChoice_FlatCustomForceAndAllowList(t *testing.T) {
