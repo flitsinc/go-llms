@@ -270,7 +270,7 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestConvertMessageToInput_ForeignToolCallOmitsResponsesItemID(t *testing.T)
 		},
 	}
 
-	items, err := convertMessageToInput(msg)
+	items, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestConvertMessageToInput_NativeResponsesToolCallMissingItemIDReturnsError(
 		},
 	}
 
-	_, err := convertMessageToInput(msg)
+	_, err := convertMessageToInput(msg, nil)
 	if err == nil {
 		t.Fatal("expected native Responses tool call without an item ID to fail")
 	}
@@ -413,7 +413,7 @@ func TestConvertMessageToInput_ChatCompletionsCustomToolCallReturnsError(t *test
 		},
 	}
 
-	if _, err := convertMessageToInput(msg); err == nil {
+	if _, err := convertMessageToInput(msg, nil); err == nil {
 		t.Fatal("expected Chat Completions custom tool replay to fail")
 	}
 }
@@ -436,7 +436,7 @@ func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 			},
 		},
 	}
-	items, err := convertMessageToInput(msg)
+	items, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestConvertMessageToInput_PreservesReasoningOrderAcrossToolCalls(t *testing
 		},
 	}
 
-	items, err := convertMessageToInput(msg)
+	items, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.
 
 	var sequence []ResponseInput
 	for i, msg := range messages {
-		items, err := convertMessageToInput(msg)
+		items, err := convertMessageToInput(msg, nil)
 		if err != nil {
 			t.Fatalf("message %d conversion failed: %v", i+1, err)
 		}
@@ -622,7 +622,7 @@ func TestConvertMessageToInput_PhasePreservedRoundTrip(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestConvertMessageToInput_CommentaryPhase(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestConvertMessageToInput_NoPhaseOmitted(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -727,7 +727,7 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg)
+	inputs, err := convertMessageToInput(msg, nil)
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -772,7 +772,7 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 		ToolCallID: "tool_call_err",
 		Content:    content.FromText("connection refused"),
 		IsError:    true,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -792,7 +792,7 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 		ToolCallID: "tool_call_err2",
 		Content:    content.FromRawJSON(json.RawMessage(`{"error": "connection refused"}`)),
 		IsError:    true,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

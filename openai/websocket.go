@@ -325,13 +325,14 @@ func (m *WebSocketResponsesAPI) Generate(
 	// Determine if we can use incremental chaining.
 	var input []ResponseInput
 	var previousResponseID string
+	customCallIDs := customToolCallIDs(messages)
 
 	if m.lastResponseID != "" && m.lastMessageCount > 0 &&
 		len(messages) > m.lastMessageCount &&
 		messages[m.lastMessageCount].Role == "assistant" {
 		// Incremental: only send new messages after the last response.
 		for _, msg := range messages[m.lastMessageCount+1:] {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, customCallIDs)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -341,7 +342,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	} else if m.lastResponseID != "" && m.lastMessageCount == 0 {
 		// Warmup case: send full messages but chain off the warmup response.
 		for _, msg := range messages {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, customCallIDs)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -351,7 +352,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	} else {
 		// Full payload: convert all messages.
 		for _, msg := range messages {
-			msgInputs, err := convertMessageToInput(msg)
+			msgInputs, err := convertMessageToInput(msg, customCallIDs)
 			if err != nil {
 				return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err))
 			}
@@ -365,7 +366,7 @@ func (m *WebSocketResponsesAPI) Generate(
 		instructions = text
 	} else {
 		systemMsg := llms.Message{Role: "system", Content: systemPrompt}
-		systemInputs, err := convertMessageToInput(systemMsg)
+		systemInputs, err := convertMessageToInput(systemMsg, nil)
 		if err != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert system message: %w", err))
 		}
@@ -396,7 +397,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			// system prompt, without previous_response_id.
 			var fullInput []ResponseInput
 			for _, msg := range messages {
-				msgInputs, convErr := convertMessageToInput(msg)
+				msgInputs, convErr := convertMessageToInput(msg, customCallIDs)
 				if convErr != nil {
 					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect convert: %w", convErr))
 				}
@@ -405,7 +406,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			// Re-apply non-text system prompt if needed.
 			if instructions == "" {
 				systemMsg := llms.Message{Role: "system", Content: systemPrompt}
-				systemInputs, sysErr := convertMessageToInput(systemMsg)
+				systemInputs, sysErr := convertMessageToInput(systemMsg, nil)
 				if sysErr != nil {
 					return newWebSocketStreamError(fmt.Errorf("websocket: reconnect system: %w", sysErr))
 				}
@@ -559,7 +560,7 @@ func buildToolChoice(choice tools.Choice, toolsArr []any) (any, error) {
 		}
 		var entries []any
 		for _, n := range choice.AllowedTools {
-			entries = append(entries, map[string]any{"type": "function", "name": n})
+			entries = append(entries, map[string]any{"type": declaredToolType(n, toolsArr), "name": n})
 		}
 		return AllowedToolsToolChoice{Type: "allowed_tools", Mode: "auto", Tools: entries}, nil
 
@@ -572,14 +573,14 @@ func buildToolChoice(choice tools.Choice, toolsArr []any) (any, error) {
 			if !anyToolExists([]string{name}, toolsArr) {
 				return nil, fmt.Errorf("openai responses: required tool %q not found in toolbox", name)
 			}
-			return map[string]any{"type": "function", "name": name}, nil
+			return map[string]any{"type": declaredToolType(name, toolsArr), "name": name}, nil
 		default:
 			if !anyToolExists(choice.AllowedTools, toolsArr) {
 				return nil, fmt.Errorf("openai responses: none of the required tools are present in toolbox")
 			}
 			var entries []any
 			for _, n := range choice.AllowedTools {
-				entries = append(entries, map[string]any{"type": "function", "name": n})
+				entries = append(entries, map[string]any{"type": declaredToolType(n, toolsArr), "name": n})
 			}
 			return AllowedToolsToolChoice{Type: "allowed_tools", Mode: "required", Tools: entries}, nil
 		}
@@ -587,6 +588,29 @@ func buildToolChoice(choice tools.Choice, toolsArr []any) (any, error) {
 	default:
 		return "auto", nil
 	}
+}
+
+// declaredToolType resolves the wire type a named tool is declared with in
+// toolsArr, so a forced or allow-listed tool_choice references custom
+// (grammar/text) tools as {"type":"custom"} instead of mislabeling them as
+// functions, which the API rejects. Unknown names default to "function",
+// matching the previous behavior for hosted/special tools.
+func declaredToolType(name string, toolsArr []any) string {
+	for _, it := range toolsArr {
+		switch v := it.(type) {
+		case FunctionTool:
+			if v.Name == name {
+				return "function"
+			}
+		case map[string]any:
+			if n, ok := v["name"].(string); ok && n == name {
+				if typ, ok := v["type"].(string); ok && typ != "" {
+					return typ
+				}
+			}
+		}
+	}
+	return "function"
 }
 
 // anyToolExists checks whether at least one of the named tools exists in

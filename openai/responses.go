@@ -161,7 +161,7 @@ func (m *ResponsesAPI) Generate(
 			Role:    "system",
 			Content: systemPrompt,
 		}
-		systemInputs, err := convertMessageToInput(systemMsg)
+		systemInputs, err := convertMessageToInput(systemMsg, nil)
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert system message: %w", err))
 		}
@@ -169,8 +169,9 @@ func (m *ResponsesAPI) Generate(
 	}
 
 	// Convert messages to input items
+	customCallIDs := customToolCallIDs(messages)
 	for _, msg := range messages {
-		msgInputs, err := convertMessageToInput(msg)
+		msgInputs, err := convertMessageToInput(msg, customCallIDs)
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err))
 		}
@@ -381,8 +382,31 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	}
 }
 
-// convertMessageToInput converts an llms.Message to ResponseInput items
-func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
+// customToolCallIDs collects the call IDs of assistant tool calls made
+// through the custom (grammar/text) tool protocol, so their results replay as
+// custom_tool_call_output items. Conversion callers build this once per
+// message list and pass it to convertMessageToInput, because a tool-result
+// message alone cannot tell which protocol its call used.
+func customToolCallIDs(messages []llms.Message) map[string]bool {
+	var ids map[string]bool
+	for _, msg := range messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Metadata["openai:item_type"] == "custom_tool_call" {
+				if ids == nil {
+					ids = map[string]bool{}
+				}
+				ids[tc.ID] = true
+			}
+		}
+	}
+	return ids
+}
+
+// convertMessageToInput converts an llms.Message to ResponseInput items.
+// customCallIDs marks tool-call IDs whose calls were custom_tool_call items,
+// so their results serialize as custom_tool_call_output; nil is valid when
+// the conversation cannot contain custom tool calls.
+func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]ResponseInput, error) {
 	var items []ResponseInput
 
 	switch msg.Role {
@@ -509,11 +533,19 @@ func convertMessageToInput(msg llms.Message) ([]ResponseInput, error) {
 			}
 		}
 
-		items = append(items, FunctionCallOutput{
-			Type:   "function_call_output",
-			CallID: msg.ToolCallID,
-			Output: outputStr,
-		})
+		if customCallIDs[msg.ToolCallID] {
+			items = append(items, CustomToolCallOutput{
+				Type:   "custom_tool_call_output",
+				CallID: msg.ToolCallID,
+				Output: outputStr,
+			})
+		} else {
+			items = append(items, FunctionCallOutput{
+				Type:   "function_call_output",
+				CallID: msg.ToolCallID,
+				Output: outputStr,
+			})
+		}
 		return items, nil
 	}
 
