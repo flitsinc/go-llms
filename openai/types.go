@@ -53,6 +53,13 @@ type Tool struct {
 	Type     string                `json:"type"`
 	Function *tools.FunctionSchema `json:"function,omitempty"`
 	Custom   *CustomToolSchema     `json:"custom,omitempty"`
+
+	// Flat Responses-style custom tool declaration, used instead of Custom
+	// when the endpoint forwards the tools array to the Responses API (see
+	// WithFlatCustomTools). Empty for nested declarations.
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Format      map[string]any `json:"format,omitempty"`
 }
 
 type CustomToolSchema struct {
@@ -84,6 +91,9 @@ type ChatAllowedTool struct {
 	Type     string                 `json:"type"` // "function" | "custom"
 	Function *ChatAllowedToolFunc   `json:"function,omitempty"`
 	Custom   *ChatAllowedToolCustom `json:"custom,omitempty"`
+	// Name is the flat Responses-style reference used for custom tools when
+	// the endpoint forwards tool_choice to the Responses API.
+	Name string `json:"name,omitempty"`
 }
 
 type ChatAllowedToolFunc struct {

@@ -34,6 +34,9 @@ type ChatCompletionsAPI struct {
 
 	// When true, encode CacheHint items as cache_control on content parts.
 	cacheControlPromptHints bool
+	// When true, declare custom tools in the flat Responses-API shape and
+	// reference them the same way in tool_choice (see WithFlatCustomTools).
+	flatCustomTools bool
 	// When true, encode assistant Thought items as reasoning_details for replay.
 	assistantReasoningReplay bool
 
@@ -94,6 +97,19 @@ func (m *ChatCompletionsAPI) WithIncludeUsage(include bool) *ChatCompletionsAPI 
 // content parts instead of using prompt_cache_retention.
 func (m *ChatCompletionsAPI) WithCacheControlPromptHints() *ChatCompletionsAPI {
 	m.cacheControlPromptHints = true
+	return m
+}
+
+// WithFlatCustomTools declares custom (grammar/text) tools in the flat
+// Responses-API shape — {"type":"custom","name":…,"format":{…}} — instead of
+// Chat Completions' nested {"custom":{…}} wrapper, and references them the
+// same way in tool_choice. Use this for OpenAI-compatible gateways that
+// forward the tools array verbatim into a Responses API request (OpenRouter
+// does; verified live 2026-08-15 — the nested shape is rejected upstream with
+// "Missing required parameter: 'tools[0].name'" while the flat shape gets
+// grammar-constrained decoding).
+func (m *ChatCompletionsAPI) WithFlatCustomTools() *ChatCompletionsAPI {
+	m.flatCustomTools = true
 	return m
 }
 
@@ -171,6 +187,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	encodingOptions := chatMessageEncodingOptions{
 		cacheControlPromptHints:  m.cacheControlPromptHints,
 		assistantReasoningReplay: m.assistantReasoningReplay,
+		flatCustomTools:          m.flatCustomTools,
 	}
 
 	var apiMessages []Message
@@ -226,7 +243,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 
 	if toolbox != nil {
 		// Build tools first.
-		apiTools, err := toolsFromToolbox(toolbox)
+		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools)
 		if err != nil {
 			return nil, err
 		}
@@ -241,37 +258,14 @@ func (m *ChatCompletionsAPI) BuildPayload(
 			if len(choice.AllowedTools) == 0 {
 				payload["tool_choice"] = "none"
 			} else {
-				// Validate that at least one allowed tool exists in apiTools
-				exists := false
-				for _, n := range choice.AllowedTools {
-					for _, t := range apiTools {
-						name := ""
-						if t.Function != nil {
-							name = t.Function.Name
-						}
-						if t.Custom != nil {
-							name = t.Custom.Name
-						}
-						if name == n {
-							exists = true
-							break
-						}
-					}
-					if exists {
-						break
-					}
-				}
-				if !exists {
+				if !anyChatToolExists(choice.AllowedTools, apiTools) {
 					return nil, fmt.Errorf("openai chat: no allowed tools found in toolbox")
 				}
-				// Build allowed_tools object
-				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
-				for _, n := range choice.AllowedTools {
-					// Prefer function type; fall back to custom if applicable
-					// We don’t try to disambiguate; include function entry, which the model resolves
-					allowed = append(allowed, ChatAllowedTool{Type: "function", Function: &ChatAllowedToolFunc{Name: n}})
+				payload["tool_choice"] = ChatAllowedToolsChoice{
+					Type:  "allowed_tools",
+					Mode:  "auto",
+					Tools: m.chatAllowedToolEntries(choice.AllowedTools, apiTools),
 				}
-				payload["tool_choice"] = ChatAllowedToolsChoice{Type: "allowed_tools", Mode: "auto", Tools: allowed}
 			}
 		case tools.ChoiceRequireOneOf:
 			switch len(choice.AllowedTools) {
@@ -280,46 +274,24 @@ func (m *ChatCompletionsAPI) BuildPayload(
 			case 1:
 				// Force the specific tool by name; validate it exists
 				name := choice.AllowedTools[0]
-				exists := false
-				for _, t := range apiTools {
-					if (t.Function != nil && t.Function.Name == name) || (t.Custom != nil && t.Custom.Name == name) {
-						exists = true
-						break
-					}
-				}
-				if !exists {
+				if !anyChatToolExists([]string{name}, apiTools) {
 					return nil, fmt.Errorf("openai chat: required tool %q not found in toolbox", name)
 				}
-				payload["tool_choice"] = ChatToolChoice{Type: "function", Function: &ChatToolChoiceFunc{Name: name}}
+				if m.flatCustomTools && chatToolIsCustom(name, apiTools) {
+					payload["tool_choice"] = ChatToolChoice{Type: "custom", Name: name}
+				} else {
+					payload["tool_choice"] = ChatToolChoice{Type: "function", Function: &ChatToolChoiceFunc{Name: name}}
+				}
 			default:
 				// Multiple allowed: use allowed_tools with mode:required
-				exists := false
-				for _, n := range choice.AllowedTools {
-					for _, t := range apiTools {
-						name := ""
-						if t.Function != nil {
-							name = t.Function.Name
-						}
-						if t.Custom != nil {
-							name = t.Custom.Name
-						}
-						if name == n {
-							exists = true
-							break
-						}
-					}
-					if exists {
-						break
-					}
-				}
-				if !exists {
+				if !anyChatToolExists(choice.AllowedTools, apiTools) {
 					return nil, fmt.Errorf("openai chat: none of the required tools are present in toolbox")
 				}
-				allowed := make([]ChatAllowedTool, 0, len(choice.AllowedTools))
-				for _, n := range choice.AllowedTools {
-					allowed = append(allowed, ChatAllowedTool{Type: "function", Function: &ChatAllowedToolFunc{Name: n}})
+				payload["tool_choice"] = ChatAllowedToolsChoice{
+					Type:  "allowed_tools",
+					Mode:  "required",
+					Tools: m.chatAllowedToolEntries(choice.AllowedTools, apiTools),
 				}
-				payload["tool_choice"] = ChatAllowedToolsChoice{Type: "allowed_tools", Mode: "required", Tools: allowed}
 			}
 		default:
 			payload["tool_choice"] = "auto"
@@ -1053,7 +1025,77 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 	}
 }
 
-func toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
+// anyChatToolExists reports whether at least one of the named tools is
+// declared in apiTools, matching function, nested custom, and flat custom
+// declarations.
+func anyChatToolExists(names []string, apiTools []Tool) bool {
+	for _, n := range names {
+		for _, t := range apiTools {
+			if (t.Function != nil && t.Function.Name == n) ||
+				(t.Custom != nil && t.Custom.Name == n) ||
+				t.Name == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// chatToolIsCustom reports whether the named tool is declared as a custom
+// tool in apiTools, in either the nested or the flat form.
+func chatToolIsCustom(name string, apiTools []Tool) bool {
+	for _, t := range apiTools {
+		if t.Type != "custom" {
+			continue
+		}
+		if (t.Custom != nil && t.Custom.Name == name) || t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// chatAllowedToolEntries builds allowed_tools entries, keeping each named
+// tool's declared type. Custom tools are referenced in the flat
+// Responses-style form when flatCustomTools is set (matching how they were
+// declared); everything else keeps the function form, which also preserves
+// the previous behavior for unknown names.
+func (m *ChatCompletionsAPI) chatAllowedToolEntries(names []string, apiTools []Tool) []ChatAllowedTool {
+	allowed := make([]ChatAllowedTool, 0, len(names))
+	for _, n := range names {
+		if m.flatCustomTools && chatToolIsCustom(n, apiTools) {
+			allowed = append(allowed, ChatAllowedTool{Type: "custom", Name: n})
+		} else {
+			allowed = append(allowed, ChatAllowedTool{Type: "function", Function: &ChatAllowedToolFunc{Name: n}})
+		}
+	}
+	return allowed
+}
+
+func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, error) {
+	// customTool builds a custom tool declaration. The flat form mirrors the
+	// Responses API ({"type":"custom","name":…,"format":{"type":"grammar",
+	// "syntax":…,"definition":…}}) for endpoints that forward the tools array
+	// there; the nested form is Chat Completions' own wrapper.
+	customTool := func(t tools.Tool, format map[string]any) Tool {
+		if flatCustomTools {
+			if format["type"] == "grammar" {
+				grammar := format["grammar"].(map[string]any)
+				format = map[string]any{
+					"type":       "grammar",
+					"syntax":     grammar["syntax"],
+					"definition": grammar["definition"],
+				}
+			}
+			return Tool{Type: "custom", Name: t.FuncName(), Description: t.Description(), Format: format}
+		}
+		return Tool{Type: "custom", Custom: &CustomToolSchema{
+			Name:        t.FuncName(),
+			Description: t.Description(),
+			Format:      format,
+		}}
+	}
+
 	apiTools := []Tool{}
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
@@ -1062,35 +1104,23 @@ func toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
 				apiTools = append(apiTools, Tool{Type: "function", Function: schema})
 			}
 		case tools.TextGrammar:
-			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
-				Name:        t.FuncName(),
-				Description: t.Description(),
-				Format:      map[string]any{"type": "text"},
-			}})
+			apiTools = append(apiTools, customTool(t, map[string]any{"type": "text"}))
 		case tools.LarkGrammar:
-			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
-				Name:        t.FuncName(),
-				Description: t.Description(),
-				Format: map[string]any{
-					"type": "grammar",
-					"grammar": map[string]any{
-						"definition": g.Definition,
-						"syntax":     "lark",
-					},
+			apiTools = append(apiTools, customTool(t, map[string]any{
+				"type": "grammar",
+				"grammar": map[string]any{
+					"definition": g.Definition,
+					"syntax":     "lark",
 				},
-			}})
+			}))
 		case tools.RegexGrammar:
-			apiTools = append(apiTools, Tool{Type: "custom", Custom: &CustomToolSchema{
-				Name:        t.FuncName(),
-				Description: t.Description(),
-				Format: map[string]any{
-					"type": "grammar",
-					"grammar": map[string]any{
-						"definition": g.Definition,
-						"syntax":     "regex",
-					},
+			apiTools = append(apiTools, customTool(t, map[string]any{
+				"type": "grammar",
+				"grammar": map[string]any{
+					"definition": g.Definition,
+					"syntax":     "regex",
 				},
-			}})
+			}))
 		default:
 			return nil, fmt.Errorf("openai chat: unsupported tool grammar type %T", g)
 		}
@@ -1099,7 +1129,7 @@ func toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	apiTools, err := toolsFromToolbox(toolbox)
+	apiTools, err := toolsFromToolbox(toolbox, false)
 	if err != nil {
 		panic(err)
 	}

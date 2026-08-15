@@ -59,6 +59,12 @@ type ContentList []ContentPart
 type chatMessageEncodingOptions struct {
 	cacheControlPromptHints  bool
 	assistantReasoningReplay bool
+	// flatCustomTools mirrors ChatCompletionsAPI.flatCustomTools: the
+	// endpoint forwards requests to the Responses API upstream, where
+	// grammar-tool calls surface as function-shaped calls whose arguments
+	// are the raw (non-JSON) tool input. Replay must pass those arguments
+	// through verbatim; sanitizing them to "{}" would discard the input.
+	flatCustomTools bool
 }
 
 // ConvertContent converts content.Content to a ContentList for the OpenAI API.
@@ -331,7 +337,11 @@ func messagesFromLLMWithOptions(m llms.Message, opts chatMessageEncodingOptions)
 				}
 			default:
 				args := string(tc.Arguments)
-				if !json.Valid([]byte(args)) {
+				// Grammar-tool calls on flat-custom-tools endpoints carry raw
+				// text arguments in function-shaped calls; keep them verbatim
+				// (the upstream accepts them — it produced them). Elsewhere,
+				// invalid JSON is sanitized as before.
+				if !json.Valid([]byte(args)) && !opts.flatCustomTools {
 					args = "{}"
 				}
 				msg.ToolCalls[i] = toolCall{

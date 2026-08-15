@@ -208,6 +208,20 @@ type FunctionCallOutput struct {
 func (FunctionCallOutput) responseInput() {}
 func (FunctionCallOutput) responseItem()  {}
 
+// CustomToolCallOutput implements ResponseInput for the result of a custom
+// (grammar/text) tool call. The Responses API requires this item type when
+// the call was a custom_tool_call; a function_call_output paired with a
+// custom call is rejected.
+type CustomToolCallOutput struct {
+	Type   string `json:"type"` // "custom_tool_call_output"
+	ID     string `json:"id,omitempty"`
+	CallID string `json:"call_id"`
+	Output string `json:"output"`
+}
+
+func (CustomToolCallOutput) responseInput() {}
+func (CustomToolCallOutput) responseItem()  {}
+
 // Reasoning implements ResponseItem for reasoning
 type Reasoning struct {
 	Type             string             `json:"type"` // "reasoning"
