@@ -12,74 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/metalim/jsonmap"
 	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/internal/geminischema"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
-
-// sanitizeSchemaForGemini recursively removes unsupported JSON Schema properties
-// to make schemas compatible with Google's Gemini API. This includes:
-//   - Setting AdditionalProperties to nil
-//   - Stripping unsupported keywords like exclusiveMinimum, const, pattern, etc.
-//     by round-tripping through tools.ValueSchema which only has supported fields.
-func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
-	schema.AdditionalProperties = nil
-
-	if schema.Items != nil {
-		sanitizeSchemaForGemini(schema.Items)
-	}
-
-	if schema.Properties != nil {
-		for _, k := range schema.Properties.Keys() {
-			raw, ok := schema.Properties.Get(k)
-			if !ok {
-				continue
-			}
-
-			var v tools.ValueSchema
-			switch val := raw.(type) {
-			case tools.ValueSchema:
-				v = val
-			case *jsonmap.Map:
-				// Property is a nested map from jsonmap - marshal to JSON then
-				// unmarshal into ValueSchema to strip unsupported fields.
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case map[string]any:
-				// Property is a generic map - marshal to JSON then unmarshal
-				// into ValueSchema to strip unsupported fields.
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case json.RawMessage:
-				if err := json.Unmarshal(val, &v); err != nil {
-					continue
-				}
-			default:
-				continue
-			}
-
-			sanitizeSchemaForGemini(&v)
-			schema.Properties.Set(k, v)
-		}
-	}
-
-	for i := range schema.AnyOf {
-		sanitizeSchemaForGemini(&schema.AnyOf[i])
-	}
-}
 
 type Model struct {
 	tokenSource      oauth2.TokenSource
@@ -400,9 +339,7 @@ func (m *Model) Generate(
 			// Google supports only function-style tools; JSON grammar is fine.
 			switch g := tool.Grammar().(type) {
 			case tools.JSONGrammar:
-				schema := *g.Schema()
-				sanitizeSchemaForGemini(&schema.Parameters)
-				declarations[i] = schema
+				declarations[i] = geminischema.SanitizeFunction(*g.Schema())
 			default:
 				return &Stream{err: fmt.Errorf("google: unsupported tool grammar type %T", g)}
 			}

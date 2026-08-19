@@ -36,7 +36,7 @@ func marshalToolsArray(t *testing.T, apiTools []Tool) []map[string]any {
 }
 
 func TestToolsFromToolbox_FlatCustomTools(t *testing.T) {
-	apiTools, err := toolsFromToolbox(flatModeToolbox(), true)
+	apiTools, err := toolsFromToolbox(flatModeToolbox(), true, false)
 	if err != nil {
 		t.Fatalf("toolsFromToolbox: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestToolsFromToolbox_FlatCustomTools(t *testing.T) {
 }
 
 func TestToolsFromToolbox_NestedCustomToolsUnchanged(t *testing.T) {
-	apiTools, err := toolsFromToolbox(flatModeToolbox(), false)
+	apiTools, err := toolsFromToolbox(flatModeToolbox(), false, false)
 	if err != nil {
 		t.Fatalf("toolsFromToolbox: %v", err)
 	}

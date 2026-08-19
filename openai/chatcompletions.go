@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/internal/geminischema"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -39,6 +40,9 @@ type ChatCompletionsAPI struct {
 	flatCustomTools bool
 	// When true, encode assistant Thought items as reasoning_details for replay.
 	assistantReasoningReplay bool
+	// When true, narrow function tool schemas to the subset Gemini accepts
+	// before sending them (see WithGeminiToolSchemas).
+	geminiToolSchemas bool
 
 	customPayloadValues map[string]any
 	customHeaders       map[string]string
@@ -110,6 +114,20 @@ func (m *ChatCompletionsAPI) WithCacheControlPromptHints() *ChatCompletionsAPI {
 // grammar-constrained decoding).
 func (m *ChatCompletionsAPI) WithFlatCustomTools() *ChatCompletionsAPI {
 	m.flatCustomTools = true
+	return m
+}
+
+// WithGeminiToolSchemas narrows function tool schemas to the subset Google's
+// function-calling API accepts before they are sent. Use this whenever an
+// OpenAI-compatible gateway routes the request to Gemini upstream.
+//
+// Without it, a toolbox built for OpenAI's strict mode — "additionalProperties"
+// on every object, plus the JSON Schema validation vocabulary Gemini has never
+// implemented — is rejected by Google with a 400 before a single token is
+// billed, so every tool-calling request fails. The native google provider has
+// always narrowed schemas this way; this makes the gateway path agree.
+func (m *ChatCompletionsAPI) WithGeminiToolSchemas() *ChatCompletionsAPI {
+	m.geminiToolSchemas = true
 	return m
 }
 
@@ -243,7 +261,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 
 	if toolbox != nil {
 		// Build tools first.
-		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools)
+		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools, m.geminiToolSchemas)
 		if err != nil {
 			return nil, err
 		}
@@ -1072,7 +1090,7 @@ func (m *ChatCompletionsAPI) chatAllowedToolEntries(names []string, apiTools []T
 	return allowed
 }
 
-func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, error) {
+func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools, geminiToolSchemas bool) ([]Tool, error) {
 	// customTool builds a custom tool declaration. The flat form mirrors the
 	// Responses API ({"type":"custom","name":…,"format":{"type":"grammar",
 	// "syntax":…,"definition":…}}) for endpoints that forward the tools array
@@ -1101,6 +1119,10 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, err
 		switch g := t.Grammar().(type) {
 		case tools.JSONGrammar:
 			if schema := g.Schema(); schema != nil {
+				if geminiToolSchemas {
+					narrowed := geminischema.SanitizeFunction(*schema)
+					schema = &narrowed
+				}
 				apiTools = append(apiTools, Tool{Type: "function", Function: schema})
 			}
 		case tools.TextGrammar:
@@ -1129,7 +1151,7 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, err
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	apiTools, err := toolsFromToolbox(toolbox, false)
+	apiTools, err := toolsFromToolbox(toolbox, false, false)
 	if err != nil {
 		panic(err)
 	}
