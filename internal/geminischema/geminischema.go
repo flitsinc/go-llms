@@ -23,36 +23,31 @@ import (
 )
 
 // SanitizeFunction returns a copy of schema whose parameters are safe to send
-// to Gemini. The input is never modified, so the caller's toolbox stays intact
-// for other providers sharing it.
+// to Gemini:
+//
+//   - "additionalProperties" is dropped at every level.
+//   - Every other keyword outside tools.ValueSchema is dropped, because
+//     ValueSchema only has fields Gemini understands.
+//
+// The input is never modified, so a toolbox shared with other providers keeps
+// its full schema.
 func SanitizeFunction(schema tools.FunctionSchema) tools.FunctionSchema {
-	schema.Parameters = SanitizeValue(schema.Parameters)
+	schema.Parameters = sanitizeValue(schema.Parameters)
 	return schema
 }
 
-// SanitizeValue returns a deep copy of schema with the keywords Gemini rejects
-// removed:
-//
-//   - "additionalProperties" is dropped at every level.
-//   - Every other keyword outside tools.ValueSchema is dropped by round-tripping
-//     nested property schemas through ValueSchema, which only has fields Gemini
-//     understands.
-func SanitizeValue(schema tools.ValueSchema) tools.ValueSchema {
+func sanitizeValue(schema tools.ValueSchema) tools.ValueSchema {
 	schema.AdditionalProperties = nil
 
 	if schema.Items != nil {
-		items := SanitizeValue(*schema.Items)
+		items := sanitizeValue(*schema.Items)
 		schema.Items = &items
-	}
-
-	if schema.Required != nil {
-		schema.Required = append([]string(nil), schema.Required...)
 	}
 
 	if schema.AnyOf != nil {
 		anyOf := make([]tools.ValueSchema, len(schema.AnyOf))
 		for i, alternative := range schema.AnyOf {
-			anyOf[i] = SanitizeValue(alternative)
+			anyOf[i] = sanitizeValue(alternative)
 		}
 		schema.AnyOf = anyOf
 	}
@@ -67,12 +62,13 @@ func SanitizeValue(schema tools.ValueSchema) tools.ValueSchema {
 			value, ok := asValueSchema(raw)
 			if !ok {
 				// Not schema-shaped, so there is nothing to narrow and no safe
-				// way to rewrite it. Carry it over untouched rather than drop a
-				// property the model is expected to fill.
+				// way to rewrite it. Carrying it over keeps a property the
+				// model needs, at the cost of Gemini still refusing it — which
+				// is what would happen anyway.
 				properties.Set(key, raw)
 				continue
 			}
-			properties.Set(key, SanitizeValue(value))
+			properties.Set(key, sanitizeValue(value))
 		}
 		schema.Properties = properties
 	}
@@ -80,35 +76,22 @@ func SanitizeValue(schema tools.ValueSchema) tools.ValueSchema {
 	return schema
 }
 
-// asValueSchema reinterprets one property entry as a ValueSchema. Properties
-// arrive as decoded JSON rather than typed values whenever the schema came off
-// the wire, so the concrete type varies by caller.
+// asValueSchema reinterprets one property entry as a ValueSchema.
+//
+// Properties are typed as `any` (jsonmap preserves declaration order but not
+// types), so the concrete type depends on how the schema was built: decoding
+// one off the wire yields *jsonmap.Map, while tools.Func builds ValueSchema
+// directly. Round-tripping through JSON handles every shape without a type
+// switch that would have to guess at the full set, and it is the same
+// marshalling the request itself performs a moment later.
 func asValueSchema(raw any) (tools.ValueSchema, bool) {
-	switch value := raw.(type) {
-	case tools.ValueSchema:
-		return value, true
-	case *tools.ValueSchema:
-		if value == nil {
-			return tools.ValueSchema{}, false
-		}
-		return *value, true
-	case json.RawMessage:
-		var schema tools.ValueSchema
-		if json.Unmarshal(value, &schema) != nil {
-			return tools.ValueSchema{}, false
-		}
-		return schema, true
-	case *jsonmap.Map, map[string]any:
-		data, err := json.Marshal(value)
-		if err != nil {
-			return tools.ValueSchema{}, false
-		}
-		var schema tools.ValueSchema
-		if json.Unmarshal(data, &schema) != nil {
-			return tools.ValueSchema{}, false
-		}
-		return schema, true
-	default:
+	data, err := json.Marshal(raw)
+	if err != nil {
 		return tools.ValueSchema{}, false
 	}
+	var schema tools.ValueSchema
+	if json.Unmarshal(data, &schema) != nil {
+		return tools.ValueSchema{}, false
+	}
+	return schema, true
 }

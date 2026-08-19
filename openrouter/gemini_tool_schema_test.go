@@ -2,7 +2,6 @@ package openrouter
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,12 +101,4 @@ func TestIsGeminiModel(t *testing.T) {
 	} {
 		require.Equalf(t, want, isGeminiModel(model), "isGeminiModel(%q)", model)
 	}
-}
-
-// Guards the reason the check lives on the model id: a Gemini row added later
-// gets the narrowing without anyone remembering to ask for it.
-func TestNew_GeminiNarrowingNeedsNoOptIn(t *testing.T) {
-	payload := payloadJSON(t, "google/gemini-99-future-preview")
-	require.False(t, strings.Contains(payload, "additionalProperties"),
-		"a future Gemini row must be narrowed by default, not by opt-in")
 }

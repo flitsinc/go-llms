@@ -50,7 +50,8 @@ func editorShapedToolbox(t *testing.T) *tools.Toolbox {
 
 func toolsJSON(t *testing.T, toolbox *tools.Toolbox, geminiToolSchemas bool) string {
 	t.Helper()
-	apiTools, err := toolsFromToolbox(toolbox, true, geminiToolSchemas)
+	api := &ChatCompletionsAPI{flatCustomTools: true, geminiToolSchemas: geminiToolSchemas}
+	apiTools, err := api.toolsFromToolbox(toolbox)
 	if err != nil {
 		t.Fatalf("toolsFromToolbox: %v", err)
 	}

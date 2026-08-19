@@ -261,7 +261,7 @@ func (m *ChatCompletionsAPI) BuildPayload(
 
 	if toolbox != nil {
 		// Build tools first.
-		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools, m.geminiToolSchemas)
+		apiTools, err := m.toolsFromToolbox(toolbox)
 		if err != nil {
 			return nil, err
 		}
@@ -1090,13 +1090,13 @@ func (m *ChatCompletionsAPI) chatAllowedToolEntries(names []string, apiTools []T
 	return allowed
 }
 
-func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools, geminiToolSchemas bool) ([]Tool, error) {
+func (m *ChatCompletionsAPI) toolsFromToolbox(toolbox *tools.Toolbox) ([]Tool, error) {
 	// customTool builds a custom tool declaration. The flat form mirrors the
 	// Responses API ({"type":"custom","name":…,"format":{"type":"grammar",
 	// "syntax":…,"definition":…}}) for endpoints that forward the tools array
 	// there; the nested form is Chat Completions' own wrapper.
 	customTool := func(t tools.Tool, format map[string]any) Tool {
-		if flatCustomTools {
+		if m.flatCustomTools {
 			if format["type"] == "grammar" {
 				grammar := format["grammar"].(map[string]any)
 				format = map[string]any{
@@ -1119,7 +1119,7 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools, geminiToolSchemas
 		switch g := t.Grammar().(type) {
 		case tools.JSONGrammar:
 			if schema := g.Schema(); schema != nil {
-				if geminiToolSchemas {
+				if m.geminiToolSchemas {
 					narrowed := geminischema.SanitizeFunction(*schema)
 					schema = &narrowed
 				}
@@ -1151,7 +1151,7 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools, geminiToolSchemas
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	apiTools, err := toolsFromToolbox(toolbox, false, false)
+	apiTools, err := (&ChatCompletionsAPI{}).toolsFromToolbox(toolbox)
 	if err != nil {
 		panic(err)
 	}
