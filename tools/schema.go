@@ -44,6 +44,8 @@ type ValueSchema struct {
 	Required []string `json:"required,omitempty"`
 	// AnyOf specifies that the value must conform to at least one of the provided schemas.
 	AnyOf []ValueSchema `json:"anyOf,omitempty"`
+	// Enum restricts a string value to a fixed set of choices.
+	Enum []string `json:"enum,omitempty"`
 }
 
 // UnmarshalJSON ensures map-like schema fields preserve insertion order via jsonmap.

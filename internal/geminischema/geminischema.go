@@ -26,6 +26,12 @@ import (
 // to Gemini:
 //
 //   - "additionalProperties" is dropped at every level.
+//   - An enum offering "" is dropped entirely. Google rejects the empty string
+//     as an enum value (verified live 2026-08-19: a declaration carrying one is
+//     answered with a 400 and the request never reaches the model), and callers
+//     use "" as the "no filter" choice, so removing just that member would take
+//     away the option rather than the error. Dropping the enum leaves a plain
+//     string, which still accepts every value the caller meant to offer.
 //   - Every other keyword outside tools.ValueSchema is dropped, because
 //     ValueSchema only has fields Gemini understands.
 //
@@ -38,6 +44,13 @@ func SanitizeFunction(schema tools.FunctionSchema) tools.FunctionSchema {
 
 func sanitizeValue(schema tools.ValueSchema) tools.ValueSchema {
 	schema.AdditionalProperties = nil
+
+	for _, choice := range schema.Enum {
+		if choice == "" {
+			schema.Enum = nil
+			break
+		}
+	}
 
 	if schema.Items != nil {
 		items := sanitizeValue(*schema.Items)

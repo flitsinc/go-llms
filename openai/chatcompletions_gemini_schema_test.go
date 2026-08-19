@@ -26,6 +26,8 @@ func editorShapedToolbox(t *testing.T) *tools.Toolbox {
 			"properties": {
 				"moduleId": {"type": "string", "pattern": "^mod_[a-z]+$", "minLength": 4},
 				"kind": {"const": "component"},
+				"source": {"type": "string", "enum": ["sandbox", "workflow", ""]},
+				"status": {"type": "string", "enum": ["running", "failed"]},
 				"edits": {
 					"type": "array",
 					"items": {
@@ -80,6 +82,33 @@ func TestToolsFromToolbox_GeminiSchemasDropRejectedKeywords(t *testing.T) {
 	for _, kept := range []string{"moduleId", "edits", "find", "replace", "items"} {
 		if !strings.Contains(payload, kept) {
 			t.Errorf("Gemini mode dropped %q, which the model needs to call the tool: %s", kept, payload)
+		}
+	}
+}
+
+// The empty string is the member Google refuses, and callers use it as their
+// "no filter" choice. Dropping the whole enum keeps that choice reachable as a
+// plain string; dropping just the member would take the option away.
+func TestToolsFromToolbox_GeminiDropsEnumOfferingEmptyString(t *testing.T) {
+	payload := toolsJSON(t, editorShapedToolbox(t), true)
+
+	if strings.Contains(payload, `"sandbox"`) {
+		t.Errorf("an enum offering \"\" must be dropped whole, not filtered: %s", payload)
+	}
+	if !strings.Contains(payload, `"source"`) {
+		t.Errorf("dropping the enum must keep the property itself: %s", payload)
+	}
+}
+
+// Enums are the reason this narrowing has to be keyword-aware rather than a
+// blanket strip: Gemini supports them, and throwing them away silently removes
+// a constraint the model relies on.
+func TestToolsFromToolbox_GeminiKeepsValidEnums(t *testing.T) {
+	payload := toolsJSON(t, editorShapedToolbox(t), true)
+
+	for _, kept := range []string{`"running"`, `"failed"`} {
+		if !strings.Contains(payload, kept) {
+			t.Errorf("Gemini accepts enums without \"\"; %s must survive: %s", kept, payload)
 		}
 	}
 }
