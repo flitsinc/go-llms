@@ -36,30 +36,42 @@ func TestParseHTTPError_GoogleSymbolicStatus(t *testing.T) {
 	}
 }
 
-func TestRawErrorStatus(t *testing.T) {
+func TestDecodeUpstreamError_StatusIsRoutedByWhatItHolds(t *testing.T) {
 	for name, tc := range map[string]struct {
-		statusCode, status string
-		wantCode           int
-		wantName           string
+		body           string
+		wantStatusCode int
+		wantType       string
 	}{
-		"symbolic status only":      {status: `"INVALID_ARGUMENT"`, wantName: "INVALID_ARGUMENT"},
-		"numeric status only":       {status: `503`, wantCode: 503},
-		"numeric status as string":  {status: `"503"`, wantCode: 503},
-		"status_code wins the code": {statusCode: `429`, status: `"RESOURCE_EXHAUSTED"`, wantCode: 429, wantName: "RESOURCE_EXHAUSTED"},
-		"absent":                    {},
+		"symbolic status becomes the type":  {body: `{"status":"INVALID_ARGUMENT"}`, wantType: "INVALID_ARGUMENT"},
+		"numeric status becomes the code":   {body: `{"status":503}`, wantStatusCode: 503},
+		"numeric status sent as a string":   {body: `{"status":"503"}`, wantStatusCode: 503},
+		"status_code owns the code":         {body: `{"status_code":429,"status":"RESOURCE_EXHAUSTED"}`, wantStatusCode: 429, wantType: "RESOURCE_EXHAUSTED"},
+		"an explicit type is not displaced": {body: `{"type":"rate_limit","status":"RESOURCE_EXHAUSTED"}`, wantType: "rate_limit"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			code, statusName := rawErrorStatus(rawMessageOrNil(tc.statusCode), rawMessageOrNil(tc.status))
-			if code != tc.wantCode || statusName != tc.wantName {
-				t.Errorf("rawErrorStatus() = (%d, %q), want (%d, %q)", code, statusName, tc.wantCode, tc.wantName)
+			upstream, ok := decodeUpstreamError([]byte(tc.body))
+			if !ok {
+				t.Fatalf("decodeUpstreamError(%s) found nothing", tc.body)
+			}
+			if upstream.statusCode != tc.wantStatusCode || upstream.errorType != tc.wantType {
+				t.Errorf("statusCode/type = (%d, %q), want (%d, %q)",
+					upstream.statusCode, upstream.errorType, tc.wantStatusCode, tc.wantType)
 			}
 		})
 	}
 }
 
-func rawMessageOrNil(raw string) []byte {
-	if raw == "" {
-		return nil
+// The reason fields are decoded one at a time: a shape we did not expect in one
+// of them used to discard the whole object, message included.
+func TestDecodeUpstreamError_OneOddFieldDoesNotCostTheOthers(t *testing.T) {
+	upstream, ok := decodeUpstreamError([]byte(`{"code":{"unexpected":"object"},"message":"the real reason","status_code":400}`))
+	if !ok {
+		t.Fatal("expected the object to decode")
 	}
-	return []byte(raw)
+	if upstream.message != "the real reason" {
+		t.Errorf("message = %q, want it preserved alongside the odd field", upstream.message)
+	}
+	if upstream.statusCode != 400 {
+		t.Errorf("statusCode = %d, want 400", upstream.statusCode)
+	}
 }

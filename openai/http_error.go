@@ -74,73 +74,67 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
-	// "status" is left untyped because upstreams disagree on its shape: most
-	// gateways put an HTTP code there, Google puts a symbolic name such as
-	// "INVALID_ARGUMENT". Decoding it as an int made json.Unmarshal fail on
-	// every Google error, and the failure discarded the message it had already
-	// decoded — so Google's actual complaint never reached callers or traces.
-	var rawError struct {
-		Code       json.RawMessage `json:"code"`
-		Message    string          `json:"message"`
-		Type       string          `json:"type"`
-		Status     json.RawMessage `json:"status"`
-		StatusCode json.RawMessage `json:"status_code"`
-		Error      struct {
-			Code       json.RawMessage `json:"code"`
-			Message    string          `json:"message"`
-			Type       string          `json:"type"`
-			Status     json.RawMessage `json:"status"`
-			StatusCode json.RawMessage `json:"status_code"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(raw, &rawError) != nil {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
 		return
 	}
 
-	nestedStatusCode, nestedStatusName := rawErrorStatus(rawError.Error.StatusCode, rawError.Error.Status)
-	nestedType := rawError.Error.Type
-	if nestedType == "" {
-		nestedType = nestedStatusName
-	}
-	if rawError.Error.Message != "" || nestedType != "" || rawJSONScalarString(rawError.Error.Code) != "" || nestedStatusCode != 0 {
-		metadata.RawErrorCode = rawJSONScalarString(rawError.Error.Code)
-		metadata.RawErrorType = nestedType
-		metadata.RawErrorMessage = rawError.Error.Message
-		metadata.RawErrorStatusCode = nestedStatusCode
-		return
+	upstream, ok := decodeUpstreamError(fields["error"])
+	if !ok {
+		upstream, _ = decodeUpstreamError(raw)
 	}
 
-	statusCode, statusName := rawErrorStatus(rawError.StatusCode, rawError.Status)
-	errorType := rawError.Type
-	if errorType == "" {
-		errorType = statusName
-	}
-	metadata.RawErrorCode = rawJSONScalarString(rawError.Code)
-	metadata.RawErrorType = errorType
-	metadata.RawErrorMessage = rawError.Message
-	metadata.RawErrorStatusCode = statusCode
+	metadata.RawErrorCode = upstream.code
+	metadata.RawErrorType = upstream.errorType
+	metadata.RawErrorMessage = upstream.message
+	metadata.RawErrorStatusCode = upstream.statusCode
 }
 
-// rawErrorStatus separates the two things upstreams put in "status" and
-// "status_code": a numeric HTTP code, and a symbolic name like
-// "INVALID_ARGUMENT". Either field can hold either shape, so both are read.
-func rawErrorStatus(statusCode, status json.RawMessage) (code int, name string) {
-	for _, candidate := range []json.RawMessage{statusCode, status} {
-		text := rawJSONScalarString(candidate)
-		if text == "" {
-			continue
-		}
-		if parsed, err := strconv.Atoi(text); err == nil {
-			if code == 0 {
-				code = parsed
+type upstreamError struct {
+	code       string
+	message    string
+	errorType  string
+	statusCode int
+}
+
+// decodeUpstreamError reads one level of a gateway's raw upstream error.
+//
+// The fields are decoded one at a time rather than through a single struct
+// because this body comes straight from whichever provider the gateway called,
+// and its shape is not ours to assume. Decoding it as a struct meant one
+// unexpected type failed the whole unmarshal and discarded every other field
+// with it — which is how Google's errors lost the message that explained them.
+//
+// Reports whether anything was found, so the caller can fall back from the
+// nested shape to the flat one.
+func decodeUpstreamError(raw json.RawMessage) (upstreamError, bool) {
+	var fields map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil {
+		return upstreamError{}, false
+	}
+
+	upstream := upstreamError{
+		code:      rawJSONScalarString(fields["code"]),
+		message:   rawJSONScalarString(fields["message"]),
+		errorType: rawJSONScalarString(fields["type"]),
+	}
+	upstream.statusCode, _ = strconv.Atoi(rawJSONScalarString(fields["status_code"]))
+
+	// "status" is the one genuinely ambiguous key: an HTTP code on most
+	// gateways, and a canonical name such as "INVALID_ARGUMENT" on Google,
+	// where it is the error's type rather than its code. Route it by what it
+	// holds instead of forcing one reading on both.
+	if status := rawJSONScalarString(fields["status"]); status != "" {
+		if code, err := strconv.Atoi(status); err == nil {
+			if upstream.statusCode == 0 {
+				upstream.statusCode = code
 			}
-			continue
-		}
-		if name == "" {
-			name = text
+		} else if upstream.errorType == "" {
+			upstream.errorType = status
 		}
 	}
-	return code, name
+
+	return upstream, upstream.code != "" || upstream.message != "" || upstream.errorType != "" || upstream.statusCode != 0
 }
 
 func rawJSONScalarString(raw json.RawMessage) string {
