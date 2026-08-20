@@ -1,12 +1,15 @@
 package openai
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Verbatim body from OpenRouter, captured 2026-08-19 against
-// google/gemini-3.7-flash. Note "status": "INVALID_ARGUMENT" — Google puts a
+// google/gemini-3.7-flash. Note "status": "INVALID_ARGUMENT": Google puts a
 // symbolic name where every other gateway puts an HTTP code.
 const googleViaOpenRouterErrorBody = `{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties[s].enum[1]: cannot be empty\\n\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n","provider_name":"Google AI Studio","is_byok":false,"provider_error_code":"400","previous_errors":[{"code":400,"message":"Provider returned error","provider_name":"Google","raw":"{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"* GenerateContentRequest.tools[0].function_declarations[0].parameters.properties[s].enum[1]: cannot be empty\\n\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n"}]}},"user_id":"org_x"}`
 
@@ -49,10 +52,7 @@ func TestDecodeUpstreamError_StatusIsRoutedByWhatItHolds(t *testing.T) {
 		"an explicit type is not displaced": {body: `{"type":"rate_limit","status":"RESOURCE_EXHAUSTED"}`, wantType: "rate_limit"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			upstream, ok := decodeUpstreamError([]byte(tc.body))
-			if !ok {
-				t.Fatalf("decodeUpstreamError(%s) found nothing", tc.body)
-			}
+			upstream := decodeUpstreamError([]byte(tc.body))
 			if upstream.statusCode != tc.wantStatusCode || upstream.errorType != tc.wantType {
 				t.Errorf("statusCode/type = (%d, %q), want (%d, %q)",
 					upstream.statusCode, upstream.errorType, tc.wantStatusCode, tc.wantType)
@@ -64,14 +64,39 @@ func TestDecodeUpstreamError_StatusIsRoutedByWhatItHolds(t *testing.T) {
 // The reason fields are decoded one at a time: a shape we did not expect in one
 // of them used to discard the whole object, message included.
 func TestDecodeUpstreamError_OneOddFieldDoesNotCostTheOthers(t *testing.T) {
-	upstream, ok := decodeUpstreamError([]byte(`{"code":{"unexpected":"object"},"message":"the real reason","status_code":400}`))
-	if !ok {
-		t.Fatal("expected the object to decode")
-	}
+	upstream := decodeUpstreamError([]byte(`{"code":{"unexpected":"object"},"message":"the real reason","status_code":400}`))
 	if upstream.message != "the real reason" {
 		t.Errorf("message = %q, want it preserved alongside the odd field", upstream.message)
 	}
 	if upstream.statusCode != 400 {
 		t.Errorf("statusCode = %d, want 400", upstream.statusCode)
 	}
+}
+
+// An empty nested "error" object must not shadow fields sitting flat on the
+// raw body itself.
+func TestParseHTTPErrorMetadata_FlatRawErrorWithNullNestedCode(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"message": "flat message", "type": "flat_type", "error": {"code": null}}`),
+	})
+
+	assert.Empty(t, metadata.RawErrorCode)
+	assert.Equal(t, "flat_type", metadata.RawErrorType)
+	assert.Equal(t, "flat message", metadata.RawErrorMessage)
+}
+
+func TestParseHTTPErrorMetadata_NestedStatusCodeOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status_code": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
+}
+
+func TestParseHTTPErrorMetadata_NestedStatusOnly(t *testing.T) {
+	metadata := parseHTTPErrorMetadata(openAIErrorMetadata{
+		Raw: json.RawMessage(`{"error": {"status": 429}}`),
+	})
+
+	assert.Equal(t, 429, metadata.RawErrorStatusCode)
 }

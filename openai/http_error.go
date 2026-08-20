@@ -74,16 +74,7 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
-		return
-	}
-
-	upstream, ok := decodeUpstreamError(fields["error"])
-	if !ok {
-		upstream, _ = decodeUpstreamError(raw)
-	}
-
+	upstream := decodeUpstreamError(raw)
 	metadata.RawErrorCode = upstream.code
 	metadata.RawErrorType = upstream.errorType
 	metadata.RawErrorMessage = upstream.message
@@ -97,22 +88,32 @@ type upstreamError struct {
 	statusCode int
 }
 
-// decodeUpstreamError reads one level of a gateway's raw upstream error.
-//
-// The fields are decoded one at a time rather than through a single struct
-// because this body comes straight from whichever provider the gateway called,
-// and its shape is not ours to assume. Decoding it as a struct meant one
-// unexpected type failed the whole unmarshal and discarded every other field
-// with it — which is how Google's errors lost the message that explained them.
-//
-// Reports whether anything was found, so the caller can fall back from the
-// nested shape to the flat one.
-func decodeUpstreamError(raw json.RawMessage) (upstreamError, bool) {
-	var fields map[string]json.RawMessage
-	if len(raw) == 0 || json.Unmarshal(raw, &fields) != nil {
-		return upstreamError{}, false
+// decodeUpstreamError reads a gateway's raw upstream error object. Its fields
+// come either nested under "error" or flat on the object itself; the nested
+// shape wins whenever it holds anything.
+func decodeUpstreamError(raw json.RawMessage) upstreamError {
+	var flat map[string]json.RawMessage
+	if json.Unmarshal(raw, &flat) != nil {
+		return upstreamError{}
 	}
 
+	var nested map[string]json.RawMessage
+	if json.Unmarshal(flat["error"], &nested) == nil {
+		if upstream := upstreamErrorFromFields(nested); upstream != (upstreamError{}) {
+			return upstream
+		}
+	}
+
+	return upstreamErrorFromFields(flat)
+}
+
+// upstreamErrorFromFields reads the fields one at a time rather than through a
+// single struct because this body comes straight from whichever provider the
+// gateway called, and its shape is not ours to assume. Decoding it as a struct
+// meant one unexpected type failed the whole unmarshal and discarded every
+// other field with it, which is how Google's errors lost the message that
+// explained them.
+func upstreamErrorFromFields(fields map[string]json.RawMessage) upstreamError {
 	upstream := upstreamError{
 		code:      rawJSONScalarString(fields["code"]),
 		message:   rawJSONScalarString(fields["message"]),
@@ -134,7 +135,7 @@ func decodeUpstreamError(raw json.RawMessage) (upstreamError, bool) {
 		}
 	}
 
-	return upstream, upstream.code != "" || upstream.message != "" || upstream.errorType != "" || upstream.statusCode != 0
+	return upstream
 }
 
 func rawJSONScalarString(raw json.RawMessage) string {
