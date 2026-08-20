@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -2015,6 +2016,92 @@ func TestSanitizeSchemaForGemini_NestedProperties(t *testing.T) {
 	// Verify supported fields are preserved
 	if valueSchema["type"] != "number" {
 		t.Errorf("nested value type should be 'number', got %v", valueSchema["type"])
+	}
+}
+
+// TestSanitizeSchemaForGemini_DoesNotMutateToolbox tests that building a Gemini
+// request leaves the caller's tool schemas byte-identical (BSCT-3199: the
+// sanitizer used to write narrowed values back through the shared Properties
+// map, Items pointer, and AnyOf backing array).
+func TestSanitizeSchemaForGemini_DoesNotMutateToolbox(t *testing.T) {
+	var schema tools.FunctionSchema
+	if err := json.Unmarshal([]byte(`{
+		"name": "test_func",
+		"description": "Test function",
+		"parameters": {
+			"type": "object",
+			"properties": {
+				"email": {"type": "string", "pattern": "^[^@]+@[^@]+$"},
+				"nested": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"kind": {"type": "string", "const": "a"}
+					}
+				},
+				"list": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}},
+				"choice": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}
+			},
+			"additionalProperties": false
+		}
+	}`), &schema); err != nil {
+		t.Fatalf("failed to unmarshal schema: %v", err)
+	}
+
+	before, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("failed to marshal schema before request: %v", err)
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		json.NewDecoder(r.Body).Decode(&payload)
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}` + "\n"))
+	}))
+	defer server.Close()
+
+	tb := tools.Box(
+		tools.External("Test", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		}),
+	)
+
+	model := New("gemini-2.0-flash").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, []llms.Message{
+		{Role: "user", Content: content.FromText("test")},
+	}, tb, nil)
+
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	payload := <-payloadCh
+
+	// The request itself must be narrowed, or this test proves nothing.
+	toolsPayload := payload["tools"].(map[string]any)
+	declarations := toolsPayload["functionDeclarations"].([]any)
+	decl := declarations[0].(map[string]any)
+	params := decl["parameters"].(map[string]any)
+	properties := params["properties"].(map[string]any)
+	if _, exists := properties["email"].(map[string]any)["pattern"]; exists {
+		t.Fatal("pattern should have been stripped from the request payload")
+	}
+
+	after, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("failed to marshal schema after request: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("toolbox schema was mutated by building a Gemini request\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 

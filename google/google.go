@@ -20,65 +20,71 @@ import (
 	"github.com/flitsinc/go-llms/tools"
 )
 
-// sanitizeSchemaForGemini recursively removes unsupported JSON Schema properties
-// to make schemas compatible with Google's Gemini API. This includes:
+// sanitizeSchemaForGemini returns a copy of the schema with JSON Schema
+// properties unsupported by Google's Gemini API removed. This includes:
 //   - Setting AdditionalProperties to nil
 //   - Stripping unsupported keywords like exclusiveMinimum, const, pattern, etc.
 //     by round-tripping through tools.ValueSchema which only has supported fields.
-func sanitizeSchemaForGemini(schema *tools.ValueSchema) {
-	schema.AdditionalProperties = nil
+//
+// The input is never mutated: a Toolbox outlives a single request and can be
+// shared across providers, so narrowing must not write through to the caller's
+// schemas.
+func sanitizeSchemaForGemini(schema tools.ValueSchema) tools.ValueSchema {
+	out := schema
+	out.AdditionalProperties = nil
 
 	if schema.Items != nil {
-		sanitizeSchemaForGemini(schema.Items)
+		items := sanitizeSchemaForGemini(*schema.Items)
+		out.Items = &items
 	}
 
 	if schema.Properties != nil {
+		props := jsonmap.New()
 		for _, k := range schema.Properties.Keys() {
 			raw, ok := schema.Properties.Get(k)
 			if !ok {
 				continue
 			}
-
-			var v tools.ValueSchema
-			switch val := raw.(type) {
-			case tools.ValueSchema:
-				v = val
-			case *jsonmap.Map:
-				// Property is a nested map from jsonmap - marshal to JSON then
-				// unmarshal into ValueSchema to strip unsupported fields.
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case map[string]any:
-				// Property is a generic map - marshal to JSON then unmarshal
-				// into ValueSchema to strip unsupported fields.
-				data, err := json.Marshal(val)
-				if err != nil {
-					continue
-				}
-				if err := json.Unmarshal(data, &v); err != nil {
-					continue
-				}
-			case json.RawMessage:
-				if err := json.Unmarshal(val, &v); err != nil {
-					continue
-				}
-			default:
+			v, err := propertyValueSchema(raw)
+			if err != nil {
+				// Keep the property as-is rather than dropping it; this matches
+				// the previous behavior of leaving undecodable values untouched.
+				props.Set(k, raw)
 				continue
 			}
-
-			sanitizeSchemaForGemini(&v)
-			schema.Properties.Set(k, v)
+			props.Set(k, sanitizeSchemaForGemini(v))
 		}
+		out.Properties = props
 	}
 
-	for i := range schema.AnyOf {
-		sanitizeSchemaForGemini(&schema.AnyOf[i])
+	if len(schema.AnyOf) > 0 {
+		anyOf := make([]tools.ValueSchema, len(schema.AnyOf))
+		for i, sub := range schema.AnyOf {
+			anyOf[i] = sanitizeSchemaForGemini(sub)
+		}
+		out.AnyOf = anyOf
 	}
+
+	return out
+}
+
+// propertyValueSchema decodes a property value in whatever shape it was stored
+// (tools.ValueSchema from tools.Func, *jsonmap.Map off the wire, or any other
+// JSON-marshalable form) into a tools.ValueSchema, which keeps only the fields
+// Gemini supports.
+func propertyValueSchema(raw any) (tools.ValueSchema, error) {
+	if v, ok := raw.(tools.ValueSchema); ok {
+		return v, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return tools.ValueSchema{}, err
+	}
+	var v tools.ValueSchema
+	if err := json.Unmarshal(data, &v); err != nil {
+		return tools.ValueSchema{}, err
+	}
+	return v, nil
 }
 
 type Model struct {
@@ -401,7 +407,7 @@ func (m *Model) Generate(
 			switch g := tool.Grammar().(type) {
 			case tools.JSONGrammar:
 				schema := *g.Schema()
-				sanitizeSchemaForGemini(&schema.Parameters)
+				schema.Parameters = sanitizeSchemaForGemini(schema.Parameters)
 				declarations[i] = schema
 			default:
 				return &Stream{err: fmt.Errorf("google: unsupported tool grammar type %T", g)}
