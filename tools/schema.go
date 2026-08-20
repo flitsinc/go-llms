@@ -40,6 +40,11 @@ type ValueSchema struct {
 	// It can be a boolean (true to allow any, false to disallow) or a ValueSchema defining the type of allowed additional properties.
 	// Only used when Type is "object".
 	AdditionalProperties any `json:"additionalProperties,omitempty"`
+	// Enum restricts the value to a fixed set of members. JSON Schema allows
+	// members of any type, so this is []any rather than []string; a stricter
+	// element type would make the whole schema fail to unmarshal when a
+	// numeric enum appears.
+	Enum []any `json:"enum,omitempty"`
 	// Required lists the names of properties that must be present when Type is "object".
 	Required []string `json:"required,omitempty"`
 	// AnyOf specifies that the value must conform to at least one of the provided schemas.

@@ -46,6 +46,41 @@ func TestValueSchema_AnyOf(t *testing.T) {
 	assert.JSONEq(t, inputJSON, string(outputJSON), "Output JSON should match input JSON for anyOf structure")
 }
 
+// TestValueSchema_EnumRoundTrip tests that enum members survive a JSON
+// round-trip through ValueSchema, including non-string members.
+func TestValueSchema_EnumRoundTrip(t *testing.T) {
+	inputJSON := `{
+		"type": "object",
+		"properties": {
+			"mode": { "type": "string", "enum": ["fast", "slow"] },
+			"level": { "type": "integer", "enum": [1, 2, 3] }
+		}
+	}`
+
+	var schema ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(inputJSON), &schema))
+
+	rawMode, ok := schema.Properties.Get("mode")
+	require.True(t, ok)
+	modeJSON, err := json.Marshal(rawMode)
+	require.NoError(t, err)
+	var mode ValueSchema
+	require.NoError(t, json.Unmarshal(modeJSON, &mode))
+	assert.Equal(t, []any{"fast", "slow"}, mode.Enum)
+
+	rawLevel, ok := schema.Properties.Get("level")
+	require.True(t, ok)
+	levelJSON, err := json.Marshal(rawLevel)
+	require.NoError(t, err)
+	var level ValueSchema
+	require.NoError(t, json.Unmarshal(levelJSON, &level))
+	assert.Equal(t, []any{float64(1), float64(2), float64(3)}, level.Enum)
+
+	outputJSON, err := json.Marshal(schema)
+	require.NoError(t, err)
+	assert.JSONEq(t, inputJSON, string(outputJSON))
+}
+
 // TestGenerateSchema checks that the JSON schema is generated correctly from the Params struct.
 // Moved from tool_test.go
 func TestGenerateSchema(t *testing.T) {

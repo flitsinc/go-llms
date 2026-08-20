@@ -2359,3 +2359,85 @@ func TestSanitizeSchemaForGemini_MapStringAny(t *testing.T) {
 		t.Errorf("Expected description 'A positive count', got %v", countSchema["description"])
 	}
 }
+
+// TestSanitizeSchemaForGemini_PreservesEnums tests that enum members survive
+// sanitization, both on top-level and nested properties (BSCT-3198: the
+// round-trip through tools.ValueSchema used to drop every enum).
+func TestSanitizeSchemaForGemini_PreservesEnums(t *testing.T) {
+	modeProp := jsonmap.New()
+	modeProp.Set("type", "string")
+	modeProp.Set("enum", []string{"fast", "slow"})
+
+	kindProp := jsonmap.New()
+	kindProp.Set("type", "string")
+	kindProp.Set("enum", []string{"a", "b"})
+	innerProps := jsonmap.New()
+	innerProps.Set("kind", kindProp)
+	nestedProp := jsonmap.New()
+	nestedProp.Set("type", "object")
+	nestedProp.Set("properties", innerProps)
+
+	props := jsonmap.New()
+	props.Set("mode", modeProp)
+	props.Set("nested", nestedProp)
+
+	schema := tools.FunctionSchema{
+		Name:        "test_func",
+		Description: "Test function",
+		Parameters: tools.ValueSchema{
+			Type:       "object",
+			Properties: props,
+		},
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		json.NewDecoder(r.Body).Decode(&payload)
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}` + "\n"))
+	}))
+	defer server.Close()
+
+	tb := tools.Box(
+		tools.External("Test", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		}),
+	)
+
+	model := New("gemini-2.0-flash").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+
+	ctx := context.Background()
+	stream := model.Generate(ctx, nil, []llms.Message{
+		{Role: "user", Content: content.FromText("test")},
+	}, tb, nil)
+
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	payload := <-payloadCh
+
+	toolsPayload := payload["tools"].(map[string]any)
+	declarations := toolsPayload["functionDeclarations"].([]any)
+	decl := declarations[0].(map[string]any)
+	params := decl["parameters"].(map[string]any)
+	properties := params["properties"].(map[string]any)
+
+	modeSchema := properties["mode"].(map[string]any)
+	if !reflect.DeepEqual(modeSchema["enum"], []any{"fast", "slow"}) {
+		t.Errorf("mode enum = %v, want [fast slow]", modeSchema["enum"])
+	}
+
+	nestedSchema := properties["nested"].(map[string]any)
+	nestedProps2 := nestedSchema["properties"].(map[string]any)
+	kindSchema := nestedProps2["kind"].(map[string]any)
+	if !reflect.DeepEqual(kindSchema["enum"], []any{"a", "b"}) {
+		t.Errorf("nested kind enum = %v, want [a b]", kindSchema["enum"])
+	}
+}
