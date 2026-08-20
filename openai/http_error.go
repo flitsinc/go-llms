@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/flitsinc/go-llms/llms"
 )
@@ -73,44 +74,73 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
+	// "status" is left untyped because upstreams disagree on its shape: most
+	// gateways put an HTTP code there, Google puts a symbolic name such as
+	// "INVALID_ARGUMENT". Decoding it as an int made json.Unmarshal fail on
+	// every Google error, and the failure discarded the message it had already
+	// decoded — so Google's actual complaint never reached callers or traces.
 	var rawError struct {
 		Code       json.RawMessage `json:"code"`
 		Message    string          `json:"message"`
 		Type       string          `json:"type"`
-		Status     int             `json:"status"`
-		StatusCode int             `json:"status_code"`
+		Status     json.RawMessage `json:"status"`
+		StatusCode json.RawMessage `json:"status_code"`
 		Error      struct {
 			Code       json.RawMessage `json:"code"`
 			Message    string          `json:"message"`
 			Type       string          `json:"type"`
-			Status     int             `json:"status"`
-			StatusCode int             `json:"status_code"`
+			Status     json.RawMessage `json:"status"`
+			StatusCode json.RawMessage `json:"status_code"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &rawError) != nil {
 		return
 	}
 
-	nestedStatusCode := rawError.Error.StatusCode
-	if nestedStatusCode == 0 {
-		nestedStatusCode = rawError.Error.Status
+	nestedStatusCode, nestedStatusName := rawErrorStatus(rawError.Error.StatusCode, rawError.Error.Status)
+	nestedType := rawError.Error.Type
+	if nestedType == "" {
+		nestedType = nestedStatusName
 	}
-	if rawError.Error.Message != "" || rawError.Error.Type != "" || rawJSONScalarString(rawError.Error.Code) != "" || nestedStatusCode != 0 {
+	if rawError.Error.Message != "" || nestedType != "" || rawJSONScalarString(rawError.Error.Code) != "" || nestedStatusCode != 0 {
 		metadata.RawErrorCode = rawJSONScalarString(rawError.Error.Code)
-		metadata.RawErrorType = rawError.Error.Type
+		metadata.RawErrorType = nestedType
 		metadata.RawErrorMessage = rawError.Error.Message
 		metadata.RawErrorStatusCode = nestedStatusCode
 		return
 	}
 
-	statusCode := rawError.StatusCode
-	if statusCode == 0 {
-		statusCode = rawError.Status
+	statusCode, statusName := rawErrorStatus(rawError.StatusCode, rawError.Status)
+	errorType := rawError.Type
+	if errorType == "" {
+		errorType = statusName
 	}
 	metadata.RawErrorCode = rawJSONScalarString(rawError.Code)
-	metadata.RawErrorType = rawError.Type
+	metadata.RawErrorType = errorType
 	metadata.RawErrorMessage = rawError.Message
 	metadata.RawErrorStatusCode = statusCode
+}
+
+// rawErrorStatus separates the two things upstreams put in "status" and
+// "status_code": a numeric HTTP code, and a symbolic name like
+// "INVALID_ARGUMENT". Either field can hold either shape, so both are read.
+func rawErrorStatus(statusCode, status json.RawMessage) (code int, name string) {
+	for _, candidate := range []json.RawMessage{statusCode, status} {
+		text := rawJSONScalarString(candidate)
+		if text == "" {
+			continue
+		}
+		if parsed, err := strconv.Atoi(text); err == nil {
+			if code == 0 {
+				code = parsed
+			}
+			continue
+		}
+		if name == "" {
+			name = text
+		}
+	}
+	return code, name
 }
 
 func rawJSONScalarString(raw json.RawMessage) string {
