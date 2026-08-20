@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/flitsinc/go-llms/llms"
 )
@@ -73,44 +74,68 @@ func populateRawErrorMetadata(raw json.RawMessage, metadata *llms.HTTPErrorMetad
 		return
 	}
 
-	var rawError struct {
-		Code       json.RawMessage `json:"code"`
-		Message    string          `json:"message"`
-		Type       string          `json:"type"`
-		Status     int             `json:"status"`
-		StatusCode int             `json:"status_code"`
-		Error      struct {
-			Code       json.RawMessage `json:"code"`
-			Message    string          `json:"message"`
-			Type       string          `json:"type"`
-			Status     int             `json:"status"`
-			StatusCode int             `json:"status_code"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(raw, &rawError) != nil {
-		return
+	upstream := decodeUpstreamError(raw)
+	metadata.RawErrorCode = upstream.code
+	metadata.RawErrorType = upstream.errorType
+	metadata.RawErrorMessage = upstream.message
+	metadata.RawErrorStatusCode = upstream.statusCode
+}
+
+type upstreamError struct {
+	code       string
+	message    string
+	errorType  string
+	statusCode int
+}
+
+// decodeUpstreamError reads a gateway's raw upstream error object. Its fields
+// come either nested under "error" or flat on the object itself; the nested
+// shape wins whenever it holds anything.
+func decodeUpstreamError(raw json.RawMessage) upstreamError {
+	var flat map[string]json.RawMessage
+	if json.Unmarshal(raw, &flat) != nil {
+		return upstreamError{}
 	}
 
-	nestedStatusCode := rawError.Error.StatusCode
-	if nestedStatusCode == 0 {
-		nestedStatusCode = rawError.Error.Status
-	}
-	if rawError.Error.Message != "" || rawError.Error.Type != "" || rawJSONScalarString(rawError.Error.Code) != "" || nestedStatusCode != 0 {
-		metadata.RawErrorCode = rawJSONScalarString(rawError.Error.Code)
-		metadata.RawErrorType = rawError.Error.Type
-		metadata.RawErrorMessage = rawError.Error.Message
-		metadata.RawErrorStatusCode = nestedStatusCode
-		return
+	var nested map[string]json.RawMessage
+	if json.Unmarshal(flat["error"], &nested) == nil {
+		if upstream := upstreamErrorFromFields(nested); upstream != (upstreamError{}) {
+			return upstream
+		}
 	}
 
-	statusCode := rawError.StatusCode
-	if statusCode == 0 {
-		statusCode = rawError.Status
+	return upstreamErrorFromFields(flat)
+}
+
+// upstreamErrorFromFields reads the fields one at a time rather than through a
+// single struct because this body comes straight from whichever provider the
+// gateway called, and its shape is not ours to assume. Decoding it as a struct
+// meant one unexpected type failed the whole unmarshal and discarded every
+// other field with it, which is how Google's errors lost the message that
+// explained them.
+func upstreamErrorFromFields(fields map[string]json.RawMessage) upstreamError {
+	upstream := upstreamError{
+		code:      rawJSONScalarString(fields["code"]),
+		message:   rawJSONScalarString(fields["message"]),
+		errorType: rawJSONScalarString(fields["type"]),
 	}
-	metadata.RawErrorCode = rawJSONScalarString(rawError.Code)
-	metadata.RawErrorType = rawError.Type
-	metadata.RawErrorMessage = rawError.Message
-	metadata.RawErrorStatusCode = statusCode
+	upstream.statusCode, _ = strconv.Atoi(rawJSONScalarString(fields["status_code"]))
+
+	// "status" is the one genuinely ambiguous key: an HTTP code on most
+	// gateways, and a canonical name such as "INVALID_ARGUMENT" on Google,
+	// where it is the error's type rather than its code. Route it by what it
+	// holds instead of forcing one reading on both.
+	if status := rawJSONScalarString(fields["status"]); status != "" {
+		if code, err := strconv.Atoi(status); err == nil {
+			if upstream.statusCode == 0 {
+				upstream.statusCode = code
+			}
+		} else if upstream.errorType == "" {
+			upstream.errorType = status
+		}
+	}
+
+	return upstream
 }
 
 func rawJSONScalarString(raw json.RawMessage) string {
