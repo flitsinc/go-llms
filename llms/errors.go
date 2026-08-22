@@ -12,6 +12,15 @@ import (
 // stop_reason="max_tokens" in Anthropic).
 var ErrOutputTruncated = errors.New("output truncated: model reached max output token limit")
 
+// ErrEmptyStream is returned when a provider stream terminates without
+// producing any content. For SSE-based providers this means EOF arrived
+// before the stream's terminating marker (e.g. `data: [DONE]` on the
+// OpenAI Chat Completions API), which typically indicates the upstream
+// connection was cut prematurely (proxy timeout, middleware swallowing an
+// upstream error, empty response from the model). Without this error,
+// callers would observe a successful completion with zero tokens.
+var ErrEmptyStream = errors.New("stream ended without producing content")
+
 // HTTPError represents an HTTP error response from an LLM provider.
 type HTTPError struct {
 	StatusCode int               // HTTP status code (e.g., 429, 503, 500)
