@@ -43,6 +43,13 @@ type ChatCompletionsAPI struct {
 	customPayloadValues map[string]any
 	customHeaders       map[string]string
 
+	// Provider-executed tools appended verbatim to the request's tools array,
+	// after the toolbox's function tools. These are tools the provider runs
+	// server-side (e.g. OpenRouter's "openrouter:web_search"), so they have
+	// non-function types the Tool struct cannot express and produce no
+	// client-side tool calls.
+	serverTools []any
+
 	// When set, include prompt_cache_retention in requests that contain a "long"
 	// cache hint. This is an OpenAI-specific feature.
 	promptCacheRetention string
@@ -150,6 +157,17 @@ func (m *ChatCompletionsAPI) WithCustomPayloadValue(key string, value any) *Chat
 	return m
 }
 
+// WithServerTools appends provider-executed tools to the request's tools
+// array, after any function tools from the toolbox. Each entry is marshaled
+// verbatim, so callers pass the provider's exact tool shape (e.g. OpenRouter's
+// {"type": "openrouter:web_search", ...}). Server tools run inside the
+// provider's request loop and never surface as client tool calls, so they are
+// not part of the toolbox and are exempt from tool_choice constraints.
+func (m *ChatCompletionsAPI) WithServerTools(serverTools ...any) *ChatCompletionsAPI {
+	m.serverTools = append(m.serverTools, serverTools...)
+	return m
+}
+
 // WithHeader sets an additional HTTP header on requests made by this client.
 func (m *ChatCompletionsAPI) WithHeader(key, value string) *ChatCompletionsAPI {
 	if m.customHeaders == nil {
@@ -241,6 +259,10 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		payload[k] = v
 	}
 
+	if len(m.serverTools) > 0 && toolbox == nil {
+		payload["tools"] = m.serverTools
+	}
+
 	if toolbox != nil {
 		// Build tools first.
 		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools)
@@ -248,7 +270,15 @@ func (m *ChatCompletionsAPI) BuildPayload(
 			return nil, err
 		}
 		// Always include full tools for cacheability; constrain with tool_choice
-		payload["tools"] = apiTools
+		if len(m.serverTools) > 0 {
+			combined := make([]any, 0, len(apiTools)+len(m.serverTools))
+			for _, apiTool := range apiTools {
+				combined = append(combined, apiTool)
+			}
+			payload["tools"] = append(combined, m.serverTools...)
+		} else {
+			payload["tools"] = apiTools
+		}
 
 		// Map tools.Choice to Chat Completions tool_choice.
 		// Chat Completions now supports an allowed_tools object similar to Responses API.

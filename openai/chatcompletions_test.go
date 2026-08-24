@@ -1107,3 +1107,36 @@ func TestChatCompletionsStream_LegacyReasoningFieldAloneStillStreams(t *testing.
 func intPtr(v int) *int {
 	return &v
 }
+
+func TestBuildPayload_ServerToolsAppendedAfterFunctionTools(t *testing.T) {
+	weatherSchema := tools.FunctionSchema{Name: "get_weather", Description: "Weather", Parameters: tools.ValueSchema{Type: "object"}}
+	tb := tools.Box(
+		tools.External("Weather", &weatherSchema, func(r tools.Runner, params json.RawMessage) tools.Result { return tools.SuccessFromString("ok") }),
+	)
+	webSearch := map[string]any{"type": "openrouter:web_search", "parameters": map[string]any{"engine": "exa"}}
+
+	m := NewChatCompletionsAPI("", "gpt-5").WithServerTools(webSearch)
+	payload, err := m.BuildPayload(content.FromText("hi"), nil, tb, nil)
+	require.NoError(t, err)
+
+	// Round-trip through JSON so both function and server tools compare in map form.
+	raw, err := json.Marshal(payload["tools"])
+	require.NoError(t, err)
+	var entries []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &entries))
+	require.Len(t, entries, 2)
+	require.Equal(t, "function", entries[0]["type"])
+	require.Equal(t, "openrouter:web_search", entries[1]["type"])
+}
+
+func TestBuildPayload_ServerToolsWithoutToolbox(t *testing.T) {
+	webSearch := map[string]any{"type": "openrouter:web_search"}
+
+	m := NewChatCompletionsAPI("", "gpt-5").WithServerTools(webSearch)
+	payload, err := m.BuildPayload(content.FromText("hi"), nil, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, []any{webSearch}, payload["tools"])
+	_, hasChoice := payload["tool_choice"]
+	require.False(t, hasChoice)
+}
