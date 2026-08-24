@@ -598,6 +598,25 @@ type ChatCompletionsStream struct {
 	lastText    string
 	lastThought *content.Thought
 	usage       *usage
+
+	// Citations from provider-executed searches (url_citation annotations),
+	// deduplicated by URL. Aggregated into one SearchActivity emitted at the
+	// end of the stream, because the citations arrive one per chunk with no
+	// per-search grouping or query.
+	searchSources  []llms.SearchSource
+	seenSearchURLs map[string]struct{}
+}
+
+// Search implements the optional provider-run search capability: one
+// aggregated activity for all citations the stream carried. The query is
+// unknown at this API level — the provider composes it server-side and only
+// the citations surface.
+func (s *ChatCompletionsStream) Search() llms.SearchActivity {
+	return llms.SearchActivity{
+		Source:      "web",
+		ResultCount: len(s.searchSources),
+		Sources:     s.searchSources,
+	}
 }
 
 func (s *ChatCompletionsStream) Err() error {
@@ -840,6 +859,12 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					rawYield(llms.StreamStatusThinkingDone)
 				}
 			}
+			// Provider-executed search citations stream one per chunk with no
+			// grouping, so the aggregated activity is emitted once, when the
+			// stream is done and all sources are known.
+			if len(s.searchSources) > 0 && !stopped {
+				rawYield(llms.StreamStatusSearch)
+			}
 		}()
 		for {
 			select {
@@ -950,6 +975,21 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 				}, yield) {
 					return
 				}
+			}
+
+			for _, annotation := range delta.Annotations {
+				citation := annotation.URLCitation
+				if annotation.Type != "url_citation" || citation.URL == "" {
+					continue
+				}
+				if s.seenSearchURLs == nil {
+					s.seenSearchURLs = make(map[string]struct{})
+				}
+				if _, seen := s.seenSearchURLs[citation.URL]; seen {
+					continue
+				}
+				s.seenSearchURLs[citation.URL] = struct{}{}
+				s.searchSources = append(s.searchSources, llms.SearchSource{Title: citation.Title, URL: citation.URL})
 			}
 
 			// Content is nullable string in delta

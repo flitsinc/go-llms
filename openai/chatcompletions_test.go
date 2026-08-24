@@ -1140,3 +1140,55 @@ func TestBuildPayload_ServerToolsWithoutToolbox(t *testing.T) {
 	_, hasChoice := payload["tool_choice"]
 	require.False(t, hasChoice)
 }
+
+func TestChatCompletionsStream_SearchAnnotationsAggregate(t *testing.T) {
+	// OpenRouter streams provider-executed search citations one url_citation
+	// per chunk, with duplicates possible across searches. The stream emits one
+	// aggregated search activity at the end with URL-deduplicated sources.
+	sse := strings.Join([]string{
+		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://nodejs.org/en","title":"Node.js"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://endoflife.date/nodejs","title":"endoflife"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://nodejs.org/en","title":"Node.js"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"content":"Answer"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var searches []llms.SearchActivity
+	var sawTextBeforeSearch bool
+	for status := range stream.Iter() {
+		switch status {
+		case llms.StreamStatusText:
+			sawTextBeforeSearch = len(searches) == 0
+		case llms.StreamStatusSearch:
+			searches = append(searches, stream.Search())
+		}
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, searches, 1)
+	assert.True(t, sawTextBeforeSearch, "search activity must aggregate at stream end, after content")
+	assert.Equal(t, "web", searches[0].Source)
+	assert.Equal(t, 2, searches[0].ResultCount)
+	assert.Equal(t, []llms.SearchSource{
+		{Title: "Node.js", URL: "https://nodejs.org/en"},
+		{Title: "endoflife", URL: "https://endoflife.date/nodejs"},
+	}, searches[0].Sources)
+}
+
+func TestChatCompletionsStream_NoSearchWithoutAnnotations(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"content":"Answer"}}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for status := range stream.Iter() {
+		require.NotEqual(t, llms.StreamStatusSearch, status)
+	}
+	require.NoError(t, stream.Err())
+}
