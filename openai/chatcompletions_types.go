@@ -482,12 +482,24 @@ type ReasoningDetail struct {
 }
 
 type chatCompletionDelta struct {
-	Role             string            `json:"role,omitempty"`
-	Content          *string           `json:"content,omitempty"`
-	Refusal          *string           `json:"refusal,omitempty"`
-	Reasoning        *string           `json:"reasoning,omitempty"`
-	ReasoningDetails []ReasoningDetail `json:"reasoning_details,omitempty"`
-	ToolCalls        []toolCallDelta   `json:"tool_calls,omitempty"`
+	Role             string                     `json:"role,omitempty"`
+	Content          *string                    `json:"content,omitempty"`
+	Refusal          *string                    `json:"refusal,omitempty"`
+	Reasoning        *string                    `json:"reasoning,omitempty"`
+	ReasoningDetails []ReasoningDetail          `json:"reasoning_details,omitempty"`
+	ToolCalls        []toolCallDelta            `json:"tool_calls,omitempty"`
+	Annotations      []chatCompletionAnnotation `json:"annotations,omitempty"`
+}
+
+// chatCompletionAnnotation carries a citation for a provider-executed search.
+// OpenRouter streams one url_citation per chunk while its server-side web
+// search injects results into the model's context.
+type chatCompletionAnnotation struct {
+	Type        string `json:"type"`
+	URLCitation struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	} `json:"url_citation"`
 }
 
 type logprobsContent struct {
