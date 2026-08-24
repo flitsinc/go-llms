@@ -1192,3 +1192,22 @@ func TestChatCompletionsStream_NoSearchWithoutAnnotations(t *testing.T) {
 	}
 	require.NoError(t, stream.Err())
 }
+
+func TestChatCompletionsStream_ConsumerStopDuringDeferredThinkingDone(t *testing.T) {
+	// Abnormal EOF while thinking, with citations collected: if the consumer
+	// stops on the deferred ThinkingDone, the deferred search emission must not
+	// call the already-finished yield (that would panic the process).
+	sse := strings.Join([]string{
+		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant"}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com","title":"Example"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"reasoning":"thinking..."}}]}`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinkingDone {
+			break
+		}
+	}
+}

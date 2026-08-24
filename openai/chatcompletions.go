@@ -852,11 +852,13 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 		defer func() {
 			// Ensure ThinkingDone is emitted if the stream ends abnormally
 			// (e.g. EOF without [DONE]) while still in thinking state.
-			// Don't call yield if the consumer already stopped iterating.
+			// Don't call yield if the consumer already stopped iterating, and
+			// record a mid-defer stop so the search emission below cannot call
+			// a yield that already returned false (a range-over-func panic).
 			if s.lastThought != nil {
 				s.lastThought = nil
-				if !stopped {
-					rawYield(llms.StreamStatusThinkingDone)
+				if !stopped && !rawYield(llms.StreamStatusThinkingDone) {
+					stopped = true
 				}
 			}
 			// Provider-executed search citations stream one per chunk with no
