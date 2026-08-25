@@ -605,6 +605,12 @@ type ChatCompletionsStream struct {
 	// per-search grouping or query.
 	searchSources  []llms.SearchSource
 	seenSearchURLs map[string]struct{}
+
+	// Provider stream index → position in message.ToolCalls. Stream indices
+	// are not dense: a provider-executed tool (e.g. openrouter:web_search)
+	// occupies an index without ever appearing as a tool_calls delta, so the
+	// first function call of a message can arrive at index 1 or higher.
+	toolCallPositions map[int]int
 }
 
 // Search implements the optional provider-run search capability: one
@@ -1020,12 +1026,9 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 					}
 				}
 				for _, toolDelta := range delta.ToolCalls {
-					if toolDelta.Index >= len(s.message.ToolCalls) {
+					pos, seenIndex := s.toolCallPositions[toolDelta.Index]
+					if !seenIndex {
 						// This is a new tool call starting
-						if toolDelta.Index != len(s.message.ToolCalls) {
-							s.err = fmt.Errorf("tool call index mismatch: expected %d, got %d", len(s.message.ToolCalls), toolDelta.Index)
-							return
-						}
 						// If a previous tool call was active, mark it as ready now.
 						if activeToolCallIndex != -1 {
 							if !yield(llms.StreamStatusToolCallReady) {
@@ -1038,6 +1041,10 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 							s.err = err
 							return
 						}
+						if s.toolCallPositions == nil {
+							s.toolCallPositions = make(map[int]int)
+						}
+						s.toolCallPositions[toolDelta.Index] = len(s.message.ToolCalls)
 						s.message.ToolCalls = append(s.message.ToolCalls, llmToolCall)
 						activeToolCallIndex = toolDelta.Index // Mark new tool call as active
 						if !yield(llms.StreamStatusToolCallBegin) {
@@ -1045,7 +1052,7 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 						}
 					} else {
 						// This is appending arguments to an existing tool call
-						existing := &s.message.ToolCalls[toolDelta.Index]
+						existing := &s.message.ToolCalls[pos]
 						if toolDelta.Type != "" {
 							if existing.Metadata == nil {
 								existing.Metadata = make(map[string]string)

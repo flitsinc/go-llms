@@ -1178,6 +1178,67 @@ func TestChatCompletionsStream_SearchAnnotationsAggregate(t *testing.T) {
 	}, searches[0].Sources)
 }
 
+func TestChatCompletionsStream_ToolCallIndexOffsetByServerTool(t *testing.T) {
+	// A provider-executed tool (e.g. openrouter:web_search) occupies a stream
+	// index without ever appearing as a tool_calls delta, so the first function
+	// call of the message arrives at index 1. Captured live from OpenRouter
+	// (openai/gpt-5.6-terra with openrouter:web_search + one function tool).
+	sse := strings.Join([]string{
+		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.com","title":"Example"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"save_colors","arguments":""}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"hex\":"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\"#AC2318\"}"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+
+	var statuses []llms.StreamStatus
+	for status := range stream.Iter() {
+		statuses = append(statuses, status)
+	}
+	require.NoError(t, stream.Err())
+	assert.Equal(t, []llms.StreamStatus{
+		llms.StreamStatusMessageStart,
+		llms.StreamStatusToolCallBegin,
+		llms.StreamStatusToolCallDelta,
+		llms.StreamStatusToolCallDelta,
+		llms.StreamStatusToolCallReady,
+		llms.StreamStatusSearch,
+	}, statuses)
+	require.Len(t, stream.Message().ToolCalls, 1)
+	toolCall := stream.Message().ToolCalls[0]
+	assert.Equal(t, "call_1", toolCall.ID)
+	assert.Equal(t, "save_colors", toolCall.Name)
+	assert.JSONEq(t, `{"hex":"#AC2318"}`, string(toolCall.Arguments))
+}
+
+func TestChatCompletionsStream_SparseToolCallIndexesKeepDistinctCalls(t *testing.T) {
+	// Two function calls at non-contiguous stream indices (a server tool sits
+	// between them at index 1) must stay distinct calls with their own
+	// argument buffers.
+	sse := strings.Join([]string{
+		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"first","arguments":"{}"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_b","type":"function","function":{"name":"second","arguments":""}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{"tool_calls":[{"index":2,"function":{"arguments":"{\"x\":1}"}}]}}]}`,
+		`data: {"id":"gen_1","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+	require.Len(t, stream.Message().ToolCalls, 2)
+	assert.Equal(t, "first", stream.Message().ToolCalls[0].Name)
+	assert.JSONEq(t, `{}`, string(stream.Message().ToolCalls[0].Arguments))
+	assert.Equal(t, "second", stream.Message().ToolCalls[1].Name)
+	assert.JSONEq(t, `{"x":1}`, string(stream.Message().ToolCalls[1].Arguments))
+}
+
 func TestChatCompletionsStream_NoSearchWithoutAnnotations(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"id":"gen_1","choices":[{"delta":{"role":"assistant"}}]}`,
