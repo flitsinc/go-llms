@@ -523,3 +523,58 @@ func TestValidateJSON(t *testing.T) {
 		assert.Contains(t, err.Error(), "schema error: received an invalid object schema")
 	})
 }
+
+// TestPropertySchema covers each shape a property value arrives in: built in
+// Go, held by pointer, still raw, or decoded from the wire.
+func TestPropertySchema(t *testing.T) {
+	want := ValueSchema{Type: "string", Description: "A name."}
+
+	t.Run("ValueSchema", func(t *testing.T) {
+		got, err := PropertySchema(want)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("pointer", func(t *testing.T) {
+		got, err := PropertySchema(&want)
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("nil pointer", func(t *testing.T) {
+		var missing *ValueSchema
+		_, err := PropertySchema(missing)
+		assert.ErrorContains(t, err, "schema is nil")
+	})
+
+	t.Run("raw JSON", func(t *testing.T) {
+		got, err := PropertySchema(json.RawMessage(`{"type":"string","description":"A name."}`))
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("decoded JSON", func(t *testing.T) {
+		got, err := PropertySchema(map[string]any{"type": "string", "description": "A name."})
+		require.NoError(t, err)
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("ordered map keeps nested property order", func(t *testing.T) {
+		ordered := jsonmap.New()
+		ordered.Set("type", "object")
+		nested := jsonmap.New()
+		nested.Set("b", map[string]any{"type": "string"})
+		nested.Set("a", map[string]any{"type": "string"})
+		ordered.Set("properties", nested)
+
+		got, err := PropertySchema(ordered)
+		require.NoError(t, err)
+		require.NotNil(t, got.Properties)
+		assert.Equal(t, []string{"b", "a"}, got.Properties.Keys())
+	})
+
+	t.Run("undecodable", func(t *testing.T) {
+		_, err := PropertySchema(json.RawMessage(`"not a schema"`))
+		assert.ErrorContains(t, err, "decoding schema")
+	})
+}

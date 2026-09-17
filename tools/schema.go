@@ -183,23 +183,32 @@ func validateJSON(schema *FunctionSchema, jsonData json.RawMessage) error {
 	return validateParameters(schema.Parameters, jsonData)
 }
 
-func decodeAdditionalPropertiesSchema(raw any) (ValueSchema, error) {
-	var (
-		data []byte
-		err  error
-	)
-	if msg, ok := raw.(json.RawMessage); ok {
-		data = msg
-	} else {
-		data, err = json.Marshal(raw)
-		if err != nil {
-			return ValueSchema{}, err
+// PropertySchema normalizes a schema value into a ValueSchema. A properties
+// map (or an additionalProperties value) holds a ValueSchema when the schema
+// was built in Go, and a decoded JSON object when it arrived over the wire, so
+// anything that is not already a ValueSchema is re-encoded and decoded rather
+// than type-switched.
+func PropertySchema(raw any) (ValueSchema, error) {
+	switch v := raw.(type) {
+	case ValueSchema:
+		return v, nil
+	case *ValueSchema:
+		if v == nil {
+			return ValueSchema{}, errors.New("schema is nil")
 		}
+		return *v, nil
 	}
-
+	data, ok := raw.(json.RawMessage)
+	if !ok {
+		marshaled, err := json.Marshal(raw)
+		if err != nil {
+			return ValueSchema{}, fmt.Errorf("encoding schema: %w", err)
+		}
+		data = marshaled
+	}
 	var vs ValueSchema
 	if err := json.Unmarshal(data, &vs); err != nil {
-		return ValueSchema{}, err
+		return ValueSchema{}, fmt.Errorf("decoding schema: %w", err)
 	}
 	return vs, nil
 }
@@ -218,16 +227,9 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 	for key, val := range dataMap {
 		rawFieldSchema, found := schema.Properties.Get(key)
 		if found {
-			fieldSchema, ok := rawFieldSchema.(ValueSchema)
-			if !ok {
-				switch v := rawFieldSchema.(type) {
-				case json.RawMessage:
-					if err := json.Unmarshal(v, &fieldSchema); err != nil {
-						return fmt.Errorf("schema error: properties[%q] decode failed: %w", key, err)
-					}
-				default:
-					return fmt.Errorf("schema error: properties[%q] is %T, want ValueSchema", key, rawFieldSchema)
-				}
+			fieldSchema, err := PropertySchema(rawFieldSchema)
+			if err != nil {
+				return fmt.Errorf("schema error: properties[%q]: %w", key, err)
 			}
 			// Validate known property
 			if err := validateField(fieldSchema, val); err != nil {
@@ -253,7 +255,7 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 				return fmt.Errorf("additional property %q: %w", key, err)
 			}
 		case json.RawMessage, *jsonmap.Map, map[string]any:
-			vs, err := decodeAdditionalPropertiesSchema(ap)
+			vs, err := PropertySchema(ap)
 			if err != nil {
 				return fmt.Errorf("invalid schema: cannot decode additionalProperties for %q: %w", key, err)
 			}

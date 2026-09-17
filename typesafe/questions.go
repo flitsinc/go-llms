@@ -16,139 +16,137 @@ import (
 // has to be a question with a bounded answer.
 var ErrUnsupportedSchema = errors.New("typesafe: unsupported output schema")
 
-// questionKind records how a schema property maps to a question and back, so
-// the answer can be rendered in the property's declared type.
-type questionKind uint8
-
-const (
-	// kindNoulBoolean is a boolean property: a Noul whose answer is rendered
-	// as true when the probability of yes is at least 0.5.
-	kindNoulBoolean questionKind = iota
-	// kindNoulNumber is a number property: a Noul whose answer is rendered as
-	// the raw probability of yes, for callers that threshold themselves.
-	kindNoulNumber
-	// kindChoice is a string property with an enum: a Choice over the enum
-	// members, rendered as the chosen member.
-	kindChoice
-)
-
-type boundQuestion struct {
-	kind     questionKind
+// binding is one schema property, bound to the question it is sent as and to
+// the function that renders the model's answer back into the property's
+// declared type. Bindings are kept in schema order, which is the order the
+// rendered object's keys come out in.
+type binding struct {
+	name     string
 	question Question
+	required bool
+	render   func(Answer) (any, error)
 }
 
-// questionsFromSchema turns a flat JSON object schema into one question per
-// property. The property description is the question's instructions and is
-// required, because the property name is never sent to the model.
+// questionsFromSchema turns a flat JSON object schema into one binding per
+// property, in schema order. The property description is the question's
+// instructions and is required, because the property name is never sent to the
+// model.
 //
-//   - boolean            → Noul, rendered as true/false
-//   - number             → Noul, rendered as the probability of yes
-//   - string with enum   → Choice over the enum members
+//   - boolean            → Noul, rendered as true when the probability is ≥ 0.5
+//   - number             → Noul, rendered as the probability itself, 0 to 1
+//   - string with enum   → Choice over the enum members, rendered as the member
 //
 // Anything else (nested objects, arrays, free strings, integers) is rejected
 // with [ErrUnsupportedSchema], because the model cannot produce it.
-func questionsFromSchema(schema *tools.ValueSchema) (*jsonmap.Map, map[string]Question, error) {
+func questionsFromSchema(schema *tools.ValueSchema) ([]binding, error) {
 	if schema == nil {
-		return nil, nil, fmt.Errorf("%w: a JSON output schema is required; questions are derived from its properties", ErrUnsupportedSchema)
+		return nil, fmt.Errorf("%w: a JSON output schema is required; questions are derived from its properties", ErrUnsupportedSchema)
 	}
 	if schema.Type != "object" || schema.Properties == nil || schema.Properties.Len() == 0 {
-		return nil, nil, fmt.Errorf("%w: the root must be an object with at least one property", ErrUnsupportedSchema)
+		return nil, fmt.Errorf("%w: the root must be an object with at least one property", ErrUnsupportedSchema)
 	}
 
-	bound := jsonmap.New()
-	questions := make(map[string]Question, schema.Properties.Len())
+	required := make(map[string]bool, len(schema.Required))
+	for _, name := range schema.Required {
+		required[name] = true
+	}
+
+	bindings := make([]binding, 0, schema.Properties.Len())
 	for el := schema.Properties.First(); el != nil; el = el.Next() {
 		name := el.Key()
-		property, err := propertySchema(el.Value())
+		property, err := tools.PropertySchema(el.Value())
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: property %q: %w", ErrUnsupportedSchema, name, err)
+			return nil, fmt.Errorf("%w: property %q: %w", ErrUnsupportedSchema, name, err)
 		}
-		bq, err := questionFromProperty(property)
+		b, err := bindProperty(name, property, required[name])
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: property %q: %w", ErrUnsupportedSchema, name, err)
+			return nil, fmt.Errorf("%w: property %q: %w", ErrUnsupportedSchema, name, err)
 		}
-		bound.Set(name, bq)
-		questions[name] = bq.question
+		bindings = append(bindings, b)
 	}
-	return bound, questions, nil
+	return bindings, nil
 }
 
-// propertySchema normalizes a property value into a ValueSchema. The
-// properties map holds a ValueSchema when built in Go and a decoded JSON
-// object when the schema arrived over the wire, so the value is re-encoded
-// rather than type-switched.
-func propertySchema(raw any) (tools.ValueSchema, error) {
-	if vs, ok := raw.(tools.ValueSchema); ok {
-		return vs, nil
-	}
-	if vs, ok := raw.(*tools.ValueSchema); ok && vs != nil {
-		return *vs, nil
-	}
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return tools.ValueSchema{}, fmt.Errorf("encoding property schema: %w", err)
-	}
-	var vs tools.ValueSchema
-	if err := json.Unmarshal(data, &vs); err != nil {
-		return tools.ValueSchema{}, fmt.Errorf("decoding property schema: %w", err)
-	}
-	return vs, nil
-}
-
-func questionFromProperty(property tools.ValueSchema) (boundQuestion, error) {
+func bindProperty(name string, property tools.ValueSchema, required bool) (binding, error) {
 	if property.Description == "" {
-		return boundQuestion{}, errors.New("a description is required; it is the question sent to the model")
+		return binding{}, errors.New("a description is required; it is the question sent to the model")
 	}
+	b := binding{name: name, required: required}
 	switch property.Type {
 	case "boolean":
-		return boundQuestion{kind: kindNoulBoolean, question: Question{Type: "noul", Instructions: property.Description}}, nil
+		if len(property.Enum) > 0 {
+			return binding{}, errors.New("a boolean property cannot have an enum; it is asked as a yes/no question")
+		}
+		b.question = Question{Type: "noul", Instructions: property.Description}
+		b.render = func(answer Answer) (any, error) {
+			noul, err := noulAnswer(name, answer)
+			if err != nil {
+				return nil, err
+			}
+			return noul >= 0.5, nil
+		}
 	case "number":
-		return boundQuestion{kind: kindNoulNumber, question: Question{Type: "noul", Instructions: property.Description}}, nil
+		if len(property.Enum) > 0 {
+			return binding{}, errors.New("a number property cannot have an enum; it is read as the probability that its description holds")
+		}
+		b.question = Question{Type: "noul", Instructions: property.Description}
+		b.render = func(answer Answer) (any, error) {
+			return noulAnswer(name, answer)
+		}
 	case "string":
 		if len(property.Enum) == 0 {
-			return boundQuestion{}, errors.New("a string property needs an enum; the model selects, it does not generate")
+			return binding{}, errors.New("a string property needs an enum; the model selects, it does not generate")
 		}
 		criteria := make(map[string]*string, len(property.Enum))
 		for _, member := range property.Enum {
 			option, ok := member.(string)
 			if !ok {
-				return boundQuestion{}, fmt.Errorf("enum member %v is not a string", member)
+				return binding{}, fmt.Errorf("enum member %v is not a string", member)
 			}
 			criteria[option] = nil
 		}
-		return boundQuestion{kind: kindChoice, question: Question{Type: "choice", Instructions: property.Description, Criteria: criteria}}, nil
-	default:
-		return boundQuestion{}, fmt.Errorf("type %q cannot be answered by a System One model; use boolean, number, or a string enum", property.Type)
-	}
-}
-
-// renderAnswers builds the JSON object the caller's schema describes from the
-// answers, in the schema's property order.
-func renderAnswers(bound *jsonmap.Map, answers map[string]Answer) ([]byte, error) {
-	out := jsonmap.New()
-	for el := bound.First(); el != nil; el = el.Next() {
-		name := el.Key()
-		bq := el.Value().(boundQuestion)
-		answer, ok := answers[name]
-		if !ok {
-			return nil, fmt.Errorf("typesafe: response has no answer for %q", name)
-		}
-		switch bq.kind {
-		case kindNoulBoolean, kindNoulNumber:
-			if answer.Type != "noul" || answer.Noul == nil {
-				return nil, fmt.Errorf("typesafe: answer for %q is not a noul", name)
-			}
-			if bq.kind == kindNoulBoolean {
-				out.Set(name, *answer.Noul >= 0.5)
-			} else {
-				out.Set(name, *answer.Noul)
-			}
-		case kindChoice:
+		b.question = Question{Type: "choice", Instructions: property.Description, Criteria: criteria}
+		b.render = func(answer Answer) (any, error) {
 			if answer.Type != "choice" || answer.Choice == "" {
 				return nil, fmt.Errorf("typesafe: answer for %q is not a choice", name)
 			}
-			out.Set(name, answer.Choice)
+			if _, ok := criteria[answer.Choice]; !ok {
+				return nil, fmt.Errorf("typesafe: answer for %q is %q, which is not one of the declared options", name, answer.Choice)
+			}
+			return answer.Choice, nil
 		}
+	default:
+		return binding{}, fmt.Errorf("type %q cannot be answered by a System One model; use boolean, number, or a string enum", property.Type)
+	}
+	return b, nil
+}
+
+func noulAnswer(name string, answer Answer) (float64, error) {
+	if answer.Type != "noul" || answer.Noul == nil {
+		return 0, fmt.Errorf("typesafe: answer for %q is not a noul", name)
+	}
+	return *answer.Noul, nil
+}
+
+// renderAnswers builds the JSON object the caller's schema describes, in the
+// schema's property order. A required property without an answer is an error;
+// an optional one is left out. Answers for names that were never asked are
+// ignored.
+func renderAnswers(bindings []binding, answers map[string]Answer) ([]byte, error) {
+	out := jsonmap.New()
+	for _, b := range bindings {
+		answer, ok := answers[b.name]
+		if !ok {
+			if b.required {
+				return nil, fmt.Errorf("typesafe: response has no answer for %q", b.name)
+			}
+			continue
+		}
+		value, err := b.render(answer)
+		if err != nil {
+			return nil, err
+		}
+		out.Set(b.name, value)
 	}
 	return json.Marshal(out)
 }

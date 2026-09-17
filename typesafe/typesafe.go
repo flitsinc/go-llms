@@ -12,6 +12,16 @@
 //     delivered as one text chunk; the full response with probabilities and
 //     confidence stays readable through [Stream.Response].
 //
+// A boolean property is rendered as true when the model's probability is at
+// least 0.5. A number property is read as the probability that its description
+// holds: the rendered value is that probability between 0 and 1, not a
+// quantity the model counted or estimated. A string property with an enum is
+// rendered as the chosen member.
+//
+// A property listed in the schema's "required" must be answered, or the
+// request fails; an unanswered optional property is left out of the rendered
+// object. Answers for names the provider never asked about are ignored.
+//
 // Tools are not supported, and a request without an output schema is
 // rejected, because there is nothing to ask.
 package typesafe
@@ -41,8 +51,9 @@ const DefaultEndpoint = "https://api.typesafe.ai/v1/systemone"
 var ErrToolsUnsupported = errors.New("typesafe: tools are not supported by System One models")
 
 // ErrNonTextContent is returned when a message carries an image, audio, or
-// video item. The model reads text only.
-var ErrNonTextContent = errors.New("typesafe: System One models accept text only")
+// video item. The state accepts text and structured JSON; images, audio, and
+// video are rejected because the model cannot read them.
+var ErrNonTextContent = errors.New("typesafe: System One models accept text and structured JSON only")
 
 type Model struct {
 	apiKey     string
@@ -101,9 +112,13 @@ func (m *Model) Generate(
 		return &Stream{err: err}
 	}
 
-	bound, questions, err := questionsFromSchema(jsonOutputSchema)
+	bindings, err := questionsFromSchema(jsonOutputSchema)
 	if err != nil {
 		return &Stream{err: err}
+	}
+	questions := make(map[string]Question, len(bindings))
+	for _, b := range bindings {
+		questions[b.name] = b.question
 	}
 
 	jsonData, err := json.Marshal(request{State: state, Model: m.model, Questions: questions})
@@ -149,13 +164,14 @@ func (m *Model) Generate(
 		return &Stream{err: fmt.Errorf("typesafe: error decoding response: %w", err)}
 	}
 
-	answerJSON, err := renderAnswers(bound, response.Answers)
+	answerJSON, err := renderAnswers(bindings, response.Answers)
 	if err != nil {
-		return &Stream{err: err}
+		// The request was billed, so keep the response reachable even though
+		// no answer could be rendered from it.
+		return &Stream{response: &response, err: err}
 	}
 
 	return &Stream{
-		ctx:      ctx,
 		response: &response,
 		text:     string(answerJSON),
 		message: llms.Message{
@@ -166,45 +182,41 @@ func (m *Model) Generate(
 }
 
 // httpError maps a non-200 response onto llms.HTTPError. The API documents
-// 401, 422, 429, and 529; the body carries a JSON description whose shape is
-// not pinned, so the common "error"/"detail"/"message" spellings are read and
-// anything else is dropped in favor of the status line.
+// 401, 422, 429, and 529. Only the nested {"error": {...}} shape is read as
+// structured fields; any other body reaches the caller as a trimmed snippet in
+// Message, and the whole body is always kept in Metadata.Raw.
 func httpError(resp *http.Response, body []byte) error {
 	httpErr := &llms.HTTPError{
 		StatusCode: resp.StatusCode,
 		Status:     resp.Status,
+		Metadata:   llms.HTTPErrorMetadata{Raw: append(json.RawMessage(nil), body...)},
 	}
 	var envelope struct {
-		Error   json.RawMessage `json:"error"`
-		Detail  json.RawMessage `json:"detail"`
-		Message string          `json:"message"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return httpErr
-	}
-	httpErr.Message = envelope.Message
-	for _, raw := range []json.RawMessage{envelope.Error, envelope.Detail} {
-		if len(raw) == 0 {
-			continue
-		}
-		var text string
-		if json.Unmarshal(raw, &text) == nil {
-			httpErr.Message = text
-			break
-		}
-		var nested struct {
+		Error struct {
 			Type    string `json:"type"`
 			Code    string `json:"code"`
 			Message string `json:"message"`
-		}
-		if json.Unmarshal(raw, &nested) == nil && nested.Message != "" {
-			httpErr.ErrorType = nested.Type
-			httpErr.ErrorCode = nested.Code
-			httpErr.Message = nested.Message
-			break
-		}
+		} `json:"error"`
 	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
+		httpErr.ErrorType = envelope.Error.Type
+		httpErr.ErrorCode = envelope.Error.Code
+		httpErr.Message = envelope.Error.Message
+		return httpErr
+	}
+	httpErr.Message = bodySnippet(body)
 	return httpErr
+}
+
+// maxErrorSnippet is how many bytes of an unrecognized error body are put in
+// the error message. The rest stays in Metadata.Raw.
+const maxErrorSnippet = 256
+
+func bodySnippet(body []byte) string {
+	if len(body) > maxErrorSnippet {
+		body = body[:maxErrorSnippet]
+	}
+	return strings.TrimSpace(string(body))
 }
 
 // stateFromLLM builds the request state from the system prompt and messages.
@@ -240,21 +252,26 @@ func stateFromLLM(systemPrompt content.Content, messages []llms.Message) (*jsonm
 	return state, nil
 }
 
-// stateContent converts message content to a state value: a string when it
-// is all text, raw JSON when it is a single JSON item, and an array of parts
-// otherwise. Thoughts and cache hints carry nothing for the model and are
-// skipped.
+// stateContent converts message content to a state value: a string when every
+// item is text, and an array of parts (strings and embedded JSON) when it is
+// not. Thoughts and cache hints carry nothing for the model and are skipped;
+// content that is only those is an error, because there would be nothing to
+// evaluate.
 func stateContent(c content.Content) (any, error) {
 	var parts []any
 	var text strings.Builder
-	allText := true
+	flushText := func() {
+		if text.Len() > 0 {
+			parts = append(parts, text.String())
+			text.Reset()
+		}
+	}
 	for _, item := range c {
 		switch v := item.(type) {
 		case *content.Text:
 			text.WriteString(v.Text)
-			parts = append(parts, v.Text)
 		case *content.JSON:
-			allText = false
+			flushText()
 			parts = append(parts, json.RawMessage(v.Data))
 		case *content.Thought, *content.CacheHint:
 			continue
@@ -262,20 +279,22 @@ func stateContent(c content.Content) (any, error) {
 			return nil, fmt.Errorf("%w: got %s content", ErrNonTextContent, item.Type())
 		}
 	}
-	switch {
-	case allText:
+	if parts == nil {
+		if str, ok := c.AsString(); ok {
+			return str, nil
+		}
+		if text.Len() == 0 {
+			return nil, errors.New("typesafe: content holds nothing the model can read")
+		}
 		return text.String(), nil
-	case len(parts) == 1:
-		return parts[0], nil
-	default:
-		return parts, nil
 	}
+	flushText()
+	return parts, nil
 }
 
 // Stream delivers the rendered answer as a single text chunk. The API is not
 // streaming; the whole response is known before the first status is yielded.
 type Stream struct {
-	ctx      context.Context
 	err      error
 	response *Response
 	text     string
@@ -318,10 +337,6 @@ func (s *Stream) Usage() llms.Usage {
 func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 	return func(yield func(llms.StreamStatus) bool) {
 		if s.err != nil {
-			return
-		}
-		if s.ctx.Err() != nil {
-			s.err = s.ctx.Err()
 			return
 		}
 		if !yield(llms.StreamStatusMessageStart) {

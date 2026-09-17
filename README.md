@@ -455,18 +455,31 @@ maps the regular go-llms call onto that API:
 
 Supported property types:
 
-| Property type       | Question | Rendered answer                        |
-| ------------------- | -------- | -------------------------------------- |
-| `boolean`           | Noul     | `true` when the probability of yes ≥ 0.5 |
-| `number`            | Noul     | the probability of yes, 0 to 1         |
-| `string` with `enum` | Choice   | the chosen enum member                 |
+| Property type        | Question | Rendered answer                                    |
+| -------------------- | -------- | -------------------------------------------------- |
+| `boolean`            | Noul     | `true` when the probability is at least 0.5        |
+| `number`             | Noul     | the probability that the description holds, 0 to 1 |
+| `string` with `enum` | Choice   | the chosen enum member                             |
+
+A number property is read as the probability that its description holds, so its
+description has to be a yes/no question. The rendered value is that probability, not a
+quantity the model counted or estimated.
+
+A property listed in the schema's `required` must be answered or the request fails; an
+unanswered optional property is simply left out of the rendered object.
 
 Nested objects, arrays, free strings, and tools are rejected with a typed error rather
 than approximated, because the model cannot produce them. Callers that need the full
-probability distribution or confidence behind an answer can read it from the stream:
+probability distribution or confidence behind an answer can read it from the stream.
+That means calling the provider's `Generate` directly, since `llms.LLM` does not expose
+provider streams:
 
 ```go
+provider := typesafe.New(os.Getenv("TYPESAFE_API_KEY"), "jev-latest")
 stream := provider.Generate(ctx, systemPrompt, messages, nil, schema)
+if err := stream.Err(); err != nil {
+    panic(err)
+}
 if response := stream.(*typesafe.Stream).Response(); response != nil {
     fmt.Println(response.Answers["severity"].Probabilities)
 }

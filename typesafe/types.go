@@ -1,23 +1,24 @@
 package typesafe
 
-// Question is one typed question in a System One request. Instructions and
-// criteria accept strings or JSON structure, as the TypeSafe API does.
+// Question is one typed question in a System One request. Type is "noul" for
+// a yes/no probability and "choice" for a selection; Instructions is the
+// question itself, taken from the schema property's description. Criteria
+// names the options of a choice, each mapped to an optional description of
+// when to pick it; the provider sends the enum members with no description.
 type Question struct {
-	Type         string `json:"type"`
-	Instructions any    `json:"instructions"`
-	Criteria     any    `json:"criteria,omitempty"`
+	Type         string             `json:"type"`
+	Instructions string             `json:"instructions"`
+	Criteria     map[string]*string `json:"criteria,omitempty"`
 }
 
 // Answer is the model's answer to one question. Which fields are populated
-// depends on Type: a "noul" answer carries Noul; a "choice" answer carries
-// Choice, Probabilities, and Confidence; a "score" answer carries Score,
-// Legend, Probabilities, and Confidence.
+// depends on Type: a "noul" answer carries Noul, the probability that the
+// question's instructions hold; a "choice" answer carries Choice, plus
+// Probabilities over the offered options and Confidence.
 type Answer struct {
 	Type          string             `json:"type"`
 	Noul          *float64           `json:"noul,omitempty"`
 	Choice        string             `json:"choice,omitempty"`
-	Score         *float64           `json:"score,omitempty"`
-	Legend        map[string]string  `json:"legend,omitempty"`
 	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 	Confidence    *float64           `json:"confidence,omitempty"`
 }
