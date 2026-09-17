@@ -280,9 +280,6 @@ func stateContent(c content.Content) (any, error) {
 		}
 	}
 	if parts == nil {
-		if str, ok := c.AsString(); ok {
-			return str, nil
-		}
 		if text.Len() == 0 {
 			return nil, errors.New("typesafe: content holds nothing the model can read")
 		}

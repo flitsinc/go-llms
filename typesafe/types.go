@@ -1,5 +1,7 @@
 package typesafe
 
+import "github.com/metalim/jsonmap"
+
 // Question is one typed question in a System One request. Type is "noul" for
 // a yes/no probability and "choice" for a selection; Instructions is the
 // question itself, taken from the schema property's description. Criteria
@@ -40,7 +42,7 @@ type Response struct {
 }
 
 type request struct {
-	State     any                 `json:"state"`
+	State     *jsonmap.Map        `json:"state"`
 	Model     string              `json:"model"`
 	Questions map[string]Question `json:"questions"`
 }

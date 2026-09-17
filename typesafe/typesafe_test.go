@@ -65,7 +65,8 @@ func collect(t *testing.T, stream llms.ProviderStream) []llms.StreamStatus {
 }
 
 func TestGenerateRoundTrip(t *testing.T) {
-	var captured request
+	// A zero jsonmap.Map cannot be decoded into, so the capture starts with one.
+	captured := request{State: jsonmap.New()}
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorization = r.Header.Get("Authorization")
@@ -170,6 +171,11 @@ func TestStateSkipsThoughtsAndRejectsMedia(t *testing.T) {
 
 	_, err = stateFromLLM(nil, nil)
 	assert.Error(t, err)
+
+	// An empty text item is nothing to read either, so an empty system prompt
+	// fails here instead of shipping a request with an empty system.
+	_, err = stateFromLLM(content.FromText(""), nil)
+	assert.ErrorContains(t, err, "nothing the model can read")
 
 	// Content that is only a thought leaves nothing to evaluate.
 	var onlyThought content.Content

@@ -254,7 +254,7 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 			if err := validateField(ap, val); err != nil {
 				return fmt.Errorf("additional property %q: %w", key, err)
 			}
-		case json.RawMessage, *jsonmap.Map, map[string]any:
+		case *ValueSchema, json.RawMessage, *jsonmap.Map, map[string]any:
 			vs, err := PropertySchema(ap)
 			if err != nil {
 				return fmt.Errorf("invalid schema: cannot decode additionalProperties for %q: %w", key, err)
