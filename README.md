@@ -1,11 +1,12 @@
 # go-llms
 
-A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, and OpenAI compatible providers.
+A powerful and flexible Go library for interacting with Large Language Models (LLMs) with built-in support for function calling and streaming responses. Currently supports Anthropic, Google, OpenAI compatible providers, and TypeSafe System One models.
 
 ## Features
 
 - Supports Anthropic, Google (Gemini + Vertex), and OpenAI (Chat Completions + Responses + WebSocket)
 - Also supports using custom endpoints compatible with any of the APIs above
+- TypeSafe System One models (Jev): typed judgments with probabilities, driven by a JSON output schema
 - Streaming responses (including thinking) for real-time interaction
 - Built-in tool calling with Go generics to generate JSON schemas automatically
 - Structured output (JSON schema based) for model response
@@ -400,6 +401,7 @@ The library currently supports:
 - Google (Gemini API and Vertex AI)
 - OpenAI and all compatible providers (you can customize the endpoint)
 - OpenAI’s newer Responses API (HTTP and WebSocket)
+- TypeSafe System One models (see [TypeSafe](#typesafe-system-one-models) below)
 
 Each provider can be initialized with their respective configuration:
 
@@ -431,6 +433,56 @@ llm := llms.New(
     openai.New(os.Getenv("XAI_API_KEY"), "grok-3-latest").
         WithEndpoint("https://api.x.ai/v1/chat/completions", "xAI"),
 )
+
+// TypeSafe (System One)
+llm := llms.New(typesafe.New(os.Getenv("TYPESAFE_API_KEY"), "jev-latest"))
+```
+
+### TypeSafe System One models
+
+[TypeSafe](https://docs.typesafe.ai) models such as Jev do not generate text. They read a
+state and answer typed questions with calibrated probabilities. The `typesafe` provider
+maps the regular go-llms call onto that API:
+
+- The system prompt and messages become the request state, as a JSON object with a
+  `system` string and a `messages` array. JSON content items are embedded as JSON so the
+  model sees named fields.
+- The JSON output schema becomes the questions, one per property, with the property's
+  `description` as the question. The property name is not sent to the model, so the
+  description must carry the full meaning.
+- The answers come back as the JSON object the schema describes, in one text chunk, so
+  structured-output callers work unchanged.
+
+Supported property types:
+
+| Property type        | Question | Rendered answer                                    |
+| -------------------- | -------- | -------------------------------------------------- |
+| `boolean`            | Noul     | `true` when the probability is at least 0.5        |
+| `number`             | Noul     | the probability that the description holds, 0 to 1 |
+| `string` with `enum` | Choice   | the chosen enum member                             |
+
+A number property is read as the probability that its description holds, so its
+description has to be a yes/no question. The rendered value is that probability, not a
+quantity the model counted or estimated.
+
+A property listed in the schema's `required` must be answered or the request fails; an
+unanswered optional property is simply left out of the rendered object.
+
+Nested objects, arrays, free strings, and tools are rejected with a typed error rather
+than approximated, because the model cannot produce them. Callers that need the full
+probability distribution or confidence behind an answer can read it from the stream.
+That means calling the provider's `Generate` directly, since `llms.LLM` does not expose
+provider streams:
+
+```go
+provider := typesafe.New(os.Getenv("TYPESAFE_API_KEY"), "jev-latest")
+stream := provider.Generate(ctx, systemPrompt, messages, nil, schema)
+if err := stream.Err(); err != nil {
+    panic(err)
+}
+if response := stream.(*typesafe.Stream).Response(); response != nil {
+    fmt.Println(response.Answers["severity"].Probabilities)
+}
 ```
 
 ### WebSocket Provider (OpenAI)
