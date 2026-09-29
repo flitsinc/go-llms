@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 
 	"github.com/metalim/jsonmap"
@@ -14,8 +15,8 @@ import (
 // `anyOf: [<schema>, {"type": "null"}]`, and the model sends null for it.
 //
 // The types that carry `strict` (FunctionTool, TextResponseFormat,
-// jsonSchemaDefinition) pad their schema when they are encoded with Strict
-// set, so a strict flag never reaches the wire with an unpadded schema, and
+// jsonSchemaDefinition, and a Chat Completions Tool under WithStrictTools) pad
+// their schema when they are encoded with Strict set, so a strict flag never reaches the wire with an unpadded schema, and
 // callers write ordinary optional properties that every other provider
 // receives as written. That matters for Claude: forced to write a value for an
 // optional field it wants to leave out, it sometimes writes an empty one,
@@ -79,9 +80,35 @@ func marshalStrict(value any, schemaKey string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if schema, ok := tree.Get(schemaKey); ok {
+	padStrictSchemaAt(tree, schemaKey)
+	return json.Marshal(tree)
+}
+
+// padStrictSchemaAt pads the schema stored under key in node, if any.
+func padStrictSchemaAt(node *jsonmap.Map, key string) {
+	if schema, ok := node.Get(key); ok {
 		schematree.WalkObjects(schema, padStrictObject)
 	}
+}
+
+// MarshalJSON sends a Strict function tool with `"strict": true` inside its
+// function object and its parameters padded; other tools encode as declared.
+func (t Tool) MarshalJSON() ([]byte, error) {
+	type plain Tool
+	if !t.Strict || t.Function == nil {
+		return json.Marshal(plain(t))
+	}
+	tree, err := schematree.Of(plain(t))
+	if err != nil {
+		return nil, err
+	}
+	function, _ := tree.Get("function")
+	functionNode, ok := function.(*jsonmap.Map)
+	if !ok {
+		return nil, fmt.Errorf("openai chat: function tool %q encodes without a function object", t.Function.Name)
+	}
+	functionNode.Set("strict", true)
+	padStrictSchemaAt(functionNode, "parameters")
 	return json.Marshal(tree)
 }
 

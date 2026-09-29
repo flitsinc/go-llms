@@ -413,3 +413,29 @@ func TestStrictReflectedToolRunsWithNullOptionalFields(t *testing.T) {
 	result = tool.Run(nil, json.RawMessage(`{"name": null}`))
 	assert.Error(t, result.Error())
 }
+
+// WithStrictTools sends Chat Completions function tools strict with padded
+// parameters, for endpoints that serve OpenAI models; custom tools are left as
+// declared.
+func TestChatCompletionsPayloadWithStrictToolsPadsFunctionTools(t *testing.T) {
+	functionSchema := tools.FunctionSchema{Name: "task", Description: "Start a task", Parameters: decodeValueSchema(t, optionalFieldSchema)}
+	toolbox := tools.Box(
+		tools.External("Task", &functionSchema, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		}),
+		tools.FuncGrammar(tools.Text(), "Note", "Write a note", "note", func(r tools.Runner, input string) tools.Result {
+			return tools.SuccessFromString("ok")
+		}),
+	)
+	m := NewChatCompletionsAPI("", "openai/gpt-6-luna").WithStrictTools().WithFlatCustomTools()
+
+	payload, err := m.BuildPayload(nil, nil, toolbox, nil)
+	require.NoError(t, err)
+
+	toolsArr := payloadField(t, payload["tools"]).([]any)
+	require.Len(t, toolsArr, 2)
+	function := toolsArr[0].(map[string]any)["function"].(map[string]any)
+	assert.Equal(t, true, function["strict"])
+	assert.JSONEq(t, optionalFieldSchemaPadded, schemaJSON(t, function["parameters"]))
+	assert.Equal(t, map[string]any{"type": "custom", "name": "note", "description": "Write a note", "format": map[string]any{"type": "text"}}, toolsArr[1])
+}
