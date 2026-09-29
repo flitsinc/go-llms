@@ -2,7 +2,6 @@ package openai
 
 import (
 	"encoding/json"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/flitsinc/go-llms/internal/schematree"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -32,9 +32,10 @@ func encodeValueSchema(t *testing.T, schema *tools.ValueSchema) string {
 func strictSchemaJSON(t *testing.T, raw string) string {
 	t.Helper()
 	schema := decodeValueSchema(t, raw)
-	padded, err := strictSchemaTree(&schema)
+	tree, err := schematree.Of(&schema)
 	require.NoError(t, err)
-	encoded, err := json.Marshal(padded)
+	schematree.WalkObjects(tree, padStrictObject)
+	encoded, err := json.Marshal(tree)
 	require.NoError(t, err)
 	return string(encoded)
 }
@@ -107,22 +108,27 @@ func TestStrictSchemaRecursesIntoNestedObjectsArraysAndAnyOf(t *testing.T) {
 	}`, padded)
 }
 
-func TestStrictSchemaDoesNotWrapPropertiesThatAlreadyAdmitNull(t *testing.T) {
+// Optional properties are wrapped even when they look nullable, because a
+// sibling keyword can still exclude null; required ones are left alone.
+func TestStrictSchemaWrapsEveryOptionalProperty(t *testing.T) {
 	padded := strictSchemaJSON(t, `{
 		"type": "object",
 		"properties": {
+			"size": {"type": ["string", "null"], "enum": ["small", "large"]},
 			"variant": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-			"nothing": {"type": "null"}
-		}
+			"kept": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+		},
+		"required": ["kept"]
 	}`)
 
 	assert.JSONEq(t, `{
 		"type": "object",
 		"properties": {
-			"variant": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-			"nothing": {"type": "null"}
+			"size": {"anyOf": [{"type": ["string", "null"], "enum": ["small", "large"]}, {"type": "null"}]},
+			"variant": {"anyOf": [{"anyOf": [{"type": "string"}, {"type": "null"}]}, {"type": "null"}]},
+			"kept": {"anyOf": [{"type": "string"}, {"type": "null"}]}
 		},
-		"required": ["variant", "nothing"]
+		"required": ["size", "variant", "kept"]
 	}`, padded)
 }
 
@@ -248,41 +254,34 @@ func TestStrictSchemaDoesNotMutateItsInput(t *testing.T) {
 	schema := tools.ValueSchema{Type: "object", Properties: properties, Required: []string{"name"}}
 	before := encodeValueSchema(t, &schema)
 
-	padded, err := strictSchemaTree(&schema)
-	require.NoError(t, err)
+	tool := FunctionTool{Type: "function", Name: "task", Parameters: &schema, Strict: true}
+	padded := schemaJSON(t, tool)
 
 	assert.Equal(t, before, encodeValueSchema(t, &schema))
-	assert.NotEqual(t, before, schemaJSON(t, padded))
+	assert.Contains(t, padded, `"required":["name","details"]`)
 }
 
 // The strict types encode their fields in the plain order, so a schema that
 // was already strict produces the same bytes as before padding existed.
-// requireEveryFieldSet fails when a field of v is left at its zero value, so
-// adding a field to a strict type forces this fixture to set it, and the
-// encoding comparison then catches a MarshalJSON that does not send it.
-func requireEveryFieldSet(t *testing.T, v any) {
-	t.Helper()
-	value := reflect.ValueOf(v)
-	for i := range value.NumField() {
-		require.False(t, value.Field(i).IsZero(), "%T.%s is unset in the fixture", v, value.Type().Field(i).Name)
-	}
-}
-
+// The strict types pad their own encoding, so a schema that was already
+// strict produces the same bytes as the plain type, including exact large
+// integers in enums and constants.
 func TestStrictTypesKeepTheirPlainEncoding(t *testing.T) {
-	schema := decodeValueSchema(t, optionalFieldSchemaPadded)
+	properties := jsonmap.New()
+	properties.Set("id", tools.ValueSchema{Type: "integer", Enum: []any{int64(9007199254740993)}})
+	properties.Set("name", map[string]any{"type": "string", "const": "task", "maxLength": json.Number("9007199254740993")})
+	schema := tools.ValueSchema{Type: "object", Properties: properties, Required: []string{"id", "name"}, AdditionalProperties: false}
 
 	tool := FunctionTool{Type: "function", Name: "task", Description: "Start a task", Parameters: &schema, Strict: true}
-	requireEveryFieldSet(t, tool)
 	type plainTool FunctionTool
 	assert.Equal(t, schemaJSON(t, plainTool(tool)), schemaJSON(t, tool))
+	assert.Contains(t, schemaJSON(t, tool), "9007199254740993")
 
 	format := TextResponseFormat{Type: "json_schema", Name: "structured_output", Schema: &schema, Description: "Out", Strict: true}
-	requireEveryFieldSet(t, format)
 	type plainFormat TextResponseFormat
 	assert.Equal(t, schemaJSON(t, plainFormat(format)), schemaJSON(t, format))
 
 	definition := jsonSchemaDefinition{Name: "structured_output", Schema: &schema, Strict: true}
-	requireEveryFieldSet(t, definition)
 	type plainDefinition jsonSchemaDefinition
 	assert.Equal(t, schemaJSON(t, plainDefinition(definition)), schemaJSON(t, definition))
 }
@@ -378,4 +377,39 @@ func TestResponsesPayloadPadsStrictToolsSuppliedDirectly(t *testing.T) {
 	toolsArr := payloadField(t, payload["tools"]).([]any)
 	require.Len(t, toolsArr, 1)
 	assert.JSONEq(t, optionalFieldSchemaPadded, schemaJSON(t, toolsArr[0].(map[string]any)["parameters"]))
+}
+
+type reflectedTaskParams struct {
+	Name    string  `json:"name"`
+	TodoID  *string `json:"todoId,omitempty"`
+	Options *struct {
+		Tags []string `json:"tags,omitempty"`
+	} `json:"options,omitempty"`
+}
+
+// A reflected tool accepts the null that strict padding lets the model send
+// for an optional field, at any depth, and still rejects null for a required
+// one. The advertised schema and the tool's own validation must agree.
+func TestStrictReflectedToolRunsWithNullOptionalFields(t *testing.T) {
+	var got reflectedTaskParams
+	tool := tools.Func("Task", "Start a task", "task", func(r tools.Runner, p reflectedTaskParams) tools.Result {
+		got = p
+		return tools.SuccessFromString("ok")
+	})
+	api := NewResponsesAPI("", "gpt-5")
+	payload, err := api.buildResponsesPayload(nil, "", tools.Box(tool), nil)
+	require.NoError(t, err)
+	parameters := schemaJSON(t, payloadField(t, payload["tools"]).([]any)[0].(map[string]any)["parameters"])
+	assert.Contains(t, parameters, `"required":["name","todoId","options"]`)
+	assert.Contains(t, parameters, `"required":["tags"]`)
+
+	result := tool.Run(nil, json.RawMessage(`{"name": "Menu", "todoId": null, "options": {"tags": null}}`))
+	require.NoError(t, result.Error())
+	assert.Equal(t, "Menu", got.Name)
+	assert.Nil(t, got.TodoID)
+	require.NotNil(t, got.Options)
+	assert.Nil(t, got.Options.Tags)
+
+	result = tool.Run(nil, json.RawMessage(`{"name": null}`))
+	assert.Error(t, result.Error())
 }

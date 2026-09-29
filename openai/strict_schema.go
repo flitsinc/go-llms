@@ -7,7 +7,6 @@ import (
 	"github.com/metalim/jsonmap"
 
 	"github.com/flitsinc/go-llms/internal/schematree"
-	"github.com/flitsinc/go-llms/tools"
 )
 
 // OpenAI strict mode rejects a schema unless every property is listed in
@@ -23,24 +22,17 @@ import (
 // which Anthropic streams as invalid argument JSON.
 //
 // Padding is idempotent, so a caller that pads its own schemas sends the same
-// bytes as before.
+// bytes as before. The model sends null for the optional properties it omits;
+// tools.Func validation reads null for an optional property as left out.
 
-// strictSchemaTree returns the strict-mode form of schema as a JSON tree,
-// leaving schema itself untouched.
-func strictSchemaTree(schema *tools.ValueSchema) (*jsonmap.Map, error) {
-	tree, err := schematree.Of(schema)
-	if err != nil {
-		return nil, err
-	}
-	schematree.WalkObjects(tree, padStrictObject)
-	return tree, nil
-}
-
-// padStrictObject pads one object schema whose subschemas are already padded:
-// every property becomes required, an optional one that does not already admit
-// null is wrapped as `anyOf: [<schema>, {"type": "null"}]`, and an empty
-// additionalProperties schema (any value, which has no type) becomes false.
-// A node that is itself an array or an anyOf is left as it is.
+// padStrictObject pads one object schema: every property becomes required,
+// and one that was optional is wrapped as `anyOf: [<schema>, {"type": "null"}]`
+// so the model can still leave it out. The wrap is unconditional, because a
+// schema that looks nullable can still exclude null through a sibling keyword
+// (an enum, say); a property that was already required is never wrapped, which
+// makes padding idempotent. An empty additionalProperties schema (any value,
+// which has no type) becomes false. A node that is itself an array or an anyOf
+// is left as it is.
 func padStrictObject(node *jsonmap.Map) {
 	if _, ok := node.Get("anyOf"); ok || schematree.TypeIncludes(node, "array") || !schematree.TypeIncludes(node, "object") {
 		return
@@ -54,11 +46,9 @@ func padStrictObject(node *jsonmap.Map) {
 
 	properties, _ := node.Get("properties")
 	propertiesNode, ok := properties.(*jsonmap.Map)
-	if !ok {
-		return
-	}
-	if propertiesNode.Len() == 0 {
-		// A tool without arguments; ValueSchema encodes it without `required`.
+	if !ok || propertiesNode.Len() == 0 {
+		// No properties (a tool without arguments), so nothing to require;
+		// ValueSchema encodes such an object without `required`.
 		return
 	}
 	requiredValue, _ := node.Get("required")
@@ -67,89 +57,57 @@ func padStrictObject(node *jsonmap.Map) {
 	required := make([]any, 0, propertiesNode.Len())
 	for _, key := range propertiesNode.Keys() {
 		required = append(required, key)
-		property, _ := propertiesNode.Get(key)
-		propertyNode, ok := property.(*jsonmap.Map)
-		if !ok || slices.Contains(wasRequired, any(key)) || admitsNull(propertyNode) {
+		if slices.Contains(wasRequired, any(key)) {
 			continue
 		}
+		property, _ := propertiesNode.Get(key)
 		nullSchema := jsonmap.New()
 		nullSchema.Set("type", "null")
 		wrapped := jsonmap.New()
-		wrapped.Set("anyOf", []any{propertyNode, nullSchema})
+		wrapped.Set("anyOf", []any{property, nullSchema})
 		propertiesNode.Set(key, wrapped)
 	}
 	node.Set("required", required)
 }
 
-// admitsNull reports whether a schema already accepts null: it is
-// `{"type": "null"}` or has such a branch (at any depth) in its anyOf.
-func admitsNull(node *jsonmap.Map) bool {
-	if schematree.TypeIncludes(node, "null") {
-		return true
+// marshalStrict encodes value (a strict-carrying type converted to a type
+// without this MarshalJSON) with the schema under schemaKey padded. It pads
+// the value's own encoding, so field order and omission rules stay those of
+// the canonical type.
+func marshalStrict(value any, schemaKey string) ([]byte, error) {
+	tree, err := schematree.Of(value)
+	if err != nil {
+		return nil, err
 	}
-	anyOf, _ := node.Get("anyOf")
-	branches, _ := anyOf.([]any)
-	return slices.ContainsFunc(branches, func(branch any) bool {
-		branchNode, ok := branch.(*jsonmap.Map)
-		return ok && admitsNull(branchNode)
-	})
+	if schema, ok := tree.Get(schemaKey); ok {
+		schematree.WalkObjects(schema, padStrictObject)
+	}
+	return json.Marshal(tree)
 }
-
-// The MarshalJSON methods below spell out their wire fields in the order the
-// plain encoding uses, so a padded schema that was already strict encodes to
-// the same bytes as before (TestStrictTypesKeepTheirPlainEncoding).
 
 // MarshalJSON pads Parameters for strict mode when Strict is set.
 func (t FunctionTool) MarshalJSON() ([]byte, error) {
 	type plain FunctionTool
-	if !t.Strict || t.Parameters == nil {
+	if !t.Strict {
 		return json.Marshal(plain(t))
 	}
-	parameters, err := strictSchemaTree(t.Parameters)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(struct {
-		Type        string       `json:"type"`
-		Name        string       `json:"name"`
-		Description string       `json:"description,omitempty"`
-		Parameters  *jsonmap.Map `json:"parameters"`
-		Strict      bool         `json:"strict"`
-	}{t.Type, t.Name, t.Description, parameters, t.Strict})
+	return marshalStrict(plain(t), "parameters")
 }
 
 // MarshalJSON pads Schema for strict mode when Strict is set.
 func (f TextResponseFormat) MarshalJSON() ([]byte, error) {
 	type plain TextResponseFormat
-	if !f.Strict || f.Schema == nil {
+	if !f.Strict {
 		return json.Marshal(plain(f))
 	}
-	schema, err := strictSchemaTree(f.Schema)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(struct {
-		Type        string       `json:"type"`
-		Name        string       `json:"name,omitempty"`
-		Schema      *jsonmap.Map `json:"schema,omitempty"`
-		Description string       `json:"description,omitempty"`
-		Strict      bool         `json:"strict,omitempty"`
-	}{f.Type, f.Name, schema, f.Description, f.Strict})
+	return marshalStrict(plain(f), "schema")
 }
 
 // MarshalJSON pads Schema for strict mode when Strict is set.
 func (d jsonSchemaDefinition) MarshalJSON() ([]byte, error) {
 	type plain jsonSchemaDefinition
-	if !d.Strict || d.Schema == nil {
+	if !d.Strict {
 		return json.Marshal(plain(d))
 	}
-	schema, err := strictSchemaTree(d.Schema)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(struct {
-		Name   string       `json:"name"`
-		Schema *jsonmap.Map `json:"schema"`
-		Strict bool         `json:"strict,omitempty"`
-	}{d.Name, schema, d.Strict})
+	return marshalStrict(plain(d), "schema")
 }
