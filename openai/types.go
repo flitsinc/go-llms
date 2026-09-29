@@ -60,6 +60,10 @@ type Tool struct {
 	Name        string         `json:"name,omitempty"`
 	Description string         `json:"description,omitempty"`
 	Format      map[string]any `json:"format,omitempty"`
+
+	// Strict sends a function tool with `"strict": true` and its parameters
+	// padded for strict mode (see WithStrictTools). Ignored for custom tools.
+	Strict bool `json:"-"`
 }
 
 type CustomToolSchema struct {

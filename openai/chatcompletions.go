@@ -39,6 +39,9 @@ type ChatCompletionsAPI struct {
 	flatCustomTools bool
 	// When true, encode assistant Thought items as reasoning_details for replay.
 	assistantReasoningReplay bool
+	// When true, send function tools strict, with padded parameters (see
+	// WithStrictTools).
+	strictTools bool
 
 	customPayloadValues map[string]any
 	customHeaders       map[string]string
@@ -117,6 +120,19 @@ func (m *ChatCompletionsAPI) WithCacheControlPromptHints() *ChatCompletionsAPI {
 // grammar-constrained decoding).
 func (m *ChatCompletionsAPI) WithFlatCustomTools() *ChatCompletionsAPI {
 	m.flatCustomTools = true
+	return m
+}
+
+// WithStrictTools sends function tools with `"strict": true` and their
+// parameters padded for strict mode (every property required, optional ones
+// nullable). Use it for endpoints that serve OpenAI models: OpenAI treats
+// function tools as strict even when the flag is absent, so an unpadded
+// schema forces the model to invent a value for every optional field
+// (verified through OpenRouter 2026-09-30: empty strings and made-up objects
+// without it, null with it). Other models take schemas as written, so leave
+// it off for them.
+func (m *ChatCompletionsAPI) WithStrictTools() *ChatCompletionsAPI {
+	m.strictTools = true
 	return m
 }
 
@@ -268,6 +284,11 @@ func (m *ChatCompletionsAPI) BuildPayload(
 		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools)
 		if err != nil {
 			return nil, err
+		}
+		if m.strictTools {
+			for i := range apiTools {
+				apiTools[i].Strict = apiTools[i].Function != nil
+			}
 		}
 		// Always include full tools for cacheability; constrain with tool_choice
 		if len(m.serverTools) > 0 {
