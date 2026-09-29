@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/metalim/jsonmap"
@@ -227,12 +226,6 @@ func validateParameters(schema ValueSchema, jsonData json.RawMessage) error {
 
 	for key, val := range dataMap {
 		rawFieldSchema, found := schema.Properties.Get(key)
-		if found && val == nil && !slices.Contains(schema.Required, key) {
-			// null for an optional property means it was left out: OpenAI strict
-			// mode makes every property required and has the model send null for
-			// the optional ones it omits, and decoding null leaves the field unset.
-			continue
-		}
 		if found {
 			fieldSchema, err := PropertySchema(rawFieldSchema)
 			if err != nil {

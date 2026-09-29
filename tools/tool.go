@@ -40,6 +40,7 @@ func Func[Params any](label, description, funcName string, fn func(r Runner, par
 		fn: func(r Runner, params json.RawMessage) Result {
 			// Validate against the known JSON grammar when applicable.
 			if !jg.SkipValidation() {
+				params = omitOptionalNulls(jg.Schema().Parameters, params)
 				if err := validateJSON(jg.Schema(), params); err != nil {
 					return ErrorWithLabel("LLM misbehaved", fmt.Errorf("validation error for %s: %w", funcName, err))
 				}
