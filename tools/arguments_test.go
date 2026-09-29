@@ -89,6 +89,28 @@ func TestToolRun_RequiredNullIsRejected(t *testing.T) {
 	assert.Error(t, tool.Run(nil, json.RawMessage(`{"name": "task", "items": [{"label": null}]}`)).Error())
 }
 
+// Malformed arguments stay rejected even when they carry an optional null
+// that normalization would otherwise drop, which would re-encode only the
+// first value and lose what follows it.
+func TestToolRun_MalformedArgumentsWithOptionalNullAreRejected(t *testing.T) {
+	var got argumentsParams
+	tool := argumentsTool(&got)
+
+	for name, arguments := range map[string]string{
+		"trailing garbage":   `{"name": "task", "note": null} trailing-garbage`,
+		"second JSON value":  `{"name": "task", "note": null} {"name": "other"}`,
+		"truncated document": `{"name": "task", "note": null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got = argumentsParams{}
+			result := tool.Run(nil, json.RawMessage(arguments))
+
+			assert.Error(t, result.Error())
+			assert.Equal(t, argumentsParams{}, got, "the handler must not run")
+		})
+	}
+}
+
 func TestOmitOptionalNullsLeavesOtherArgumentsUntouched(t *testing.T) {
 	var got argumentsParams
 	grammar, ok := argumentsTool(&got).Grammar().(JSONGrammar)
@@ -98,8 +120,9 @@ func TestOmitOptionalNullsLeavesOtherArgumentsUntouched(t *testing.T) {
 	unchanged := json.RawMessage(`{ "name": "task",  "count": 9007199254740993 }`)
 	assert.Equal(t, string(unchanged), string(omitOptionalNulls(parameters, unchanged)))
 
-	malformed := json.RawMessage(`{"name": `)
-	assert.Equal(t, string(malformed), string(omitOptionalNulls(parameters, malformed)))
+	for _, malformed := range []string{`{"name": `, `{"name": "task", "note": null} {"name": "other"}`} {
+		assert.Equal(t, malformed, string(omitOptionalNulls(parameters, json.RawMessage(malformed))))
+	}
 
 	// An unknown property is not the schema's to drop.
 	unknown := json.RawMessage(`{"name": "task", "extra": null}`)

@@ -17,11 +17,16 @@ import (
 // Arguments that need no change are returned as they are. Otherwise they are
 // re-encoded from a decode that keeps exact numbers.
 func omitOptionalNulls(schema ValueSchema, arguments json.RawMessage) json.RawMessage {
+	// Leave malformed arguments, including trailing input after the first
+	// value, to validation, which rejects them. Decoding reads only the first
+	// value, so rewriting it would silently drop the rest.
+	if !json.Valid(arguments) {
+		return arguments
+	}
 	decoder := json.NewDecoder(bytes.NewReader(arguments))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		// Leave malformed arguments to validation, which reports them.
 		return arguments
 	}
 	if !dropOptionalNulls(schema, value) {
