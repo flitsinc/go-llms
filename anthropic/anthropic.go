@@ -14,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
+	"github.com/flitsinc/go-llms/internal/schematree"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -151,130 +152,26 @@ func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
 }
 
-type schemaContainerKind uint8
-
-const (
-	schemaContainerNone schemaContainerKind = iota
-	schemaContainerMap
-	schemaContainerArray
-	schemaContainerDirect
-)
-
-func schemaChildContainerKind(key string) schemaContainerKind {
-	switch key {
-	case "properties", "patternProperties", "dependentSchemas", "$defs", "definitions", "dependencies":
-		return schemaContainerMap
-	case "anyOf", "allOf", "oneOf", "prefixItems":
-		return schemaContainerArray
-	case "items", "additionalProperties", "additionalItems", "contains", "propertyNames", "not", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties":
-		return schemaContainerDirect
-	default:
-		return schemaContainerNone
-	}
-}
-
 // normalizeOutputSchemaForAnthropic returns a deep-normalized schema for Anthropic
 // structured outputs without mutating the caller's schema.
 func normalizeOutputSchemaForAnthropic(schema *tools.ValueSchema) (any, error) {
-	// Round-trip through JSON and decode into jsonmap so object key order is preserved.
-	data, err := json.Marshal(schema)
+	tree, err := schematree.Of(schema)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal schema: %w", err)
+		return nil, err
 	}
-
-	decoded := jsonmap.New()
-	if err := json.Unmarshal(data, decoded); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schema into ordered map: %w", err)
-	}
-
-	normalizeSchemaNode(decoded)
-	return decoded, nil
-}
-
-func normalizeSchemaNode(node any) {
-	switch n := node.(type) {
-	case *jsonmap.Map:
-		normalizeSchemaObject(n)
-	case []any:
-		for _, item := range n {
-			normalizeSchemaNode(item)
+	schematree.WalkObjects(tree, func(node *jsonmap.Map) {
+		// Anthropic requires additionalProperties: false on all object schemas.
+		if schematree.TypeIncludes(node, "object") || jsonMapLooksLikeObject(node) {
+			node.Set("additionalProperties", false)
 		}
-	}
-}
-
-func normalizeSchemaObject(node *jsonmap.Map) {
-	// Anthropic requires additionalProperties: false on all object schemas.
-	isObjectType := false
-	if rawType, ok := node.Get("type"); ok {
-		isObjectType = schemaTypeIncludesObject(rawType)
-	}
-	if isObjectType || jsonMapLooksLikeObject(node) {
-		node.Set("additionalProperties", false)
-	}
-
-	for _, key := range node.Keys() {
-		raw, ok := node.Get(key)
-		if !ok {
-			continue
-		}
-		switch schemaChildContainerKind(key) {
-		case schemaContainerMap:
-			normalizeSchemaMapContainer(raw)
-		case schemaContainerArray:
-			normalizeSchemaArrayContainer(raw)
-		case schemaContainerDirect:
-			normalizeSchemaNode(raw)
-		}
-	}
-}
-
-func normalizeSchemaMapContainer(raw any) {
-	v, ok := raw.(*jsonmap.Map)
-	if !ok {
-		return
-	}
-	for _, key := range v.Keys() {
-		child, ok := v.Get(key)
-		if !ok {
-			continue
-		}
-		normalizeSchemaNode(child)
-	}
-}
-
-func normalizeSchemaArrayContainer(raw any) {
-	switch v := raw.(type) {
-	case []any:
-		for _, child := range v {
-			normalizeSchemaNode(child)
-		}
-	}
+	})
+	return tree, nil
 }
 
 func jsonMapLooksLikeObject(node *jsonmap.Map) bool {
 	for _, key := range []string{"properties", "patternProperties", "required", "dependencies", "dependentSchemas"} {
 		if _, ok := node.Get(key); ok {
 			return true
-		}
-	}
-	return false
-}
-
-func schemaTypeIncludesObject(raw any) bool {
-	switch t := raw.(type) {
-	case string:
-		return t == "object"
-	case []any:
-		for _, v := range t {
-			if s, ok := v.(string); ok && s == "object" {
-				return true
-			}
-		}
-	case []string:
-		for _, s := range t {
-			if s == "object" {
-				return true
-			}
 		}
 	}
 	return false

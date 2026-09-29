@@ -584,6 +584,12 @@ Google doesn’t allow the `additionalProperties` field for JSON schemas (probab
 
 Because of this, we strip out the `additionalProperties` field before sending it to Google, so it shouldn’t be a problem for you, just keep it in mind.
 
+#### Optional properties under OpenAI strict mode
+
+OpenAI’s strict mode (Responses API function tools, and JSON outputs on both OpenAI APIs) rejects a schema unless every property is listed in `required`, so optional properties have to be sent as required-but-nullable (`anyOf: [<schema>, {"type": "null"}]`). The types that carry the `strict` flag pad their schema when they are encoded, including a `FunctionTool` you pass to `WithTool`, so write optional properties normally and expect `null` for the ones the model leaves out on those requests. An object whose `additionalProperties` is the any-value schema `{}` is closed (`false`), because strict mode needs a type on every schema; strict mode also needs `additionalProperties: false` on every object, which padding does not add, so close your objects yourself. Padding is idempotent, so schemas you already pad yourself are sent unchanged.
+
+Everywhere else the schema goes out as written, including Chat Completions function tools, which are not sent strict. Don’t pad schemas yourself for other providers: forced to fill an optional field it wants to leave out, Claude sometimes writes an empty value, which Anthropic streams as invalid argument JSON (`"field": ,`).
+
 #### Anthropic doesn’t stream partial property values by default
 
 The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.
