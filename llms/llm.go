@@ -58,6 +58,12 @@ type LLM struct {
 	// TotalUsage tracks the sum of the numbers returned by each turn in the LLM.
 	TotalUsage Usage
 
+	// LastContextUsage is the context footprint of the latest turn: its
+	// ContextUsage when the provider stream reports one, otherwise its Usage.
+	// Unlike TotalUsage it excludes compaction passes, so it measures the
+	// context carried into the next turn rather than what was billed.
+	LastContextUsage Usage
+
 	// TrackTTFT is a function that will be called with the time it took for the
 	// LLM to generate the first token of the turn.
 	TrackTTFT func(context.Context, time.Duration)
@@ -277,6 +283,10 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	defer func() {
 		usage := stream.Usage()
 		l.TotalUsage.Add(usage)
+		l.LastContextUsage = usage
+		if cs, ok := stream.(ContextUsageStream); ok {
+			l.LastContextUsage = cs.ContextUsage()
+		}
 		if trackUsage != nil {
 			trackUsage(ctx, usage, success)
 		}

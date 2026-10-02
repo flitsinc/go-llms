@@ -39,12 +39,17 @@ func (*compactionMockStream) Message() Message {
 	compaction := testCompaction
 	return Message{Role: "assistant", Content: content.Content{&compaction, &content.Text{Text: "Hi"}}}
 }
-func (*compactionMockStream) Text() string                   { return "Hi" }
-func (*compactionMockStream) Audio() (string, string)        { return "", "" }
-func (*compactionMockStream) Image() (string, string)        { return "", "" }
-func (*compactionMockStream) Thought() content.Thought       { return content.Thought{} }
-func (*compactionMockStream) ToolCall() ToolCall             { return ToolCall{} }
-func (*compactionMockStream) Usage() Usage                   { return Usage{} }
+func (*compactionMockStream) Text() string             { return "Hi" }
+func (*compactionMockStream) Audio() (string, string)  { return "", "" }
+func (*compactionMockStream) Image() (string, string)  { return "", "" }
+func (*compactionMockStream) Thought() content.Thought { return content.Thought{} }
+func (*compactionMockStream) ToolCall() ToolCall       { return ToolCall{} }
+func (*compactionMockStream) Usage() Usage {
+	return Usage{InputTokens: 203_000, OutputTokens: 4_500}
+}
+func (*compactionMockStream) ContextUsage() Usage {
+	return Usage{InputTokens: 23_000, OutputTokens: 1_000}
+}
 func (*compactionMockStream) Compaction() content.Compaction { return testCompaction }
 
 func TestChat_EmitsCompactionUpdate(t *testing.T) {
@@ -63,4 +68,7 @@ func TestChat_EmitsCompactionUpdate(t *testing.T) {
 	require.Len(t, compactionUpdates, 1)
 	assert.Equal(t, UpdateTypeCompaction, compactionUpdates[0].Type())
 	assert.Equal(t, testCompaction, compactionUpdates[0].Compaction)
+
+	assert.Equal(t, Usage{InputTokens: 203_000, OutputTokens: 4_500}, llm.TotalUsage)
+	assert.Equal(t, Usage{InputTokens: 23_000, OutputTokens: 1_000}, llm.LastContextUsage)
 }

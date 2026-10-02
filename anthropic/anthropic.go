@@ -506,6 +506,9 @@ type Stream struct {
 	// compactionUsage sums the "compaction" sampling iterations, which the
 	// top-level usage fields exclude.
 	compactionUsage llms.Usage
+	// finalIterationUsage is the last sampling iteration's usage, whose
+	// counts are the effective context size after any compaction.
+	finalIterationUsage *llms.Usage
 }
 
 func (s *Stream) Err() error {
@@ -544,6 +547,22 @@ func (s *Stream) ToolCall() llms.ToolCall {
 		return llms.ToolCall{}
 	}
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
+}
+
+// ContextUsage reports the final sampling iteration, the request's context
+// after any compaction, falling back to the top-level usage when the response
+// carries no iterations.
+// https://platform.claude.com/docs/en/build-with-claude/compaction-threshold#understanding-usage
+func (s *Stream) ContextUsage() llms.Usage {
+	if s.finalIterationUsage != nil {
+		return *s.finalIterationUsage
+	}
+	return llms.Usage{
+		CachedInputTokens:        s.cachedInputTokens,
+		CacheCreationInputTokens: s.cacheCreationInputTokens,
+		InputTokens:              s.inputTokens,
+		OutputTokens:             s.outputTokens,
+	}
 }
 
 func (s *Stream) Usage() llms.Usage {
@@ -588,6 +607,15 @@ func (s *Stream) recordUsage(u *usage) {
 			})
 		}
 		s.compactionUsage = compaction
+		if n := len(u.Iterations); n > 0 {
+			final := u.Iterations[n-1]
+			s.finalIterationUsage = &llms.Usage{
+				CachedInputTokens:        final.CacheReadInputTokens,
+				CacheCreationInputTokens: final.CacheCreationInputTokens,
+				InputTokens:              final.InputTokens,
+				OutputTokens:             final.OutputTokens,
+			}
+		}
 	}
 }
 

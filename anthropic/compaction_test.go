@@ -53,6 +53,26 @@ func TestAnthropicStream_ThresholdCompaction(t *testing.T) {
 
 	// Top-level usage excludes the compaction iteration, so it is added back.
 	assert.Equal(t, llms.Usage{InputTokens: 203000, OutputTokens: 4500, CachedInputTokens: 170500}, stream.Usage())
+	// The context footprint is the final iteration alone.
+	assert.Equal(t, llms.Usage{InputTokens: 23000, OutputTokens: 1000, CachedInputTokens: 500}, stream.ContextUsage())
+}
+
+func TestAnthropicStream_ContextUsageWithoutCompaction(t *testing.T) {
+	var sse strings.Builder
+	sse.WriteString(sseEvent(streamEvent{Type: "message_start", Message: &messageEvent{ID: "msg_1", Role: "assistant", Usage: &usage{InputTokens: numPtr(1)}}}))
+	sse.WriteString(sseEvent(streamEvent{Type: "content_block_start", Index: 0, ContentBlock: &contentBlock{Type: "text"}}))
+	sse.WriteString(sseEvent(streamEvent{Type: "content_block_delta", Index: 0, Delta: delta{Type: "text_delta", Text: "Hi."}}))
+	sse.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
+	sse.WriteString(`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":600,"output_tokens":20,"cache_read_input_tokens":590000,"cache_creation_input_tokens":400}}` + "\n\n")
+	sse.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", sse.String())
+	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	require.NoError(t, stream.Err())
+
+	want := llms.Usage{InputTokens: 600, OutputTokens: 20, CachedInputTokens: 590000, CacheCreationInputTokens: 400}
+	assert.Equal(t, want, stream.Usage())
+	assert.Equal(t, want, stream.ContextUsage())
 }
 
 func TestAnthropicStream_OnDemandCompactionBlockArrivesWhole(t *testing.T) {
