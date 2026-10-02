@@ -175,3 +175,13 @@ func TestAnthropic_RejectsForeignCompaction(t *testing.T) {
 	}, nil, nil)
 	require.ErrorContains(t, stream.Err(), `cannot replay "openai" compaction to Anthropic`)
 }
+
+func TestAnthropic_BearerAuth(t *testing.T) {
+	req := captureGenerate(t, New("key", "claude-opus-4-6").WithBearerAuth(), []llms.Message{{Role: "user", Content: content.FromText("hi")}})
+	assert.Equal(t, "Bearer key", req.Headers.Get("Authorization"))
+	assert.Empty(t, req.Headers.Get("X-API-Key"))
+
+	req = captureGenerate(t, New("key", "claude-opus-4-6"), []llms.Message{{Role: "user", Content: content.FromText("hi")}})
+	assert.Equal(t, "key", req.Headers.Get("X-API-Key"))
+	assert.Empty(t, req.Headers.Get("Authorization"))
+}

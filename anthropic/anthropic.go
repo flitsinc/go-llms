@@ -33,6 +33,7 @@ type Model struct {
 	customPayloadValues map[string]any
 	betaFeatures        []string
 	contextCompaction   *ContextCompaction
+	bearerAuth          bool
 	httpClient          *http.Client
 
 	// Vertex AI fields
@@ -92,6 +93,15 @@ func (m *Model) WithContextCompaction(c ContextCompaction) *Model {
 func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
 	m.company = company
+	return m
+}
+
+// WithBearerAuth sends the API key as an "Authorization: Bearer" header
+// instead of "X-API-Key", for Anthropic-compatible endpoints (set with
+// [Model.WithEndpoint]) that authenticate that way, such as OpenRouter's
+// Messages API.
+func (m *Model) WithBearerAuth() *Model {
+	m.bearerAuth = true
 	return m
 }
 
@@ -433,7 +443,11 @@ func (m *Model) Generate(
 		}
 		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	} else {
-		req.Header.Set("X-API-Key", m.apiKey)
+		if m.bearerAuth {
+			req.Header.Set("Authorization", "Bearer "+m.apiKey)
+		} else {
+			req.Header.Set("X-API-Key", m.apiKey)
+		}
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
