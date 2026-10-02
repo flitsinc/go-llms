@@ -535,6 +535,10 @@ type chatCompletionChunk struct {
 	Choices           []chatCompletionChoice `json:"choices"`
 	Usage             *usage                 `json:"usage,omitempty"`
 	Obfuscation       string                 `json:"obfuscation,omitempty"`
+	Provider          string                 `json:"provider,omitempty"`
+	// Gateways report mid-stream failures as a chunk whose HTTP 200 was already
+	// committed, carrying a top-level error object and finish_reason "error".
+	Error *openAIError `json:"error,omitempty"`
 }
 
 type usage struct {

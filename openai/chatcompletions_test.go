@@ -1272,3 +1272,104 @@ func TestChatCompletionsStream_ConsumerStopDuringDeferredThinkingDone(t *testing
 		}
 	}
 }
+
+// A mid-stream error arrives after the gateway already committed HTTP 200, as a
+// chat.completion.chunk with a top-level "error" object and finish_reason
+// "error" (OpenRouter's documented wire shape). It must surface through Err()
+// as an HTTPError — before this was parsed, the event was silently dropped and
+// the stream looked like a clean empty response.
+func TestChatCompletionsStream_MidStreamErrorEvent(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1790970000,"model":"anthropic/claude-opus-5.5","provider":"Claude Platform on AWS","error":{"code":413,"message":"Provider returned error","metadata":{"error_type":"payload_too_large","provider_code":"request_too_large"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, 413, httpErr.StatusCode)
+	assert.Equal(t, "413", httpErr.ErrorCode)
+	assert.Equal(t, "payload_too_large", httpErr.ErrorType)
+	assert.Equal(t, "Provider returned error", httpErr.Message)
+	// metadata.provider_code is the upstream provider's own code.
+	assert.Equal(t, "request_too_large", httpErr.Metadata.RawErrorCode)
+	// provider_name falls back to the chunk's top-level "provider" field.
+	assert.Equal(t, "Claude Platform on AWS", httpErr.Metadata.ProviderName)
+	assert.True(t, httpErr.IsRequestTooLarge())
+}
+
+func TestChatCompletionsStream_MidStreamContextLengthError(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1790970000,"model":"anthropic/claude-opus-5.5","provider":"Claude Platform on AWS","error":{"code":400,"message":"Provider returned error","metadata":{"error_type":"context_length_exceeded","provider_name":"Claude Platform on AWS","raw":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 1203058 tokens > 1000000 maximum\"}}"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, 400, httpErr.StatusCode)
+	assert.Equal(t, "context_length_exceeded", httpErr.ErrorType)
+	assert.Equal(t, "Claude Platform on AWS", httpErr.Metadata.ProviderName)
+	assert.Equal(t, "invalid_request_error", httpErr.Metadata.RawErrorType)
+	assert.Equal(t, "prompt is too long: 1203058 tokens > 1000000 maximum", httpErr.Metadata.RawErrorMessage)
+	assert.True(t, httpErr.IsRequestTooLarge())
+}
+
+func TestChatCompletionsStream_MidStreamErrorAfterContent(t *testing.T) {
+	// The failure can land after real output; the content stays on Message()
+	// while Err() reports the provider error instead of looking like a clean
+	// completion.
+	sse := strings.Join([]string{
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1790970000,"model":"test-model","provider":"TestProvider","choices":[{"index":0,"delta":{"role":"assistant","content":"partial answer"}}]}`,
+		`data: {"id":"gen-1","object":"chat.completion.chunk","created":1790970000,"model":"test-model","provider":"TestProvider","error":{"code":502,"message":"Provider disconnected mid-stream","metadata":{"error_type":"provider_unavailable"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	var sawText bool
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusText {
+			sawText = true
+		}
+	}
+	assert.True(t, sawText)
+	assert.Equal(t, "partial answer", stream.Text())
+
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, 502, httpErr.StatusCode)
+	assert.Equal(t, "provider_unavailable", httpErr.ErrorType)
+	assert.False(t, httpErr.IsRequestTooLarge())
+}
+
+func TestChatCompletionsStream_MidStreamErrorClosesThinking(t *testing.T) {
+	// A thinking block left open by the error gets its ThinkingDone before the
+	// stream ends, the same as [DONE] would emit.
+	sse := strings.Join([]string{
+		`data: {"id":"gen-1","choices":[{"delta":{"role":"assistant","reasoning":"thinking..."}}]}`,
+		`data: {"id":"gen-1","provider":"TestProvider","error":{"code":504,"message":"Provider timeout","metadata":{"error_type":"timeout"}},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n")
+
+	stream := &ChatCompletionsStream{ctx: context.Background(), model: "test", stream: strings.NewReader(sse)}
+	var sawThinkingDone bool
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinkingDone {
+			sawThinkingDone = true
+		}
+	}
+	assert.True(t, sawThinkingDone)
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, 504, httpErr.StatusCode)
+}
