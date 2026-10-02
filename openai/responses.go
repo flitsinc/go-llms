@@ -54,6 +54,16 @@ func (m *ResponsesAPI) WithMaxOutputTokens(maxOutputTokens int) *ResponsesAPI {
 	return m
 }
 
+// WithCompaction enables server-side compaction: once the rendered input
+// reaches threshold tokens, the API compacts the context and emits an
+// encrypted "compaction" output item, surfaced as a content.Compaction in the
+// assistant message, which replaces the history before it on later requests.
+// https://developers.openai.com/api/docs/guides/compaction
+func (m *ResponsesAPI) WithCompaction(threshold int) *ResponsesAPI {
+	m.compactThreshold = threshold
+	return m
+}
+
 func (m *ResponsesAPI) WithThinking(effort Effort) *ResponsesAPI {
 	m.reasoningEffort = effort
 	return m
@@ -463,6 +473,12 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 				}
 				items = append(items, reasoning)
 				seenReasoningIDs[v.ID] = true
+			case *content.Compaction:
+				if v.Provider != "openai" {
+					return nil, fmt.Errorf("openai responses: cannot replay %q compaction", v.Provider)
+				}
+				flushOutput()
+				items = append(items, CompactionItem{Type: "compaction", ID: v.ID, EncryptedContent: v.Encrypted})
 			case *content.CacheHint:
 				// Cache hints are input-only markers; ignore when replaying assistant output.
 			default:

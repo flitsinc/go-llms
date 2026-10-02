@@ -8,13 +8,14 @@ import (
 type Type string
 
 const (
-	TypeText      Type = "text"
-	TypeImageURL  Type = "image_url"
-	TypeAudioURL  Type = "audio_url"
-	TypeVideoURL  Type = "video_url"
-	TypeJSON      Type = "json"
-	TypeThought   Type = "thought"
-	TypeCacheHint Type = "cache_hint"
+	TypeText       Type = "text"
+	TypeImageURL   Type = "image_url"
+	TypeAudioURL   Type = "audio_url"
+	TypeVideoURL   Type = "video_url"
+	TypeJSON       Type = "json"
+	TypeThought    Type = "thought"
+	TypeCacheHint  Type = "cache_hint"
+	TypeCompaction Type = "compaction"
 )
 
 type Item interface {
@@ -114,6 +115,27 @@ func (t *Thought) Type() Type {
 
 func (t *Thought) GetMetadata() map[string]string {
 	return t.Metadata
+}
+
+// Compaction is a provider-native context compaction checkpoint. It stands in
+// for every input item that preceded it in the request that produced it, so a
+// caller replays it in place of that history rather than alongside it. Its
+// fields are opaque provider protocol data that must be replayed verbatim to
+// the provider that issued it: Anthropic returns a plain-text summary in Text
+// (plus a Signature for on-demand compaction), OpenAI Responses returns an
+// encrypted item in Encrypted.
+type Compaction struct {
+	// Provider names the wire protocol that issued the item ("anthropic" or
+	// "openai"). Providers reject compactions issued by another protocol.
+	Provider  string `json:"provider"`
+	ID        string `json:"id,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Encrypted string `json:"encrypted,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+func (c *Compaction) Type() Type {
+	return TypeCompaction
 }
 
 type CacheHint struct {
@@ -301,6 +323,8 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 			item = &Thought{}
 		case TypeCacheHint:
 			item = &CacheHint{}
+		case TypeCompaction:
+			item = &Compaction{}
 		default:
 			return fmt.Errorf("unknown content item type: %q", typeContainer.Type)
 		}

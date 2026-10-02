@@ -19,6 +19,7 @@ type responsesConfig struct {
 	user              string
 	metadata          map[string]string
 	promptCacheKey    string
+	compactThreshold  int
 	specialTools      []ResponseTool
 }
 
@@ -101,6 +102,12 @@ func (c *responsesConfig) buildResponsesPayload(
 
 	if c.metadata != nil {
 		payload["metadata"] = c.metadata
+	}
+
+	if c.compactThreshold > 0 {
+		payload["context_management"] = []map[string]any{
+			{"type": "compaction", "compact_threshold": c.compactThreshold},
+		}
 	}
 
 	if c.promptCacheKey != "" {

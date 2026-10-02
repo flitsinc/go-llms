@@ -21,6 +21,7 @@ const (
 	UpdateTypeThinkingDone UpdateType = "thinking_done"
 	UpdateTypeMessageStart UpdateType = "message_start"
 	UpdateTypeSearch       UpdateType = "search"
+	UpdateTypeCompaction   UpdateType = "compaction"
 )
 
 const UpdateTypeToolArgumentFinalization UpdateType = "tool_argument_finalization"
@@ -160,4 +161,15 @@ type SearchUpdate struct {
 
 func (u SearchUpdate) Type() UpdateType {
 	return UpdateTypeSearch
+}
+
+// CompactionUpdate carries a provider-native context compaction checkpoint.
+// The checkpoint is also part of the turn's assistant message content, at the
+// position the provider expects it to be replayed.
+type CompactionUpdate struct {
+	content.Compaction
+}
+
+func (u CompactionUpdate) Type() UpdateType {
+	return UpdateTypeCompaction
 }

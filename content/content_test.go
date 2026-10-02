@@ -165,6 +165,14 @@ func TestContentRoundTrip(t *testing.T) {
 			content: FromRawJSON(json.RawMessage(`{"foo":"bar"}`)),
 		},
 		{
+			name: "provider compaction checkpoints",
+			content: Content{
+				&Compaction{Provider: "anthropic", Text: "Summary.", Signature: "sig"},
+				&Compaction{Provider: "openai", ID: "cmp_1", Encrypted: "gAAAAenc"},
+				&Text{Text: "after"},
+			},
+		},
+		{
 			name: "multiple text items",
 			content: Content{
 				&Text{Text: "hello"},

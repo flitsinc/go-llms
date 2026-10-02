@@ -352,6 +352,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 				updateChan <- SearchUpdate{searcher.Search()}
 			}
 
+		case StreamStatusCompaction:
+			if compactor, ok := stream.(interface{ Compaction() content.Compaction }); ok {
+				updateChan <- CompactionUpdate{compactor.Compaction()}
+			}
+
 		case StreamStatusToolCallBegin:
 			toolCall := stream.ToolCall()
 			if toolCall.ID == "" {

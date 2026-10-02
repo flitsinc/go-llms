@@ -222,6 +222,17 @@ type CustomToolCallOutput struct {
 func (CustomToolCallOutput) responseInput() {}
 func (CustomToolCallOutput) responseItem()  {}
 
+// CompactionItem is an encrypted server-side compaction checkpoint. It is
+// opaque and replayed verbatim in place of the context it summarizes.
+type CompactionItem struct {
+	Type             string `json:"type"` // "compaction"
+	ID               string `json:"id,omitempty"`
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func (CompactionItem) responseItem()  {}
+func (CompactionItem) responseInput() {}
+
 // Reasoning implements ResponseItem for reasoning
 type Reasoning struct {
 	Type             string             `json:"type"` // "reasoning"
