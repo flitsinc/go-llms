@@ -100,3 +100,34 @@ func TestParseHTTPErrorMetadata_NestedStatusOnly(t *testing.T) {
 
 	assert.Equal(t, 429, metadata.RawErrorStatusCode)
 }
+
+// OpenRouter's normalized error_type is the field it documents for switching on
+// error categories; the envelope "type" is often absent. provider_code is the
+// upstream provider's own code and lands in RawErrorCode.
+func TestParseHTTPError_NormalizedErrorTypeAndProviderCode(t *testing.T) {
+	body := `{"error":{"code":413,"message":"Provider returned error","metadata":{"error_type":"payload_too_large","provider_code":"request_too_large","provider_name":"Claude Platform on AWS","is_byok":false}},"user_id":"org_x"}`
+	resp := &http.Response{StatusCode: 413, Status: "413 Payload Too Large"}
+
+	httpErr, ok := parseHTTPError(resp, []byte(body))
+	if !ok {
+		t.Fatal("expected the error body to parse")
+	}
+
+	assert.Equal(t, "payload_too_large", httpErr.ErrorType)
+	assert.Equal(t, "request_too_large", httpErr.Metadata.RawErrorCode)
+	assert.Equal(t, "Claude Platform on AWS", httpErr.Metadata.ProviderName)
+	assert.True(t, httpErr.IsRequestTooLarge())
+}
+
+// An explicit envelope "type" wins over metadata.error_type.
+func TestParseHTTPError_EnvelopeTypeWins(t *testing.T) {
+	body := `{"error":{"code":400,"type":"invalid_request_error","message":"Provider returned error","metadata":{"error_type":"context_length_exceeded"}}}`
+	resp := &http.Response{StatusCode: 400, Status: "400 Bad Request"}
+
+	httpErr, ok := parseHTTPError(resp, []byte(body))
+	if !ok {
+		t.Fatal("expected the error body to parse")
+	}
+
+	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
+}

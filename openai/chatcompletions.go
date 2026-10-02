@@ -962,6 +962,25 @@ func (s *ChatCompletionsStream) Iter() func(yield func(llms.StreamStatus) bool) 
 			if chunk.Usage != nil {
 				s.usage = chunk.Usage
 			}
+			if chunk.Error != nil {
+				// The stream is terminated after a mid-stream error event, so
+				// close out any open items the way [DONE] would before surfacing
+				// the error through Err().
+				s.err = streamChunkHTTPError(&chunk)
+				if s.lastThought != nil {
+					s.lastThought = nil
+					if !yield(llms.StreamStatusThinkingDone) {
+						return
+					}
+				}
+				if activeToolCallIndex != -1 {
+					if !yield(llms.StreamStatusToolCallReady) {
+						return
+					}
+					activeToolCallIndex = -1
+				}
+				return
+			}
 			if len(chunk.Choices) < 1 {
 				continue
 			}
