@@ -3,24 +3,69 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/flitsinc/go-llms/llms"
 )
 
+type openAIError struct {
+	Code     json.RawMessage     `json:"code"`
+	Message  string              `json:"message"`
+	Type     string              `json:"type"`
+	Metadata openAIErrorMetadata `json:"metadata"`
+}
+
 type openAIErrorResponse struct {
-	Error struct {
-		Code     json.RawMessage     `json:"code"`
-		Message  string              `json:"message"`
-		Type     string              `json:"type"`
-		Metadata openAIErrorMetadata `json:"metadata"`
-	} `json:"error"`
+	Error openAIError `json:"error"`
 }
 
 type openAIErrorMetadata struct {
 	ProviderName string          `json:"provider_name"`
+	ErrorType    string          `json:"error_type"`
+	ProviderCode string          `json:"provider_code"`
 	Raw          json.RawMessage `json:"raw"`
+}
+
+// httpError builds the shared error view from a gateway error object. Gateways
+// send their normalized error code in metadata.error_type while the envelope
+// "type" field is an older OpenAI-ism that is often absent; the normalized
+// value fills it in so callers can switch on one field. Likewise
+// metadata.provider_code is the upstream provider's own code and falls into
+// RawErrorCode when the raw payload did not decode one.
+func (e openAIError) httpError(statusCode int, status string) *llms.HTTPError {
+	errType := e.Type
+	if errType == "" {
+		errType = e.Metadata.ErrorType
+	}
+	metadata := parseHTTPErrorMetadata(e.Metadata)
+	if metadata.RawErrorCode == "" {
+		metadata.RawErrorCode = e.Metadata.ProviderCode
+	}
+	return &llms.HTTPError{
+		StatusCode: statusCode,
+		Status:     status,
+		ErrorCode:  rawJSONScalarString(e.Code),
+		ErrorType:  errType,
+		Message:    e.Message,
+		Metadata:   metadata,
+	}
+}
+
+// streamChunkHTTPError converts a mid-stream error event into the same
+// HTTPError a pre-stream error response produces. Gateways commit HTTP 200 as
+// soon as a provider accepts a streaming request, so a later failure arrives as
+// a chat.completion.chunk carrying a top-level "error" object whose code is
+// the HTTP status the failure would have returned.
+func streamChunkHTTPError(chunk *chatCompletionChunk) *llms.HTTPError {
+	statusCode, _ := strconv.Atoi(rawJSONScalarString(chunk.Error.Code))
+	status := fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode))
+	httpErr := chunk.Error.httpError(statusCode, status)
+	if httpErr.Metadata.ProviderName == "" {
+		httpErr.Metadata.ProviderName = chunk.Provider
+	}
+	return httpErr
 }
 
 func parseHTTPError(resp *http.Response, bodyBytes []byte) (*llms.HTTPError, bool) {
@@ -29,14 +74,7 @@ func parseHTTPError(resp *http.Response, bodyBytes []byte) (*llms.HTTPError, boo
 		return nil, false
 	}
 
-	return &llms.HTTPError{
-		StatusCode: resp.StatusCode,
-		Status:     resp.Status,
-		ErrorCode:  rawJSONScalarString(openAIError.Error.Code),
-		ErrorType:  openAIError.Error.Type,
-		Message:    openAIError.Error.Message,
-		Metadata:   parseHTTPErrorMetadata(openAIError.Error.Metadata),
-	}, true
+	return openAIError.Error.httpError(resp.StatusCode, resp.Status), true
 }
 
 func parseHTTPErrorMetadata(metadata openAIErrorMetadata) llms.HTTPErrorMetadata {

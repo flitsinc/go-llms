@@ -73,6 +73,50 @@ func TestIsRequestTooLarge(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "OpenRouter payload_too_large error_type",
+			err: HTTPError{
+				StatusCode: 413,
+				ErrorCode:  "413",
+				ErrorType:  "payload_too_large",
+			},
+			want: true,
+		},
+		{
+			name: "OpenRouter payload_too_large error_type without HTTP 413",
+			err: HTTPError{
+				ErrorType: "payload_too_large",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic request_too_large type",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "request_too_large",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic request_too_large via upstream raw error",
+			err: HTTPError{
+				StatusCode: 400,
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName: "Claude Platform on AWS",
+					RawErrorType: "request_too_large",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic request_too_large via upstream provider code",
+			err: HTTPError{
+				StatusCode: 400,
+				Metadata:   HTTPErrorMetadata{RawErrorCode: "request_too_large"},
+			},
+			want: true,
+		},
+		{
 			name: "unrelated 400 error",
 			err: HTTPError{
 				StatusCode: 400,

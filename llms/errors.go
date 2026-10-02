@@ -52,14 +52,23 @@ func (e *HTTPError) IsRequestTooLarge() bool {
 	if e.StatusCode == 413 || e.Metadata.RawErrorStatusCode == 413 {
 		return true
 	}
-	if isContextLengthExceededCode(e.ErrorCode) || isContextLengthExceededCode(e.Metadata.RawErrorCode) {
+	if isRequestTooLargeCode(e.ErrorCode) || isRequestTooLargeCode(e.ErrorType) ||
+		isRequestTooLargeCode(e.Metadata.RawErrorCode) || isRequestTooLargeCode(e.Metadata.RawErrorType) {
 		return true
 	}
 	return isRequestTooLargeMessage(e.Message) || isRequestTooLargeMessage(e.Metadata.RawErrorMessage)
 }
 
-func isContextLengthExceededCode(code string) bool {
-	return code == "context_length_exceeded"
+// isRequestTooLargeCode matches the structured codes providers and gateways
+// use for oversized requests: OpenRouter's normalized error_type values
+// "context_length_exceeded" (HTTP 400) and "payload_too_large" (HTTP 413), and
+// Anthropic's native "request_too_large" error type.
+func isRequestTooLargeCode(code string) bool {
+	switch code {
+	case "context_length_exceeded", "payload_too_large", "request_too_large":
+		return true
+	}
+	return false
 }
 
 func isRequestTooLargeMessage(msg string) bool {
