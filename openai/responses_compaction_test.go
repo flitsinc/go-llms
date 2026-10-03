@@ -66,7 +66,24 @@ func TestConvertMessageToInput_RejectsForeignCompaction(t *testing.T) {
 		Role:    "assistant",
 		Content: content.Content{&content.Compaction{Provider: "anthropic", Text: "Summary."}},
 	}, nil)
-	require.ErrorContains(t, err, `cannot replay "anthropic" compaction`)
+	require.ErrorIs(t, err, content.ErrForeignCompaction)
+}
+
+func TestResponsesStream_UnreadableCompactionItemFailsTheStream(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.done","item":{"type":"compaction","id":"cmp_1"}}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50}}}`,
+		"",
+	}, "\n")
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5.4", stream: strings.NewReader(sse)}
+	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	require.ErrorContains(t, stream.Err(), "has no encrypted_content")
+}
+
+func TestChatCompletions_RejectsCompaction(t *testing.T) {
+	_, err := convertContentWithOptions(content.Content{&content.Compaction{Provider: content.CompactionProviderOpenAI, ID: "cmp_1", Encrypted: "enc"}}, chatMessageEncodingOptions{})
+	require.ErrorIs(t, err, content.ErrForeignCompaction)
 }
 
 func TestBuildResponsesPayload_Compaction(t *testing.T) {

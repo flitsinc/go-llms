@@ -474,8 +474,8 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 				items = append(items, reasoning)
 				seenReasoningIDs[v.ID] = true
 			case *content.Compaction:
-				if v.Provider != "openai" {
-					return nil, fmt.Errorf("openai responses: cannot replay %q compaction", v.Provider)
+				if v.Provider != content.CompactionProviderOpenAI {
+					return nil, fmt.Errorf("openai responses: cannot replay %q compaction: %w", v.Provider, content.ErrForeignCompaction)
 				}
 				flushOutput()
 				items = append(items, CompactionItem{Type: "compaction", ID: v.ID, EncryptedContent: v.Encrypted})

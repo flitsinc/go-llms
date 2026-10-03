@@ -2,6 +2,7 @@ package llms
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -71,4 +72,28 @@ func TestChat_EmitsCompactionUpdate(t *testing.T) {
 
 	assert.Equal(t, Usage{InputTokens: 203_000, OutputTokens: 4_500}, llm.TotalUsage)
 	assert.Equal(t, Usage{InputTokens: 23_000, OutputTokens: 1_000}, llm.LastContextUsage)
+}
+
+type failingCompactionProvider struct{ compactionMockProvider }
+
+func (failingCompactionProvider) Generate(context.Context, content.Content, []Message, *tools.Toolbox, *tools.ValueSchema) ProviderStream {
+	return &failedStream{}
+}
+
+type failedStream struct{ compactionMockStream }
+
+func (*failedStream) Err() error { return errors.New("upstream rejected the request") }
+
+func TestChat_FailedTurnClearsLastContextUsage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	llm := New(compactionMockProvider{})
+	runTestChat(ctx, t, llm, "hello")
+	require.NoError(t, llm.Err())
+	require.Equal(t, Usage{InputTokens: 23_000, OutputTokens: 1_000}, llm.LastContextUsage)
+
+	llm.provider = failingCompactionProvider{}
+	runTestChat(ctx, t, llm, "again")
+	require.Error(t, llm.Err())
+	assert.Equal(t, Usage{}, llm.LastContextUsage)
 }

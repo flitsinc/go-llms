@@ -16,13 +16,17 @@ import (
 	"github.com/flitsinc/go-llms/llms"
 )
 
-func strPtr(s string) *string { return &s }
+// rawString encodes s as a JSON string for the raw wire fields.
+func rawString(s string) json.RawMessage {
+	b, _ := json.Marshal(s)
+	return b
+}
 
 func TestAnthropicStream_ThresholdCompaction(t *testing.T) {
 	var sse strings.Builder
 	sse.WriteString(sseEvent(streamEvent{Type: "message_start", Message: &messageEvent{ID: "msg_1", Role: "assistant", Usage: &usage{InputTokens: numPtr(1)}}}))
 	sse.WriteString(sseEvent(streamEvent{Type: "content_block_start", Index: 0, ContentBlock: &contentBlock{Type: "compaction"}}))
-	sse.WriteString(sseEvent(streamEvent{Type: "content_block_delta", Index: 0, Delta: delta{Type: "compaction_delta", Content: strPtr("Summary of earlier work.")}}))
+	sse.WriteString(sseEvent(streamEvent{Type: "content_block_delta", Index: 0, Delta: delta{Type: "compaction_delta", Content: rawString("Summary of earlier work.")}}))
 	sse.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
 	sse.WriteString(sseEvent(streamEvent{Type: "content_block_start", Index: 1, ContentBlock: &contentBlock{Type: "text"}}))
 	sse.WriteString(sseEvent(streamEvent{Type: "content_block_delta", Index: 1, Delta: delta{Type: "text_delta", Text: "Continuing."}}))
@@ -78,7 +82,7 @@ func TestAnthropicStream_ContextUsageWithoutCompaction(t *testing.T) {
 func TestAnthropicStream_OnDemandCompactionBlockArrivesWhole(t *testing.T) {
 	var sse strings.Builder
 	sse.WriteString(sseEvent(streamEvent{Type: "message_start", Message: &messageEvent{Role: "assistant"}}))
-	sse.WriteString(sseEvent(streamEvent{Type: "content_block_start", Index: 0, ContentBlock: &contentBlock{Type: "compaction", Content: strPtr("Summary."), Signature: "sig_1"}}))
+	sse.WriteString(sseEvent(streamEvent{Type: "content_block_start", Index: 0, ContentBlock: &contentBlock{Type: "compaction", Content: rawString("Summary."), Signature: "sig_1"}}))
 	sse.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
 	sse.WriteString(sseEvent(streamEvent{Type: "message_delta", Delta: delta{StopReason: "compaction"}}))
 	sse.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
@@ -173,7 +177,84 @@ func TestAnthropic_RejectsForeignCompaction(t *testing.T) {
 	stream := New("key", "claude-opus-4-6").Generate(context.Background(), nil, []llms.Message{
 		{Role: "assistant", Content: content.Content{&content.Compaction{Provider: "openai", Encrypted: "enc"}}},
 	}, nil, nil)
-	require.ErrorContains(t, stream.Err(), `cannot replay "openai" compaction to Anthropic`)
+	require.ErrorIs(t, stream.Err(), content.ErrForeignCompaction)
+}
+
+// Server tool results carry a non-string "content"; it must not be decoded
+// as a compaction summary.
+func TestAnthropicStream_ServerToolResultContentIsNotCompaction(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":10}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","url":"https://example.com","title":"x","encrypted_content":"abc"}]}}`,
+		`data: {"type":"content_block_stop","index":1}`,
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"text"}}`,
+		`data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Found it."}}`,
+		`data: {"type":"content_block_stop","index":2}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n\n")
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", sse)
+	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	require.NoError(t, stream.Err())
+	assert.Equal(t, content.Content{&content.Text{Text: "Found it."}}, stream.Message().Content)
+	assert.Equal(t, content.Compaction{}, stream.Compaction())
+}
+
+// OpenRouter's Messages API relays an encrypted form of the summary, which is
+// replayed alongside it.
+func TestAnthropicStream_CompactionEncryptedContentRoundTrip(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":10}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null,"encrypted_content":null}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary.","encrypted_content":"enc_1"}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`,
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n\n")
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", sse)
+	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	require.NoError(t, stream.Err())
+	want := content.Compaction{Provider: content.CompactionProviderAnthropic, Text: "Summary.", Encrypted: "enc_1"}
+	assert.Equal(t, want, stream.Compaction())
+
+	req := captureGenerate(t, New("key", "claude-opus-4-6"), []llms.Message{
+		{Role: "assistant", Content: content.Content{&want}},
+		{Role: "user", Content: content.FromText("next")},
+	})
+	assert.JSONEq(t, `[
+		{"role":"assistant","content":[{"type":"compaction","content":"Summary.","encrypted_content":"enc_1"}]},
+		{"role":"user","content":[{"type":"text","text":"next"}]}
+	]`, string(req.Body["messages"]))
+}
+
+func TestAnthropic_RejectsCompactionTriggerBelowMinimum(t *testing.T) {
+	stream := New("key", "claude-opus-4-6").
+		WithContextCompaction(ContextCompaction{TriggerInputTokens: 49_999}).
+		Generate(context.Background(), nil, []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	require.ErrorContains(t, stream.Err(), "below the API minimum")
+}
+
+// Iterations may omit the cache buckets; a single message iteration takes
+// them from the top-level usage, which covers exactly that iteration.
+func TestAnthropicStream_ContextUsageFillsMissingIterationCacheBuckets(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":1}}}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":40,"output_tokens":10,"cache_read_input_tokens":589960,"cache_creation_input_tokens":10000,"iterations":[{"type":"compaction","input_tokens":700000,"output_tokens":3000},{"type":"message","input_tokens":40,"output_tokens":10}]}}`,
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n\n")
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", sse)
+	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	require.NoError(t, stream.Err())
+	assert.Equal(t, llms.Usage{InputTokens: 40, OutputTokens: 10, CachedInputTokens: 589960, CacheCreationInputTokens: 10000}, stream.ContextUsage())
+	assert.Equal(t, llms.Usage{InputTokens: 700040, OutputTokens: 3010, CachedInputTokens: 589960, CacheCreationInputTokens: 10000}, stream.Usage())
 }
 
 func TestAnthropic_BearerAuth(t *testing.T) {

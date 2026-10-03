@@ -124,26 +124,9 @@ type contentItem struct {
 	// Citations for text content.
 	Citations []citation `json:"citations,omitempty"`
 
-	// compactionContent is the summary of a "compaction" block. It is kept out
-	// of the default encoding because the block's "content" key holds a string
-	// (or null), unlike tool results whose "content" is a block list.
-	compactionContent *string
-}
-
-// MarshalJSON encodes compaction blocks with exactly the fields the API
-// returned, since the API rejects extra fields on them; every other block uses
-// the default encoding.
-func (ci contentItem) MarshalJSON() ([]byte, error) {
-	if ci.Type == "compaction" {
-		return json.Marshal(struct {
-			Type         string        `json:"type"`
-			Content      *string       `json:"content"`
-			Signature    string        `json:"signature,omitempty"`
-			CacheControl *cacheControl `json:"cache_control,omitempty"`
-		}{ci.Type, ci.compactionContent, ci.Signature, ci.CacheControl})
-	}
-	type plainContentItem contentItem
-	return json.Marshal(plainContentItem(ci))
+	// compaction holds a "compaction" block, which is encoded on its own
+	// (see contentItem.MarshalJSON in compaction.go).
+	compaction *compactionBlock
 }
 
 // source represents the source of an image or document.
@@ -191,22 +174,25 @@ type contentBlock struct {
 	Thinking  string `json:"thinking,omitempty"`  // Initial thinking content (for "thinking" type)
 	Signature string `json:"signature,omitempty"` // Initial signature (for "thinking" type)
 	Data      string `json:"data,omitempty"`      // Base64-encoded data (for "redacted_thinking" type)
-	// Content is the summary of a "compaction" block. On-demand compaction
-	// delivers the whole block here; threshold compaction delivers it in a
-	// single compaction_delta instead. Null when summarization failed.
-	Content *string `json:"content,omitempty"`
+	// Content and EncryptedContent belong to "compaction" blocks and are
+	// decoded only for those (see Stream.startCompaction): other block types,
+	// such as server tool results, carry a "content" that is not a string.
+	Content          json.RawMessage `json:"content,omitempty"`
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 }
 
 // delta represents incremental updates in "content_block_delta" and "message_delta" events
 type delta struct {
 	// content_block_delta
 
-	Type        string  `json:"type,omitempty"`         // Type of delta: "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
-	Text        string  `json:"text,omitempty"`         // Text fragment for text content blocks
-	PartialJSON string  `json:"partial_json,omitempty"` // For tool_use blocks, fragments of JSON for the input field
-	Thinking    string  `json:"thinking,omitempty"`     // Thinking fragment for thinking content blocks
-	Signature   string  `json:"signature,omitempty"`    // Used in signature_delta events to verify thinking content
-	Content     *string `json:"content,omitempty"`      // Complete summary in a compaction_delta event
+	Type        string `json:"type,omitempty"`         // Type of delta: "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
+	Text        string `json:"text,omitempty"`         // Text fragment for text content blocks
+	PartialJSON string `json:"partial_json,omitempty"` // For tool_use blocks, fragments of JSON for the input field
+	Thinking    string `json:"thinking,omitempty"`     // Thinking fragment for thinking content blocks
+	Signature   string `json:"signature,omitempty"`    // Used in signature_delta events to verify thinking content
+	// Summary (and OpenRouter's encrypted summary) in a compaction_delta event.
+	Content          json.RawMessage `json:"content,omitempty"`
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 
 	// message_delta
 
@@ -227,11 +213,12 @@ type usage struct {
 }
 
 type usageIteration struct {
-	Type                     string `json:"type"`
-	InputTokens              int    `json:"input_tokens"`
-	OutputTokens             int    `json:"output_tokens"`
-	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	Type         string `json:"type"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	// The cache buckets may be absent from an iteration.
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // serverToolUse represents server tool usage statistics

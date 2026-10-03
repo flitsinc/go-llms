@@ -2,6 +2,7 @@ package content
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -117,21 +118,39 @@ func (t *Thought) GetMetadata() map[string]string {
 	return t.Metadata
 }
 
+// CompactionProvider names the wire protocol that issued a [Compaction].
+type CompactionProvider string
+
+const (
+	// CompactionProviderAnthropic is the Anthropic Messages API, direct or
+	// through a compatible endpoint such as OpenRouter's Messages API.
+	CompactionProviderAnthropic CompactionProvider = "anthropic"
+	// CompactionProviderOpenAI is the OpenAI Responses API.
+	CompactionProviderOpenAI CompactionProvider = "openai"
+)
+
+// ErrForeignCompaction is returned when a conversation holds a [Compaction]
+// issued by a protocol other than the one the request is sent to, for example
+// after switching models. The compaction stands in for the history before it,
+// so the caller has to rebuild that history (or compact it another way)
+// before the request can be sent.
+var ErrForeignCompaction = errors.New("compaction was issued by another provider protocol")
+
 // Compaction is a provider-native context compaction checkpoint. It stands in
 // for every input item that preceded it in the request that produced it, so a
 // caller replays it in place of that history rather than alongside it. Its
 // fields are opaque provider protocol data that must be replayed verbatim to
-// the provider that issued it: Anthropic returns a plain-text summary in Text
-// (plus a Signature for on-demand compaction), OpenAI Responses returns an
-// encrypted item in Encrypted.
+// the protocol that issued it: Anthropic returns a plain-text summary in Text
+// (plus a Signature for on-demand compaction, and Encrypted when relayed by
+// OpenRouter), OpenAI Responses returns an encrypted item in ID and Encrypted.
 type Compaction struct {
-	// Provider names the wire protocol that issued the item ("anthropic" or
-	// "openai"). Providers reject compactions issued by another protocol.
-	Provider  string `json:"provider"`
-	ID        string `json:"id,omitempty"`
-	Text      string `json:"text,omitempty"`
-	Encrypted string `json:"encrypted,omitempty"`
-	Signature string `json:"signature,omitempty"`
+	// Provider names the wire protocol that issued the item. Providers reject
+	// compactions issued by another protocol with [ErrForeignCompaction].
+	Provider  CompactionProvider `json:"provider"`
+	ID        string             `json:"id,omitempty"`
+	Text      string             `json:"text,omitempty"`
+	Encrypted string             `json:"encrypted,omitempty"`
+	Signature string             `json:"signature,omitempty"`
 }
 
 func (c *Compaction) Type() Type {

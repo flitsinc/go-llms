@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/metalim/jsonmap"
@@ -55,36 +54,6 @@ func New(apiKey, model string) *Model {
 // Multiple beta features can be added by calling this method multiple times.
 func (m *Model) WithBeta(betaFeature string) *Model {
 	m.betaFeatures = append(m.betaFeatures, betaFeature)
-	return m
-}
-
-const (
-	// compactionBeta is the beta for server-side threshold compaction
-	// (context_management edit "compact_20260112"). Requests that replay a
-	// compaction block need it too.
-	compactionBeta = "compact-2026-01-12"
-	// compactionEditType is the context_management edit for threshold compaction.
-	compactionEditType = "compact_20260112"
-)
-
-// ContextCompaction configures Anthropic server-side context compaction:
-// once a request's input reaches TriggerInputTokens, the API summarizes the
-// conversation into a "compaction" block at the start of the response and
-// continues from that summary.
-// https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
-type ContextCompaction struct {
-	// TriggerInputTokens is the input size that triggers compaction. The API
-	// requires at least 50,000; zero uses the API default (150,000).
-	TriggerInputTokens int
-	// Instructions replaces the default summarization prompt when non-empty.
-	Instructions string
-}
-
-// WithContextCompaction enables server-side context compaction. The returned
-// compaction block is surfaced as a content.Compaction in the assistant
-// message and must be replayed verbatim in place of the history it covers.
-func (m *Model) WithContextCompaction(c ContextCompaction) *Model {
-	m.contextCompaction = &c
 	return m
 }
 
@@ -237,10 +206,7 @@ func (m *Model) Generate(
 		apiMessages = append(apiMessages, apiMessage)
 	}
 
-	betaFeatures := m.betaFeatures
-	if (m.contextCompaction != nil || messagesContainCompaction(messages)) && !slices.Contains(betaFeatures, compactionBeta) {
-		betaFeatures = append(slices.Clone(betaFeatures), compactionBeta)
-	}
+	betaFeatures := m.requestBetaFeatures(messages)
 
 	maxTokens := m.maxTokens + m.maxThinkingTokens
 	if m.adaptiveThinking {
@@ -402,14 +368,11 @@ func (m *Model) Generate(
 	}
 
 	if c := m.contextCompaction; c != nil {
-		edit := map[string]any{"type": compactionEditType}
-		if c.TriggerInputTokens > 0 {
-			edit["trigger"] = map[string]any{"type": "input_tokens", "value": c.TriggerInputTokens}
+		contextManagement, err := c.contextManagement()
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: %w", err)}
 		}
-		if c.Instructions != "" {
-			edit["instructions"] = c.Instructions
-		}
-		payload["context_management"] = map[string]any{"edits": []any{edit}}
+		payload["context_management"] = contextManagement
 	}
 
 	for k, v := range m.customPayloadValues {
@@ -516,9 +479,9 @@ type Stream struct {
 	pendingCompaction *content.Compaction
 	lastCompaction    content.Compaction
 
-	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
-	// compactionUsage sums the "compaction" sampling iterations, which the
-	// top-level usage fields exclude.
+	// usage is the top-level usage, which excludes compaction iterations;
+	// compactionUsage sums those.
+	usage           llms.Usage
 	compactionUsage llms.Usage
 	// finalIterationUsage is the last sampling iteration's usage, whose
 	// counts are the effective context size after any compaction.
@@ -571,21 +534,13 @@ func (s *Stream) ContextUsage() llms.Usage {
 	if s.finalIterationUsage != nil {
 		return *s.finalIterationUsage
 	}
-	return llms.Usage{
-		CachedInputTokens:        s.cachedInputTokens,
-		CacheCreationInputTokens: s.cacheCreationInputTokens,
-		InputTokens:              s.inputTokens,
-		OutputTokens:             s.outputTokens,
-	}
+	return s.usage
 }
 
+// Usage is what the request is billed for: the top-level usage plus any
+// compaction iterations.
 func (s *Stream) Usage() llms.Usage {
-	usage := llms.Usage{
-		CachedInputTokens:        s.cachedInputTokens,
-		CacheCreationInputTokens: s.cacheCreationInputTokens,
-		InputTokens:              s.inputTokens,
-		OutputTokens:             s.outputTokens,
-	}
+	usage := s.usage
 	usage.Add(s.compactionUsage)
 	return usage
 }
@@ -596,40 +551,19 @@ func (s *Stream) recordUsage(u *usage) {
 	// Values are cumulative, so we overwrite the numbers instead of adding.
 	// https://docs.anthropic.com/en/docs/build-with-claude/streaming
 	if u.CacheReadInputTokens != nil {
-		s.cachedInputTokens = *u.CacheReadInputTokens
+		s.usage.CachedInputTokens = *u.CacheReadInputTokens
 	}
 	if u.CacheCreationInputTokens != nil {
-		s.cacheCreationInputTokens = *u.CacheCreationInputTokens
+		s.usage.CacheCreationInputTokens = *u.CacheCreationInputTokens
 	}
 	if u.InputTokens != nil {
-		s.inputTokens = *u.InputTokens
+		s.usage.InputTokens = *u.InputTokens
 	}
 	if u.OutputTokens != nil {
-		s.outputTokens = *u.OutputTokens
+		s.usage.OutputTokens = *u.OutputTokens
 	}
 	if u.Iterations != nil {
-		var compaction llms.Usage
-		for _, it := range u.Iterations {
-			if it.Type != "compaction" {
-				continue
-			}
-			compaction.Add(llms.Usage{
-				CachedInputTokens:        it.CacheReadInputTokens,
-				CacheCreationInputTokens: it.CacheCreationInputTokens,
-				InputTokens:              it.InputTokens,
-				OutputTokens:             it.OutputTokens,
-			})
-		}
-		s.compactionUsage = compaction
-		if n := len(u.Iterations); n > 0 {
-			final := u.Iterations[n-1]
-			s.finalIterationUsage = &llms.Usage{
-				CachedInputTokens:        final.CacheReadInputTokens,
-				CacheCreationInputTokens: final.CacheCreationInputTokens,
-				InputTokens:              final.InputTokens,
-				OutputTokens:             final.OutputTokens,
-			}
-		}
+		s.recordIterations(u.Iterations)
 	}
 }
 
@@ -740,12 +674,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				case "compaction":
-					s.pendingCompaction = &content.Compaction{
-						Provider:  "anthropic",
-						Signature: event.ContentBlock.Signature,
-					}
-					if event.ContentBlock.Content != nil {
-						s.pendingCompaction.Text = *event.ContentBlock.Content
+					if err := s.startCompaction(*event.ContentBlock); err != nil {
+						s.err = err
+						return
 					}
 				case "redacted_thinking":
 					if event.ContentBlock.Data != "" {
@@ -795,8 +726,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 					continue
 				case "compaction_delta":
-					if s.pendingCompaction != nil && event.Delta.Content != nil {
-						s.pendingCompaction.Text += *event.Delta.Content
+					if err := s.appendCompactionDelta(event.Delta); err != nil {
+						s.err = err
+						return
 					}
 					continue
 				case "signature_delta":
@@ -815,18 +747,9 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				}
-				// A compaction block with no summary (content: null) means
-				// summarization failed; the request was answered from the full
-				// history, so there is nothing to replay.
-				if contentBlockTypeByIndex[event.Index] == "compaction" && s.pendingCompaction != nil {
-					compaction := s.pendingCompaction
-					s.pendingCompaction = nil
-					if compaction.Text != "" {
-						s.message.Content = append(s.message.Content, compaction)
-						s.lastCompaction = *compaction
-						if !yield(llms.StreamStatusCompaction) {
-							return
-						}
+				if contentBlockTypeByIndex[event.Index] == "compaction" && s.finishCompaction() {
+					if !yield(llms.StreamStatusCompaction) {
+						return
 					}
 				}
 				// For thinking blocks, signal that thinking has finished
@@ -943,13 +866,11 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 				ci.Signature = v.Signature
 			}
 		case *content.Compaction:
-			if v.Provider != "anthropic" {
-				return nil, fmt.Errorf("cannot replay %q compaction to Anthropic", v.Provider)
+			compaction, err := compactionContentItem(v)
+			if err != nil {
+				return nil, err
 			}
-			summary := v.Text
-			ci.Type = "compaction"
-			ci.compactionContent = &summary
-			ci.Signature = v.Signature
+			ci = compaction
 		case *content.CacheHint:
 			// Add cache control to the previous content item.
 			if i := len(cl) - 1; i >= 0 {
@@ -969,17 +890,6 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 		cl = append(cl, ci)
 	}
 	return cl, nil
-}
-
-func messagesContainCompaction(messages []llms.Message) bool {
-	for _, msg := range messages {
-		for _, item := range msg.Content {
-			if _, ok := item.(*content.Compaction); ok {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func messageFromLLM(m llms.Message) (message, error) {

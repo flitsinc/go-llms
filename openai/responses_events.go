@@ -427,14 +427,22 @@ func (p *responsesEventProcessor) processEvent(
 					p.usage = event.Usage
 				}
 			case "compaction":
+				// A checkpoint that cannot be read would leave the caller replaying
+				// the full history without knowing why, so it fails the stream.
 				var item CompactionItem
-				if err := json.Unmarshal(event.Item, &item); err == nil && item.EncryptedContent != "" {
-					compaction := &content.Compaction{Provider: "openai", ID: item.ID, Encrypted: item.EncryptedContent}
-					p.message.Content = append(p.message.Content, compaction)
-					p.lastCompaction = *compaction
-					if !yield(llms.StreamStatusCompaction) {
-						return true
-					}
+				if err := json.Unmarshal(event.Item, &item); err != nil {
+					p.err = fmt.Errorf("failed to parse compaction item: %w", err)
+					return true
+				}
+				if item.EncryptedContent == "" {
+					p.err = fmt.Errorf("compaction item %q has no encrypted_content", item.ID)
+					return true
+				}
+				compaction := &content.Compaction{Provider: content.CompactionProviderOpenAI, ID: item.ID, Encrypted: item.EncryptedContent}
+				p.message.Content = append(p.message.Content, compaction)
+				p.lastCompaction = *compaction
+				if !yield(llms.StreamStatusCompaction) {
+					return true
 				}
 			case "reasoning":
 				var reasoningItem Reasoning

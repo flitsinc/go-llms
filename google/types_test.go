@@ -425,3 +425,8 @@ func mustMarshal(v any) json.RawMessage {
 	}
 	return json.RawMessage(data)
 }
+
+func TestConvertContent_RejectsCompaction(t *testing.T) {
+	_, err := convertContent(content.Content{&content.Compaction{Provider: content.CompactionProviderAnthropic, Text: "Summary."}})
+	require.ErrorIs(t, err, content.ErrForeignCompaction)
+}
