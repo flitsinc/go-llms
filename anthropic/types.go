@@ -123,6 +123,10 @@ type contentItem struct {
 
 	// Citations for text content.
 	Citations []citation `json:"citations,omitempty"`
+
+	// compaction holds a "compaction" block, which is encoded on its own
+	// (see contentItem.MarshalJSON in compaction.go).
+	compaction *compactionBlock
 }
 
 // source represents the source of an image or document.
@@ -170,6 +174,11 @@ type contentBlock struct {
 	Thinking  string `json:"thinking,omitempty"`  // Initial thinking content (for "thinking" type)
 	Signature string `json:"signature,omitempty"` // Initial signature (for "thinking" type)
 	Data      string `json:"data,omitempty"`      // Base64-encoded data (for "redacted_thinking" type)
+	// Content and EncryptedContent belong to "compaction" blocks and are
+	// decoded only for those (see Stream.startCompaction): other block types,
+	// such as server tool results, carry a "content" that is not a string.
+	Content          json.RawMessage `json:"content,omitempty"`
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 }
 
 // delta represents incremental updates in "content_block_delta" and "message_delta" events
@@ -181,6 +190,9 @@ type delta struct {
 	PartialJSON string `json:"partial_json,omitempty"` // For tool_use blocks, fragments of JSON for the input field
 	Thinking    string `json:"thinking,omitempty"`     // Thinking fragment for thinking content blocks
 	Signature   string `json:"signature,omitempty"`    // Used in signature_delta events to verify thinking content
+	// Summary (and OpenRouter's encrypted summary) in a compaction_delta event.
+	Content          json.RawMessage `json:"content,omitempty"`
+	EncryptedContent json.RawMessage `json:"encrypted_content,omitempty"`
 
 	// message_delta
 
@@ -194,6 +206,19 @@ type usage struct {
 	CacheCreationInputTokens *int           `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     *int           `json:"cache_read_input_tokens,omitempty"`
 	ServerToolUse            *serverToolUse `json:"server_tool_use,omitempty"`
+	// Iterations breaks usage down per sampling iteration when context
+	// compaction is enabled. The top-level token fields exclude "compaction"
+	// iterations, so those must be added to bill the request in full.
+	Iterations []usageIteration `json:"iterations,omitempty"`
+}
+
+type usageIteration struct {
+	Type         string `json:"type"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	// The cache buckets may be absent from an iteration.
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // serverToolUse represents server tool usage statistics

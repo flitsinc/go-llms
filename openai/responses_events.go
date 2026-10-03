@@ -31,6 +31,15 @@ type responsesEventProcessor struct {
 	// x_user_search / x_keyword_search server-side) by their output item id, so the streamed
 	// query can be accumulated and surfaced once the call completes.
 	hostedSearch map[string]*hostedSearchCall
+	// lastCompaction is the most recent server-side compaction item, surfaced
+	// via StreamStatusCompaction.
+	lastCompaction content.Compaction
+}
+
+// Compaction returns the compaction item most recently reported with
+// llms.StreamStatusCompaction.
+func (p *responsesEventProcessor) Compaction() content.Compaction {
+	return p.lastCompaction
 }
 
 type toolArgumentFinalization struct {
@@ -416,6 +425,24 @@ func (p *responsesEventProcessor) processEvent(
 				}
 				if event.Usage != nil {
 					p.usage = event.Usage
+				}
+			case "compaction":
+				// A checkpoint that cannot be read would leave the caller replaying
+				// the full history without knowing why, so it fails the stream.
+				var item CompactionItem
+				if err := json.Unmarshal(event.Item, &item); err != nil {
+					p.err = fmt.Errorf("failed to parse compaction item: %w", err)
+					return true
+				}
+				if item.EncryptedContent == "" {
+					p.err = fmt.Errorf("compaction item %q has no encrypted_content", item.ID)
+					return true
+				}
+				compaction := &content.Compaction{Provider: content.CompactionProviderOpenAI, ID: item.ID, Encrypted: item.EncryptedContent}
+				p.message.Content = append(p.message.Content, compaction)
+				p.lastCompaction = *compaction
+				if !yield(llms.StreamStatusCompaction) {
+					return true
 				}
 			case "reasoning":
 				var reasoningItem Reasoning

@@ -108,6 +108,8 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 				}
 			}
 			continue
+		case *content.Compaction:
+			return nil, fmt.Errorf("openai chat completions: cannot replay %q compaction: %w", v.Provider, content.ErrForeignCompaction)
 		default:
 			return nil, fmt.Errorf("openai chat completions: unsupported content item type %T", item)
 		}

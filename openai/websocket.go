@@ -106,6 +106,13 @@ func (m *WebSocketResponsesAPI) WithMaxOutputTokens(n int) *WebSocketResponsesAP
 	return m
 }
 
+// WithContextCompaction enables server-side context compaction (see
+// [ContextCompaction]).
+func (m *WebSocketResponsesAPI) WithContextCompaction(c ContextCompaction) *WebSocketResponsesAPI {
+	m.compaction = &c
+	return m
+}
+
 func (m *WebSocketResponsesAPI) WithThinking(effort Effort) *WebSocketResponsesAPI {
 	m.reasoningEffort = effort
 	return m

@@ -26,4 +26,8 @@ const (
 	// StreamStatusSearch means the stream surfaced a provider-run search the model performed
 	// (e.g. xAI's web_search / x_search Agent Tools), with its query and any result count.
 	StreamStatusSearch
+	// StreamStatusCompaction means the provider compacted the request context
+	// and the stream produced a native compaction checkpoint. Streams that emit
+	// it implement Compaction() content.Compaction.
+	StreamStatusCompaction
 )

@@ -54,6 +54,13 @@ func (m *ResponsesAPI) WithMaxOutputTokens(maxOutputTokens int) *ResponsesAPI {
 	return m
 }
 
+// WithContextCompaction enables server-side context compaction (see
+// [ContextCompaction]).
+func (m *ResponsesAPI) WithContextCompaction(c ContextCompaction) *ResponsesAPI {
+	m.compaction = &c
+	return m
+}
+
 func (m *ResponsesAPI) WithThinking(effort Effort) *ResponsesAPI {
 	m.reasoningEffort = effort
 	return m
@@ -463,6 +470,12 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 				}
 				items = append(items, reasoning)
 				seenReasoningIDs[v.ID] = true
+			case *content.Compaction:
+				if v.Provider != content.CompactionProviderOpenAI {
+					return nil, fmt.Errorf("openai responses: cannot replay %q compaction: %w", v.Provider, content.ErrForeignCompaction)
+				}
+				flushOutput()
+				items = append(items, CompactionItem{Type: "compaction", ID: v.ID, EncryptedContent: v.Encrypted})
 			case *content.CacheHint:
 				// Cache hints are input-only markers; ignore when replaying assistant output.
 			default:

@@ -58,6 +58,16 @@ type LLM struct {
 	// TotalUsage tracks the sum of the numbers returned by each turn in the LLM.
 	TotalUsage Usage
 
+	// LastContextUsage is the context footprint of the latest turn: its
+	// ContextUsage when the provider stream reports one (see
+	// ContextUsageStream), otherwise its Usage. It is zero after a turn that
+	// failed. Unlike TotalUsage it excludes the compaction passes a provider
+	// reports separately (Anthropic), so it measures the context carried into
+	// the next turn rather than what was billed. A provider that compacts
+	// within a single pass (OpenAI Responses) reports the full pre-compaction
+	// input here; that turn's message holds the content.Compaction.
+	LastContextUsage Usage
+
 	// TrackTTFT is a function that will be called with the time it took for the
 	// LLM to generate the first token of the turn.
 	TrackTTFT func(context.Context, time.Duration)
@@ -263,6 +273,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	if l.debugger != nil && GetDebugger(ctx) == nil {
 		ctx = WithDebugger(ctx, l.debugger)
 	}
+	l.LastContextUsage = Usage{}
 	stream := l.provider.Generate(ctx, systemPrompt, outboundMessages, l.toolbox, l.JSONOutputSchema)
 	if err := stream.Err(); err != nil {
 		return false, fmt.Errorf("LLM returned error response: %w", err)
@@ -277,6 +288,12 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 	defer func() {
 		usage := stream.Usage()
 		l.TotalUsage.Add(usage)
+		if success {
+			l.LastContextUsage = usage
+			if cs, ok := stream.(ContextUsageStream); ok {
+				l.LastContextUsage = cs.ContextUsage()
+			}
+		}
 		if trackUsage != nil {
 			trackUsage(ctx, usage, success)
 		}
@@ -350,6 +367,11 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			// implement Search(), so this is an optional capability rather than an interface method.
 			if searcher, ok := stream.(interface{ Search() SearchActivity }); ok {
 				updateChan <- SearchUpdate{searcher.Search()}
+			}
+
+		case StreamStatusCompaction:
+			if compactor, ok := stream.(interface{ Compaction() content.Compaction }); ok {
+				updateChan <- CompactionUpdate{compactor.Compaction()}
 			}
 
 		case StreamStatusToolCallBegin:

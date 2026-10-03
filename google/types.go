@@ -194,6 +194,8 @@ func convertContent(c content.Content) (parts, error) {
 		case *content.CacheHint:
 			// Google has implicit caching; ignore.
 			continue
+		case *content.Compaction:
+			return nil, fmt.Errorf("cannot replay %q compaction: %w", v.Provider, content.ErrForeignCompaction)
 		default:
 			return nil, fmt.Errorf("unsupported content item type %T", item)
 		}

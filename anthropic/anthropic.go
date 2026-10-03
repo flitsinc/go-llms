@@ -31,6 +31,8 @@ type Model struct {
 	effort              Effort
 	customPayloadValues map[string]any
 	betaFeatures        []string
+	contextCompaction   *ContextCompaction
+	bearerAuth          bool
 	httpClient          *http.Client
 
 	// Vertex AI fields
@@ -60,6 +62,15 @@ func (m *Model) WithBeta(betaFeature string) *Model {
 func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
 	m.company = company
+	return m
+}
+
+// WithBearerAuth sends the API key as an "Authorization: Bearer" header
+// instead of "X-API-Key", for Anthropic-compatible endpoints (set with
+// [Model.WithEndpoint]) that authenticate that way, such as OpenRouter's
+// Messages API.
+func (m *Model) WithBearerAuth() *Model {
+	m.bearerAuth = true
 	return m
 }
 
@@ -195,6 +206,8 @@ func (m *Model) Generate(
 		apiMessages = append(apiMessages, apiMessage)
 	}
 
+	betaFeatures := m.requestBetaFeatures(messages)
+
 	maxTokens := m.maxTokens + m.maxThinkingTokens
 	if m.adaptiveThinking {
 		// With adaptive thinking the model decides how much to think, so we
@@ -215,8 +228,8 @@ func (m *Model) Generate(
 		// Vertex AI requires beta features as a body parameter rather than
 		// an HTTP header. Sending them as headers causes 400 errors for
 		// certain betas (e.g. context-1m-2025-08-07).
-		if len(m.betaFeatures) > 0 {
-			payload["anthropic_beta"] = m.betaFeatures
+		if len(betaFeatures) > 0 {
+			payload["anthropic_beta"] = betaFeatures
 		}
 	} else {
 		payload["model"] = m.model
@@ -354,6 +367,14 @@ func (m *Model) Generate(
 		outputConfig["effort"] = m.effort
 	}
 
+	if c := m.contextCompaction; c != nil {
+		contextManagement, err := c.contextManagement()
+		if err != nil {
+			return &Stream{err: fmt.Errorf("anthropic: %w", err)}
+		}
+		payload["context_management"] = contextManagement
+	}
+
 	for k, v := range m.customPayloadValues {
 		payload[k] = v
 	}
@@ -385,7 +406,11 @@ func (m *Model) Generate(
 		}
 		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	} else {
-		req.Header.Set("X-API-Key", m.apiKey)
+		if m.bearerAuth {
+			req.Header.Set("Authorization", "Bearer "+m.apiKey)
+		} else {
+			req.Header.Set("X-API-Key", m.apiKey)
+		}
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
@@ -393,7 +418,7 @@ func (m *Model) Generate(
 	// For Vertex AI, betas are already included in the request body as
 	// anthropic_beta, so we only add them as headers for direct Anthropic.
 	if !m.vertexAI {
-		for _, beta := range m.betaFeatures {
+		for _, beta := range betaFeatures {
 			req.Header.Add("anthropic-beta", beta)
 		}
 	}
@@ -449,7 +474,18 @@ type Stream struct {
 	lastThought *content.Thought
 	debugger    llms.Debugger
 
-	cachedInputTokens, cacheCreationInputTokens, inputTokens, outputTokens int
+	// pendingCompaction is the compaction block being streamed;
+	// lastCompaction is the most recent completed one.
+	pendingCompaction *content.Compaction
+	lastCompaction    content.Compaction
+
+	// usage is the top-level usage, which excludes compaction iterations;
+	// compactionUsage sums those.
+	usage           llms.Usage
+	compactionUsage llms.Usage
+	// finalIterationUsage is the last sampling iteration's usage, whose
+	// counts are the effective context size after any compaction.
+	finalIterationUsage *llms.Usage
 }
 
 func (s *Stream) Err() error {
@@ -477,6 +513,12 @@ func (s *Stream) Thought() content.Thought {
 	return content.Thought{}
 }
 
+// Compaction returns the compaction block most recently reported with
+// llms.StreamStatusCompaction.
+func (s *Stream) Compaction() content.Compaction {
+	return s.lastCompaction
+}
+
 func (s *Stream) ToolCall() llms.ToolCall {
 	if len(s.message.ToolCalls) == 0 {
 		return llms.ToolCall{}
@@ -484,12 +526,44 @@ func (s *Stream) ToolCall() llms.ToolCall {
 	return s.message.ToolCalls[len(s.message.ToolCalls)-1]
 }
 
+// ContextUsage reports the final sampling iteration, the request's context
+// after any compaction, falling back to the top-level usage when the response
+// carries no iterations.
+// https://platform.claude.com/docs/en/build-with-claude/compaction-threshold#understanding-usage
+func (s *Stream) ContextUsage() llms.Usage {
+	if s.finalIterationUsage != nil {
+		return *s.finalIterationUsage
+	}
+	return s.usage
+}
+
+// Usage is what the request is billed for: the top-level usage plus any
+// compaction iterations.
 func (s *Stream) Usage() llms.Usage {
-	return llms.Usage{
-		CachedInputTokens:        s.cachedInputTokens,
-		CacheCreationInputTokens: s.cacheCreationInputTokens,
-		InputTokens:              s.inputTokens,
-		OutputTokens:             s.outputTokens,
+	usage := s.usage
+	usage.Add(s.compactionUsage)
+	return usage
+}
+
+// recordUsage applies a cumulative usage snapshot from message_start or
+// message_delta.
+func (s *Stream) recordUsage(u *usage) {
+	// Values are cumulative, so we overwrite the numbers instead of adding.
+	// https://docs.anthropic.com/en/docs/build-with-claude/streaming
+	if u.CacheReadInputTokens != nil {
+		s.usage.CachedInputTokens = *u.CacheReadInputTokens
+	}
+	if u.CacheCreationInputTokens != nil {
+		s.usage.CacheCreationInputTokens = *u.CacheCreationInputTokens
+	}
+	if u.InputTokens != nil {
+		s.usage.InputTokens = *u.InputTokens
+	}
+	if u.OutputTokens != nil {
+		s.usage.OutputTokens = *u.OutputTokens
+	}
+	if u.Iterations != nil {
+		s.recordIterations(u.Iterations)
 	}
 }
 
@@ -569,20 +643,7 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 				}
 				if u := event.Message.Usage; u != nil {
-					// Values are cumulative, so we overwrite the numbers instead of adding.
-					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
-					if u.CacheReadInputTokens != nil {
-						s.cachedInputTokens = *u.CacheReadInputTokens
-					}
-					if u.CacheCreationInputTokens != nil {
-						s.cacheCreationInputTokens = *u.CacheCreationInputTokens
-					}
-					if u.InputTokens != nil {
-						s.inputTokens = *u.InputTokens
-					}
-					if u.OutputTokens != nil {
-						s.outputTokens = *u.OutputTokens
-					}
+					s.recordUsage(u)
 				}
 			case "content_block_start":
 				// For now, we only need special handling for tool_use and thinking blocks.
@@ -610,6 +671,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						s.message.Content.SetThoughtSignature(event.ContentBlock.Signature)
 					}
 					if !yield(llms.StreamStatusThinking) {
+						return
+					}
+				case "compaction":
+					if err := s.startCompaction(*event.ContentBlock); err != nil {
+						s.err = err
 						return
 					}
 				case "redacted_thinking":
@@ -659,6 +725,12 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 					continue
+				case "compaction_delta":
+					if err := s.appendCompactionDelta(event.Delta); err != nil {
+						s.err = err
+						return
+					}
+					continue
 				case "signature_delta":
 					s.lastThought = &content.Thought{Signature: event.Delta.Signature}
 					s.message.Content.SetThoughtSignature(event.Delta.Signature)
@@ -675,6 +747,11 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 						return
 					}
 				}
+				if contentBlockTypeByIndex[event.Index] == "compaction" && s.finishCompaction() {
+					if !yield(llms.StreamStatusCompaction) {
+						return
+					}
+				}
 				// For thinking blocks, signal that thinking has finished
 				if blockType, ok := contentBlockTypeByIndex[event.Index]; ok {
 					if blockType == "thinking" || blockType == "redacted_thinking" {
@@ -687,25 +764,13 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 			case "message_delta":
 				// Update usage statistics
 				if u := event.Usage; u != nil {
-					// Values are cumulative, so we overwrite the numbers instead of adding.
-					// https://docs.anthropic.com/en/docs/build-with-claude/streaming
-					if u.CacheReadInputTokens != nil {
-						s.cachedInputTokens = *u.CacheReadInputTokens
-					}
-					if u.CacheCreationInputTokens != nil {
-						s.cacheCreationInputTokens = *u.CacheCreationInputTokens
-					}
-					if u.InputTokens != nil {
-						s.inputTokens = *u.InputTokens
-					}
-					if u.OutputTokens != nil {
-						s.outputTokens = *u.OutputTokens
-					}
+					s.recordUsage(u)
 				}
 				// Check stop reason
 				if event.Delta.StopReason != "" &&
 					event.Delta.StopReason != "tool_use" &&
-					event.Delta.StopReason != "end_turn" {
+					event.Delta.StopReason != "end_turn" &&
+					event.Delta.StopReason != "compaction" {
 					if event.Delta.StopReason == "max_tokens" {
 						s.err = fmt.Errorf("%w (stop_reason=%q)", llms.ErrOutputTruncated, event.Delta.StopReason)
 					} else {
@@ -800,6 +865,12 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 				ci.Thinking = v.Text
 				ci.Signature = v.Signature
 			}
+		case *content.Compaction:
+			compaction, err := compactionContentItem(v)
+			if err != nil {
+				return nil, err
+			}
+			ci = compaction
 		case *content.CacheHint:
 			// Add cache control to the previous content item.
 			if i := len(cl) - 1; i >= 0 {

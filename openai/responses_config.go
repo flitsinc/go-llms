@@ -1,6 +1,10 @@
 package openai
 
-import "github.com/flitsinc/go-llms/tools"
+import (
+	"fmt"
+
+	"github.com/flitsinc/go-llms/tools"
+)
 
 // responsesConfig holds configuration fields shared by ResponsesAPI and
 // WebSocketResponsesAPI. Both provider types embed this struct.
@@ -19,6 +23,7 @@ type responsesConfig struct {
 	user              string
 	metadata          map[string]string
 	promptCacheKey    string
+	compaction        *ContextCompaction
 	specialTools      []ResponseTool
 }
 
@@ -103,6 +108,14 @@ func (c *responsesConfig) buildResponsesPayload(
 		payload["metadata"] = c.metadata
 	}
 
+	if c.compaction != nil {
+		contextManagement, err := c.compaction.contextManagement()
+		if err != nil {
+			return nil, err
+		}
+		payload["context_management"] = contextManagement
+	}
+
 	if c.promptCacheKey != "" {
 		payload["prompt_cache_key"] = c.promptCacheKey
 	}
@@ -125,4 +138,23 @@ func (c *responsesConfig) buildResponsesPayload(
 	}
 
 	return payload, nil
+}
+
+// ContextCompaction configures OpenAI Responses server-side compaction: once
+// the rendered input reaches TriggerInputTokens, the API compacts the context
+// and emits an encrypted "compaction" output item, surfaced as a
+// content.Compaction in the assistant message, which replaces the history
+// before it on later requests.
+// https://developers.openai.com/api/docs/guides/compaction
+type ContextCompaction struct {
+	// TriggerInputTokens is the input size that triggers compaction
+	// (compact_threshold). Required: the API documents no default.
+	TriggerInputTokens int
+}
+
+func (c *ContextCompaction) contextManagement() ([]map[string]any, error) {
+	if c.TriggerInputTokens <= 0 {
+		return nil, fmt.Errorf("compaction requires a positive TriggerInputTokens, got %d", c.TriggerInputTokens)
+	}
+	return []map[string]any{{"type": "compaction", "compact_threshold": c.TriggerInputTokens}}, nil
 }
