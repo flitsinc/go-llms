@@ -87,7 +87,7 @@ func TestChatCompletions_RejectsCompaction(t *testing.T) {
 }
 
 func TestBuildResponsesPayload_Compaction(t *testing.T) {
-	m := NewResponsesAPI("key", "gpt-5.4").WithCompaction(400000)
+	m := NewResponsesAPI("key", "gpt-5.4").WithContextCompaction(ContextCompaction{TriggerInputTokens: 400000})
 	payload, err := m.buildResponsesPayload(nil, "", nil, nil)
 	require.NoError(t, err)
 	raw, err := json.Marshal(payload["context_management"])
@@ -97,4 +97,7 @@ func TestBuildResponsesPayload_Compaction(t *testing.T) {
 	payload, err = NewResponsesAPI("key", "gpt-5.4").buildResponsesPayload(nil, "", nil, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, payload, "context_management")
+
+	_, err = NewResponsesAPI("key", "gpt-5.4").WithContextCompaction(ContextCompaction{}).buildResponsesPayload(nil, "", nil, nil)
+	require.ErrorContains(t, err, "requires a positive TriggerInputTokens")
 }

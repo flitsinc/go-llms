@@ -106,13 +106,10 @@ func (m *WebSocketResponsesAPI) WithMaxOutputTokens(n int) *WebSocketResponsesAP
 	return m
 }
 
-// WithCompaction enables server-side compaction: once the rendered input
-// reaches threshold tokens, the API compacts the context and emits an
-// encrypted "compaction" output item, surfaced as a content.Compaction in the
-// assistant message, which replaces the history before it on later requests.
-// https://developers.openai.com/api/docs/guides/compaction
-func (m *WebSocketResponsesAPI) WithCompaction(threshold int) *WebSocketResponsesAPI {
-	m.compactThreshold = threshold
+// WithContextCompaction enables server-side context compaction (see
+// [ContextCompaction]).
+func (m *WebSocketResponsesAPI) WithContextCompaction(c ContextCompaction) *WebSocketResponsesAPI {
+	m.compaction = &c
 	return m
 }
 

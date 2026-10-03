@@ -26,8 +26,8 @@ const (
 // continues from that summary.
 // https://platform.claude.com/docs/en/build-with-claude/compaction-threshold
 type ContextCompaction struct {
-	// TriggerInputTokens is the input size that triggers compaction. The API
-	// requires at least 50,000; zero uses the API default (150,000).
+	// TriggerInputTokens is the input size that triggers compaction.
+	// Required, and at least the API minimum of 50,000.
 	TriggerInputTokens int
 	// Instructions replaces the default summarization prompt when non-empty.
 	Instructions string
@@ -43,13 +43,13 @@ func (m *Model) WithContextCompaction(c ContextCompaction) *Model {
 
 // contextManagement is the request's context_management parameter.
 func (c *ContextCompaction) contextManagement() (map[string]any, error) {
-	edit := map[string]any{"type": compactionEditType}
-	if c.TriggerInputTokens != 0 {
-		if c.TriggerInputTokens < minCompactionTriggerInputTokens {
-			return nil, fmt.Errorf("compaction trigger %d is below the API minimum of %d input tokens",
-				c.TriggerInputTokens, minCompactionTriggerInputTokens)
-		}
-		edit["trigger"] = map[string]any{"type": "input_tokens", "value": c.TriggerInputTokens}
+	if c.TriggerInputTokens < minCompactionTriggerInputTokens {
+		return nil, fmt.Errorf("compaction trigger %d is below the API minimum of %d input tokens",
+			c.TriggerInputTokens, minCompactionTriggerInputTokens)
+	}
+	edit := map[string]any{
+		"type":    compactionEditType,
+		"trigger": map[string]any{"type": "input_tokens", "value": c.TriggerInputTokens},
 	}
 	if c.Instructions != "" {
 		edit["instructions"] = c.Instructions

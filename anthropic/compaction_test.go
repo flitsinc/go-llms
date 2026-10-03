@@ -233,11 +233,13 @@ func TestAnthropicStream_CompactionEncryptedContentRoundTrip(t *testing.T) {
 	]`, string(req.Body["messages"]))
 }
 
-func TestAnthropic_RejectsCompactionTriggerBelowMinimum(t *testing.T) {
-	stream := New("key", "claude-opus-4-6").
-		WithContextCompaction(ContextCompaction{TriggerInputTokens: 49_999}).
-		Generate(context.Background(), nil, []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
-	require.ErrorContains(t, stream.Err(), "below the API minimum")
+func TestAnthropic_RejectsMissingOrTooSmallCompactionTrigger(t *testing.T) {
+	for _, trigger := range []int{0, 49_999} {
+		stream := New("key", "claude-opus-4-6").
+			WithContextCompaction(ContextCompaction{TriggerInputTokens: trigger}).
+			Generate(context.Background(), nil, []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+		require.ErrorContains(t, stream.Err(), "below the API minimum", "trigger %d", trigger)
+	}
 }
 
 // Iterations may omit the cache buckets; a single message iteration takes
