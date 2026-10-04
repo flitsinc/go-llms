@@ -259,6 +259,12 @@ type ResponsesStream struct {
 	stream                  io.Reader
 }
 
+var (
+	_ llms.SearchStream                   = (*ResponsesStream)(nil)
+	_ llms.CompactionStream               = (*ResponsesStream)(nil)
+	_ llms.ToolArgumentFinalizationStream = (*ResponsesStream)(nil)
+)
+
 func newResponsesStreamError(err error) *ResponsesStream {
 	return &ResponsesStream{responsesEventProcessor: responsesEventProcessor{err: err}}
 }

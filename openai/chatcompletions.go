@@ -634,6 +634,8 @@ type ChatCompletionsStream struct {
 	toolCallPositions map[int]int
 }
 
+var _ llms.SearchStream = (*ChatCompletionsStream)(nil)
+
 // Search implements the optional provider-run search capability: one
 // aggregated activity for all citations the stream carried. The query is
 // unknown at this API level — the provider composes it server-side and only
