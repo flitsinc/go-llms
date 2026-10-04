@@ -53,8 +53,8 @@ type StreamCapabilities interface {
 }
 
 // StreamWrapper embeds a ProviderStream and forwards every optional
-// capability to it, reporting what the turn loop would see for an unwrapped
-// stream when the inner stream lacks one. Embed it in a stream wrapper in place
+// capability to it, returning the zero value when the inner stream lacks one
+// (and the inner Usage in place of a missing ContextUsage). Embed it in a stream wrapper in place
 // of ProviderStream and override only the methods the wrapper changes.
 //
 // A wrapper that overrides Usage must override ContextUsage too:
