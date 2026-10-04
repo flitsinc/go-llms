@@ -22,7 +22,7 @@ const (
 	UpdateTypeMessageStart UpdateType = "message_start"
 	UpdateTypeSearch       UpdateType = "search"
 	UpdateTypeCompaction   UpdateType = "compaction"
-	// UpdateTypeCompactionStarted reports that context compaction is under way.
+
 	UpdateTypeCompactionStarted UpdateType = "compaction_started"
 )
 
@@ -178,8 +178,9 @@ func (u CompactionUpdate) Type() UpdateType {
 
 // CompactionStartedUpdate reports that the provider began compacting the
 // request context. A CompactionUpdate follows when it produces a checkpoint;
-// a compaction that fails is followed directly by the response instead, so
-// any later update means the compaction is over.
+// a compaction that fails is followed directly by the response instead, or
+// the turn ends with an error. So the compaction is over at the next update
+// or at the end of the turn, whichever comes first.
 type CompactionStartedUpdate struct{}
 
 func (u CompactionStartedUpdate) Type() UpdateType {

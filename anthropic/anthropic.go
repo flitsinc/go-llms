@@ -685,7 +685,8 @@ func (s *Stream) Iter() func(yield func(llms.StreamStatus) bool) {
 					}
 					// Threshold compaction opens the block before it
 					// summarizes, so this arrives while the summary is
-					// still being written.
+					// still being written. An on-demand block arrives
+					// whole, so its checkpoint follows immediately.
 					if !yield(llms.StreamStatusCompactionStarted) {
 						return
 					}

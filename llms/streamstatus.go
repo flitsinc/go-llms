@@ -33,7 +33,7 @@ const (
 	// StreamStatusCompactionStarted means the provider began compacting the
 	// request context, before the checkpoint exists. It is progress only: the
 	// compaction can still fail, in which case no StreamStatusCompaction
-	// follows and the stream continues with the response. Providers that only
-	// report a finished checkpoint never emit it.
+	// follows and the stream either continues with the response or ends with
+	// an error. Providers that only report a finished checkpoint never emit it.
 	StreamStatusCompactionStarted
 )

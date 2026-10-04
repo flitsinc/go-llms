@@ -77,12 +77,20 @@ func TestConvertMessageToInput_RejectsForeignCompaction(t *testing.T) {
 func TestResponsesStream_UnreadableCompactionItemFailsTheStream(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"compaction","id":"cmp_1"}}`,
 		`data: {"type":"response.output_item.done","item":{"type":"compaction","id":"cmp_1"}}`,
 		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50}}}`,
 		"",
 	}, "\n")
 	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5.4", stream: strings.NewReader(sse)}
-	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	var statuses []llms.StreamStatus
+	stream.Iter()(func(status llms.StreamStatus) bool {
+		statuses = append(statuses, status)
+		return true
+	})
+	// The start was reported, then the stream failed instead of producing a
+	// checkpoint.
+	assert.Equal(t, []llms.StreamStatus{llms.StreamStatusCompactionStarted}, statuses)
 	require.ErrorContains(t, stream.Err(), "has no encrypted_content")
 }
 
