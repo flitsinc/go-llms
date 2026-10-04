@@ -16,6 +16,7 @@ import (
 func TestResponsesStream_CompactionItem(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"compaction","id":"cmp_1","encrypted_content":"gAAA"}}`,
 		`data: {"type":"response.output_item.done","item":{"type":"compaction","id":"cmp_1","encrypted_content":"gAAAAenc"}}`,
 		`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}`,
 		`data: {"type":"response.content_part.added","part":{"type":"text","text":"Hello"},"item_id":"msg_1","content_index":0}`,
@@ -37,7 +38,11 @@ func TestResponsesStream_CompactionItem(t *testing.T) {
 	require.NoError(t, stream.Err())
 
 	want := content.Compaction{Provider: "openai", ID: "cmp_1", Encrypted: "gAAAAenc"}
-	assert.Contains(t, statuses, llms.StreamStatusCompaction)
+	assert.Equal(t, []llms.StreamStatus{
+		llms.StreamStatusCompactionStarted,
+		llms.StreamStatusCompaction,
+		llms.StreamStatusMessageStart,
+	}, statuses)
 	assert.Equal(t, want, reported)
 	require.NotEmpty(t, stream.Message().Content)
 	assert.Equal(t, &want, stream.Message().Content[0])
@@ -72,12 +77,20 @@ func TestConvertMessageToInput_RejectsForeignCompaction(t *testing.T) {
 func TestResponsesStream_UnreadableCompactionItemFailsTheStream(t *testing.T) {
 	sse := strings.Join([]string{
 		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"compaction","id":"cmp_1"}}`,
 		`data: {"type":"response.output_item.done","item":{"type":"compaction","id":"cmp_1"}}`,
 		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":50}}}`,
 		"",
 	}, "\n")
 	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5.4", stream: strings.NewReader(sse)}
-	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	var statuses []llms.StreamStatus
+	stream.Iter()(func(status llms.StreamStatus) bool {
+		statuses = append(statuses, status)
+		return true
+	})
+	// The start was reported, then the stream failed instead of producing a
+	// checkpoint.
+	assert.Equal(t, []llms.StreamStatus{llms.StreamStatusCompactionStarted}, statuses)
 	require.ErrorContains(t, stream.Err(), "has no encrypted_content")
 }
 
