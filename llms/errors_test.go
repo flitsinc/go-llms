@@ -157,3 +157,89 @@ func TestIsRequestTooLarge(t *testing.T) {
 		})
 	}
 }
+
+// The messages are the ones the providers returned live (2026-10-04).
+func TestIsCompactionRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		err  HTTPError
+		want bool
+	}{
+		{
+			name: "OpenAI cannot decrypt the checkpoint",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "invalid_encrypted_content",
+				ErrorType:  "invalid_request_error",
+				Message:    "The encrypted content for item cmp_0000000000000000 could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+			},
+			want: true,
+		},
+		{
+			name: "upstream invalid_encrypted_content via gateway",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Metadata:   HTTPErrorMetadata{RawErrorCode: "invalid_encrypted_content"},
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic model without the compaction strategy",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "'claude-haiku-4-5-20251001' does not support the 'compact_20260112' context management strategy.",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic empty compaction block",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.1.content.0.compaction.content: content cannot be empty",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic rejection relayed in gateway metadata",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName:    "Anthropic",
+					RawErrorType:    "invalid_request_error",
+					RawErrorMessage: "messages.1.content.0: `compaction` blocks require a `compact_20260112` strategy in `context_management.edits`.",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "unrelated invalid request",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.1.content.0.tool_use.input: Input should be a valid dictionary",
+			},
+			want: false,
+		},
+		{
+			name: "compaction mentioned outside a 400",
+			err: HTTPError{
+				StatusCode: 500,
+				ErrorType:  "api_error",
+				Message:    "compaction failed",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.IsCompactionRejected(); got != tt.want {
+				t.Errorf("IsCompactionRejected() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

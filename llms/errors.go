@@ -75,3 +75,35 @@ func isRequestTooLargeMessage(msg string) bool {
 	return strings.Contains(msg, "prompt is too long") ||
 		strings.Contains(msg, "maximum context length")
 }
+
+// IsCompactionRejected reports whether the provider refused a replayed native
+// context compaction checkpoint (a content.Compaction in the request history):
+// OpenAI could not decrypt it, for example after a change of organization, or
+// Anthropic does not accept the block on this model. The checkpoint stays
+// unusable however often the request is repeated, so the caller should drop
+// it and send the history it summarized instead. The answer is only
+// meaningful for a request that replayed a checkpoint.
+//
+// OpenAI reports this with the structured "invalid_encrypted_content" code.
+// Anthropic (directly and through OpenRouter's Messages endpoint) returns a
+// plain invalid_request_error, so this is a compatibility adapter that falls
+// back to the error message, as IsRequestTooLarge does.
+func (e *HTTPError) IsCompactionRejected() bool {
+	if e.ErrorCode == "invalid_encrypted_content" || e.Metadata.RawErrorCode == "invalid_encrypted_content" {
+		return true
+	}
+	if e.StatusCode != 400 {
+		return false
+	}
+	return (e.ErrorType == "invalid_request_error" && isCompactionRejectedMessage(e.Message)) ||
+		(e.Metadata.RawErrorType == "invalid_request_error" && isCompactionRejectedMessage(e.Metadata.RawErrorMessage))
+}
+
+// isCompactionRejectedMessage matches Anthropic's messages for a compaction
+// block it will not take back, which name either the block ("compaction") or
+// the strategy ("compact_20260112"), e.g. "'claude-haiku-4-5-20251001' does
+// not support the 'compact_20260112' context management strategy." or
+// "messages.1.content.0.compaction.content: content cannot be empty".
+func isCompactionRejectedMessage(msg string) bool {
+	return strings.Contains(msg, "compaction") || strings.Contains(msg, "compact_20")
+}
