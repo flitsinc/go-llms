@@ -46,7 +46,12 @@ func TestAnthropicStream_ThresholdCompaction(t *testing.T) {
 	})
 	require.NoError(t, stream.Err())
 
-	assert.Equal(t, []llms.StreamStatus{llms.StreamStatusMessageStart, llms.StreamStatusCompaction, llms.StreamStatusText}, statuses)
+	assert.Equal(t, []llms.StreamStatus{
+		llms.StreamStatusMessageStart,
+		llms.StreamStatusCompactionStarted,
+		llms.StreamStatusCompaction,
+		llms.StreamStatusText,
+	}, statuses)
 	want := content.Compaction{Provider: "anthropic", Text: "Summary of earlier work."}
 	assert.Equal(t, want, reported)
 
@@ -88,8 +93,10 @@ func TestAnthropicStream_OnDemandCompactionBlockArrivesWhole(t *testing.T) {
 	sse.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
 
 	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-6", sse.String())
-	stream.Iter()(func(llms.StreamStatus) bool { return true })
+	var statuses []llms.StreamStatus
+	stream.Iter()(func(status llms.StreamStatus) bool { statuses = append(statuses, status); return true })
 	require.NoError(t, stream.Err())
+	assert.Equal(t, []llms.StreamStatus{llms.StreamStatusCompactionStarted, llms.StreamStatusCompaction}, statuses)
 	assert.Equal(t, content.Content{&content.Compaction{Provider: "anthropic", Text: "Summary.", Signature: "sig_1"}}, stream.Message().Content)
 }
 
@@ -108,7 +115,9 @@ func TestAnthropicStream_FailedCompactionIsNotReplayed(t *testing.T) {
 	var statuses []llms.StreamStatus
 	stream.Iter()(func(status llms.StreamStatus) bool { statuses = append(statuses, status); return true })
 	require.NoError(t, stream.Err())
-	assert.NotContains(t, statuses, llms.StreamStatusCompaction)
+	// The start was reported, but no checkpoint follows: the response itself
+	// is what tells the caller the compaction is over.
+	assert.Equal(t, []llms.StreamStatus{llms.StreamStatusCompactionStarted, llms.StreamStatusText}, statuses)
 	assert.Equal(t, content.Content{&content.Text{Text: "Hi"}}, stream.Message().Content)
 }
 

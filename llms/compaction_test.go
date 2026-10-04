@@ -30,6 +30,9 @@ var testCompaction = content.Compaction{Provider: "anthropic", Text: "Summary."}
 func (*compactionMockStream) Err() error { return nil }
 func (*compactionMockStream) Iter() func(func(StreamStatus) bool) {
 	return func(yield func(StreamStatus) bool) {
+		if !yield(StreamStatusCompactionStarted) {
+			return
+		}
 		if !yield(StreamStatusCompaction) {
 			return
 		}
@@ -61,11 +64,15 @@ func TestChat_EmitsCompactionUpdate(t *testing.T) {
 	require.NoError(t, llm.Err())
 
 	var compactionUpdates []CompactionUpdate
+	var types []UpdateType
 	for _, u := range updates {
+		types = append(types, u.Type())
 		if cu, ok := u.(CompactionUpdate); ok {
 			compactionUpdates = append(compactionUpdates, cu)
 		}
 	}
+	// The start is reported before the checkpoint, and both before the text.
+	assert.Equal(t, []UpdateType{UpdateTypeCompactionStarted, UpdateTypeCompaction, UpdateTypeText}, types)
 	require.Len(t, compactionUpdates, 1)
 	assert.Equal(t, UpdateTypeCompaction, compactionUpdates[0].Type())
 	assert.Equal(t, testCompaction, compactionUpdates[0].Compaction)

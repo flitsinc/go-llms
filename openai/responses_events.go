@@ -232,6 +232,13 @@ func (p *responsesEventProcessor) processEvent(
 				if !yield(llms.StreamStatusToolCallBegin) {
 					return true
 				}
+			case "compaction":
+				// The item is added before it is done. Compaction that runs
+				// before the answer arrives with both events together, so this
+				// only leads the checkpoint for compaction that runs later.
+				if !yield(llms.StreamStatusCompactionStarted) {
+					return true
+				}
 			case "reasoning":
 				p.message.Content.AppendThoughtWithID(item.ID, "", true)
 				p.lastThought = &content.Thought{ID: item.ID, Summary: true}
