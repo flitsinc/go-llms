@@ -185,13 +185,33 @@ func TestIsCompactionRejected(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "upstream that does not know the block",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.1.content.0: Input tag 'compaction' found using 'type' does not match any of the expected tags: 'text', 'thinking', 'tool_use'",
+			},
+			want: true,
+		},
+		{
+			// The compaction setting, not the checkpoint: dropping the
+			// checkpoint cannot fix the request.
 			name: "Anthropic model without the compaction strategy",
 			err: HTTPError{
 				StatusCode: 400,
 				ErrorType:  "invalid_request_error",
 				Message:    "'claude-haiku-4-5-20251001' does not support the 'compact_20260112' context management strategy.",
 			},
-			want: true,
+			want: false,
+		},
+		{
+			name: "Anthropic rejected compaction setting",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "context_management.edits.0.trigger.value: Input should be greater than or equal to 50000",
+			},
+			want: false,
 		},
 		{
 			name: "Anthropic empty compaction block",

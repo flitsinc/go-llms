@@ -77,12 +77,16 @@ func isRequestTooLargeMessage(msg string) bool {
 }
 
 // IsCompactionRejected reports whether the provider refused a replayed native
-// context compaction checkpoint (a content.Compaction in the request history):
-// OpenAI could not decrypt it, for example after a change of organization, or
-// Anthropic does not accept the block on this model. The checkpoint stays
-// unusable however often the request is repeated, so the caller should drop
-// it and send the history it summarized instead. The answer is only
-// meaningful for a request that replayed a checkpoint.
+// context compaction checkpoint (a content.Compaction in the request history)
+// itself: OpenAI could not decrypt it, for example after a change of
+// organization, or Anthropic rejected the block. The checkpoint stays unusable
+// however often the request is repeated, so the caller should drop it and
+// send the history it summarized instead. The answer is only meaningful for a
+// request that replayed a checkpoint.
+//
+// It does not cover a rejected compaction setting, such as a model that does
+// not support the compaction strategy: dropping the checkpoint cannot fix
+// that request.
 //
 // OpenAI reports this with the structured "invalid_encrypted_content" code.
 // Anthropic (directly and through OpenRouter's Messages endpoint) returns a
@@ -95,15 +99,21 @@ func (e *HTTPError) IsCompactionRejected() bool {
 	if e.StatusCode != 400 {
 		return false
 	}
-	return (e.ErrorType == "invalid_request_error" && isCompactionRejectedMessage(e.Message)) ||
-		(e.Metadata.RawErrorType == "invalid_request_error" && isCompactionRejectedMessage(e.Metadata.RawErrorMessage))
+	return (e.ErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Message)) ||
+		(e.Metadata.RawErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Metadata.RawErrorMessage))
 }
 
-// isCompactionRejectedMessage matches Anthropic's messages for a compaction
-// block it will not take back, which name either the block ("compaction") or
-// the strategy ("compact_20260112"), e.g. "'claude-haiku-4-5-20251001' does
-// not support the 'compact_20260112' context management strategy." or
-// "messages.1.content.0.compaction.content: content cannot be empty".
-func isCompactionRejectedMessage(msg string) bool {
-	return strings.Contains(msg, "compaction") || strings.Contains(msg, "compact_20")
+// isCompactionBlockRejectedMessage matches Anthropic's messages that point at
+// a compaction content block, e.g.
+// "messages.1.content.0.compaction.content: content cannot be empty",
+// "messages.1.content.0: `compaction` blocks require a `compact_20260112`
+// strategy in `context_management.edits`." or, on an upstream that does not
+// know the block, "Input tag 'compaction' found using 'type' does not match
+// any of the expected tags". Messages about the compaction setting (such as
+// "does not support the 'compact_20260112' context management strategy") do
+// not name the block and are left out.
+func isCompactionBlockRejectedMessage(msg string) bool {
+	return strings.Contains(msg, ".compaction.") ||
+		strings.Contains(msg, "`compaction` block") ||
+		strings.Contains(msg, "tag 'compaction'")
 }
