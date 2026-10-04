@@ -365,12 +365,12 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			// Provider-run search (e.g. xAI web_search / x_search) is informational: it runs
 			// server-side, so there is nothing to execute. Only providers that surface it
 			// implement Search(), so this is an optional capability rather than an interface method.
-			if searcher, ok := stream.(interface{ Search() SearchActivity }); ok {
+			if searcher, ok := stream.(SearchStream); ok {
 				updateChan <- SearchUpdate{searcher.Search()}
 			}
 
 		case StreamStatusCompaction:
-			if compactor, ok := stream.(interface{ Compaction() content.Compaction }); ok {
+			if compactor, ok := stream.(CompactionStream); ok {
 				updateChan <- CompactionUpdate{compactor.Compaction()}
 			}
 
@@ -415,9 +415,7 @@ func (l *LLM) turn(ctx context.Context, updateChan chan<- Update) (bool, error) 
 			}
 			var finalArguments json.RawMessage
 			finalizationExpected := false
-			if finalizer, ok := stream.(interface {
-				ToolArgumentFinalization() (json.RawMessage, bool)
-			}); ok {
+			if finalizer, ok := stream.(ToolArgumentFinalizationStream); ok {
 				finalArguments, finalizationExpected = finalizer.ToolArgumentFinalization()
 			}
 			if finalizationExpected {

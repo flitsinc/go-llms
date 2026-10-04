@@ -19,6 +19,12 @@ type WebSocketStream struct {
 	onDone                  func(responseID string)
 }
 
+var (
+	_ llms.SearchStream                   = (*WebSocketStream)(nil)
+	_ llms.CompactionStream               = (*WebSocketStream)(nil)
+	_ llms.ToolArgumentFinalizationStream = (*WebSocketStream)(nil)
+)
+
 func newWebSocketStreamError(err error) *WebSocketStream {
 	return &WebSocketStream{
 		responsesEventProcessor: responsesEventProcessor{err: err},

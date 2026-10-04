@@ -25,14 +25,6 @@ func (u *Usage) Add(other Usage) {
 	u.OutputTokens += other.OutputTokens
 }
 
-// ContextUsageStream is implemented by provider streams whose Usage also
-// counts sampling passes that do not carry the request's context forward, such
-// as a context-compaction pass. ContextUsage reports only the final pass: the
-// context the request ended with, after any compaction.
-type ContextUsageStream interface {
-	ContextUsage() Usage
-}
-
 type ProviderStream interface {
 	Err() error
 	Iter() func(yield func(StreamStatus) bool)

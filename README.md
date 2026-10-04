@@ -558,6 +558,20 @@ type ProviderStream interface {
 }
 ```
 
+A stream can also implement optional capabilities, which the turn loop discovers with a type assertion: `ContextUsageStream` (usage of the final sampling pass, after any compaction), `SearchStream` (provider-run searches), `CompactionStream` (native compaction checkpoints) and `ToolArgumentFinalizationStream` (a final snapshot of tool arguments).
+
+To wrap a stream (for fallback, metering and the like), embed `llms.StreamWrapper` rather than `llms.ProviderStream`, so the wrapped stream's optional capabilities keep reaching the turn loop, and assert `llms.StreamCapabilities` to catch a regression at compile time. A wrapper that overrides `Usage` must override `ContextUsage` too:
+
+```go
+type meteredStream struct {
+    llms.StreamWrapper
+}
+
+var _ llms.StreamCapabilities = (*meteredStream)(nil)
+
+stream := &meteredStream{StreamWrapper: llms.StreamWrapper{ProviderStream: inner}}
+```
+
 ## Usage Tracking
 
 Track the usage of your LLM interactions:

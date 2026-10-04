@@ -488,6 +488,11 @@ type Stream struct {
 	finalIterationUsage *llms.Usage
 }
 
+var (
+	_ llms.CompactionStream   = (*Stream)(nil)
+	_ llms.ContextUsageStream = (*Stream)(nil)
+)
+
 func (s *Stream) Err() error {
 	return s.err
 }
