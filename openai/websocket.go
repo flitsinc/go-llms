@@ -301,7 +301,7 @@ func (m *WebSocketResponsesAPI) Warmup(ctx context.Context, instructions string,
 			return responseID, nil
 		case "error":
 			if event.Error != nil {
-				return "", fmt.Errorf("warmup error (%s): %s", event.Error.Code, event.Error.Message)
+				return "", fmt.Errorf("warmup: %w", event.Error.err(event.Status))
 			}
 			return "", fmt.Errorf("warmup: unknown error")
 		}
@@ -338,7 +338,7 @@ func (m *WebSocketResponsesAPI) Generate(
 	} else {
 		systemMsg := llms.Message{Role: "system", Content: systemPrompt}
 		var err error
-		systemInputs, err = convertMessageToInput(systemMsg, nil)
+		systemInputs, err = convertMessageToInput(systemMsg, inputConversion{})
 		if err != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: failed to convert system message: %w", err))
 		}
@@ -346,11 +346,11 @@ func (m *WebSocketResponsesAPI) Generate(
 
 	// request builds the response.create envelope for msgs, chained to
 	// previousResponseID when it is set.
-	customCallIDs := customToolCallIDs(messages)
+	conversion := newInputConversion(messages, m.endpoint)
 	request := func(msgs []llms.Message, previousResponseID string) ([]byte, error) {
 		input := slices.Clone(systemInputs)
 		for _, msg := range msgs {
-			msgInputs, err := convertMessageToInput(msg, customCallIDs)
+			msgInputs, err := convertMessageToInput(msg, conversion)
 			if err != nil {
 				return nil, fmt.Errorf("websocket: failed to convert message role=%s: %w", msg.Role, err)
 			}
@@ -358,31 +358,32 @@ func (m *WebSocketResponsesAPI) Generate(
 		}
 		return m.buildRequestEnvelope(input, instructions, previousResponseID, toolbox, jsonOutputSchema)
 	}
+	send := func(conn *websocket.Conn, data []byte) error {
+		if debugger != nil {
+			debugger.RawRequest(m.endpoint, data)
+		}
+		return conn.Write(ctx, websocket.MessageText, data)
+	}
 
-	// Determine if we can use incremental chaining.
-	var previousResponseID string
+	// Chain to the last response when the conversation continues it:
+	// incrementally after a turn, or with every message after a warmup.
+	var chainedTo string
 	unsent := messages
 	if m.lastResponseID != "" && m.lastMessageCount > 0 &&
 		len(messages) > m.lastMessageCount &&
 		messages[m.lastMessageCount].Role == "assistant" {
-		// Incremental: only send new messages after the last response.
-		previousResponseID = m.lastResponseID
+		chainedTo = m.lastResponseID
 		unsent = messages[m.lastMessageCount+1:]
 	} else if m.lastResponseID != "" && m.lastMessageCount == 0 {
-		// Warmup case: send full messages but chain off the warmup response.
-		previousResponseID = m.lastResponseID
+		chainedTo = m.lastResponseID
 	}
 
-	jsonData, err := request(unsent, previousResponseID)
+	jsonData, err := request(unsent, chainedTo)
 	if err != nil {
 		return newWebSocketStreamError(err)
 	}
 
-	if debugger != nil {
-		debugger.RawRequest(m.endpoint, jsonData)
-	}
-
-	if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
+	if err := send(m.conn, jsonData); err != nil {
 		// If write fails and we manage the connection, try reconnect + retry.
 		if m.externalConn {
 			return newWebSocketStreamError(fmt.Errorf("websocket: write: %w", err))
@@ -392,19 +393,16 @@ func (m *WebSocketResponsesAPI) Generate(
 		m.conn = nil
 		m.lastResponseID = ""
 		m.lastMessageCount = 0
-		previousResponseID = ""
 		if reconnErr := m.ensureConnected(ctx); reconnErr != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: reconnect failed: %w", reconnErr))
 		}
-		// Rebuild the full payload, without previous_response_id.
+		// The new connection cannot chain: send the whole conversation.
+		chainedTo = ""
 		jsonData, err = request(messages, "")
 		if err != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: reconnect: %w", err))
 		}
-		if debugger != nil {
-			debugger.RawRequest(m.endpoint, jsonData)
-		}
-		if err := m.conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
+		if err := send(m.conn, jsonData); err != nil {
 			return newWebSocketStreamError(fmt.Errorf("websocket: write after reconnect: %w", err))
 		}
 	}
@@ -413,8 +411,9 @@ func (m *WebSocketResponsesAPI) Generate(
 	msgCount := len(messages)
 	stream := &WebSocketStream{
 		responsesEventProcessor: responsesEventProcessor{
-			debugger:    debugger,
-			lastThought: &content.Thought{},
+			debugger:          debugger,
+			lastThought:       &content.Thought{},
+			reasoningEndpoint: reasoningEndpoint(m.endpoint),
 		},
 		ctx:  ctx,
 		conn: conn,
@@ -427,7 +426,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			}
 		},
 	}
-	if previousResponseID != "" {
+	if chainedTo != "" {
 		// The server answers previous_response_not_found when it no longer
 		// holds the chained response: a response created with store=false
 		// lives only in the connection's cache, and a stored one only in the
@@ -438,10 +437,7 @@ func (m *WebSocketResponsesAPI) Generate(
 			if err != nil {
 				return err
 			}
-			if debugger != nil {
-				debugger.RawRequest(m.endpoint, jsonData)
-			}
-			if err := conn.Write(ctx, websocket.MessageText, jsonData); err != nil {
+			if err := send(conn, jsonData); err != nil {
 				return fmt.Errorf("websocket: write unchained request: %w", err)
 			}
 			return nil

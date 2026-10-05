@@ -95,15 +95,26 @@ type Thought struct {
 	Text string `json:"text,omitempty"`
 	// Encrypted is the provider's opaque encrypted-reasoning token exactly as it
 	// appeared on the wire (Anthropic's redacted_thinking "data", OpenRouter's
-	// reasoning.encrypted "data"). It is replayed verbatim, because the token's
-	// encoding belongs to the upstream that issued it: Anthropic sends standard
-	// base64, while OpenAI Responses blobs relayed by OpenRouter are URL-safe
-	// base64 Fernet tokens. Decoding one alphabet and re-encoding as the other
-	// both rejects valid tokens and hands the upstream a token it cannot decrypt.
+	// reasoning.encrypted "data", a Responses API reasoning item's
+	// "encrypted_content" from OpenAI or xAI). It is replayed verbatim, because
+	// the token's encoding belongs to the upstream that issued it: Anthropic
+	// sends standard base64, while OpenAI Responses blobs are URL-safe base64
+	// Fernet tokens. Decoding one alphabet and re-encoding as the other both
+	// rejects valid tokens and hands the upstream a token it cannot decrypt.
+	//
+	// Only the issuer can read the token, so it must travel with the ID and
+	// the provenance in Metadata. A Responses API thought records the
+	// "openai:reasoning_format" ("openai-responses-v1") and the
+	// "openai:reasoning_endpoint" (the API host, such as "api.openai.com")
+	// that produced it; the Responses provider replays the token, next to the
+	// ID, only to that endpoint, and replays any other thought with an ID by
+	// ID alone, so a consumer that drops Metadata loses the token's replay but
+	// never sends it to the wrong provider.
 	Encrypted string `json:"encrypted,omitempty"`
 	Signature string `json:"signature,omitempty"`
-	// Metadata holds protocol-specific metadata that should be forwarded unchanged.
-	// Keys are prefixed with the protocol/provider name, e.g. "openai:format".
+	// Metadata holds protocol-specific metadata that should be forwarded
+	// unchanged, including the provenance of Encrypted. Keys are prefixed with
+	// the protocol/provider name, e.g. "openai:reasoning_format".
 	Metadata map[string]string `json:"metadata,omitempty"`
 	// Summary is true if the thought is a complete summary of the thinking
 	// session, as opposed to the actual thinking stream.

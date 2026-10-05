@@ -158,8 +158,9 @@ func TestIsRequestTooLarge(t *testing.T) {
 	}
 }
 
-// The messages are the ones the providers returned live (2026-10-04).
-func TestIsCompactionRejected(t *testing.T) {
+// Compaction checkpoint refusals. The messages are the ones the providers
+// returned live (2026-10-04).
+func TestIsReplayRejected_Compaction(t *testing.T) {
 	tests := []struct {
 		name string
 		err  HTTPError
@@ -257,15 +258,16 @@ func TestIsCompactionRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.err.IsCompactionRejected(); got != tt.want {
-				t.Errorf("IsCompactionRejected() = %v, want %v", got, tt.want)
+			if got := tt.err.IsReplayRejected(); got != tt.want {
+				t.Errorf("IsReplayRejected() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-// The shapes are the ones OpenAI returned live (2026-10-05).
-func TestIsReplayRejected(t *testing.T) {
+// Reasoning and item refusals. The shapes are the ones OpenAI returned live
+// (2026-10-05).
+func TestIsReplayRejected_Reasoning(t *testing.T) {
 	tests := []struct {
 		name string
 		err  HTTPError

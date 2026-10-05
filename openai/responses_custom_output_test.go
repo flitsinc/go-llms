@@ -32,12 +32,12 @@ func TestConvertMessageToInput_CustomToolCallResultUsesCustomOutput(t *testing.T
 		{Role: "tool", ToolCallID: "call_fn", Content: content.FromText("data")},
 	}
 
-	customCallIDs := customToolCallIDs(messages)
-	if len(customCallIDs) != 1 || !customCallIDs["call_custom"] {
-		t.Fatalf("expected only call_custom to be collected, got %#v", customCallIDs)
+	conversion := newInputConversion(messages, "")
+	if len(conversion.customCallIDs) != 1 || !conversion.customCallIDs["call_custom"] {
+		t.Fatalf("expected only call_custom to be collected, got %#v", conversion.customCallIDs)
 	}
 
-	items, err := convertMessageToInput(messages[1], customCallIDs)
+	items, err := convertMessageToInput(messages[1], conversion)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestConvertMessageToInput_CustomToolCallResultUsesCustomOutput(t *testing.T
 		t.Fatalf("unexpected custom output: %#v", customOut)
 	}
 
-	items, err = convertMessageToInput(messages[2], customCallIDs)
+	items, err = convertMessageToInput(messages[2], conversion)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

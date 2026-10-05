@@ -244,7 +244,7 @@ func TestConvertMessageToInput_AssistantReasoningAndOutput(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg, nil)
+	inputs, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestConvertMessageToInput_ForeignToolCallOmitsResponsesItemID(t *testing.T)
 		},
 	}
 
-	items, err := convertMessageToInput(msg, nil)
+	items, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestConvertMessageToInput_NativeResponsesToolCallMissingItemIDReturnsError(
 		},
 	}
 
-	_, err := convertMessageToInput(msg, nil)
+	_, err := convertMessageToInput(msg, inputConversion{})
 	if err == nil {
 		t.Fatal("expected native Responses tool call without an item ID to fail")
 	}
@@ -387,7 +387,7 @@ func TestConvertMessageToInput_ChatCompletionsCustomToolCallReturnsError(t *test
 		},
 	}
 
-	if _, err := convertMessageToInput(msg, nil); err == nil {
+	if _, err := convertMessageToInput(msg, inputConversion{}); err == nil {
 		t.Fatal("expected Chat Completions custom tool replay to fail")
 	}
 }
@@ -410,7 +410,7 @@ func TestConvertMessageToInput_ReasoningPairedWithToolCall(t *testing.T) {
 			},
 		},
 	}
-	items, err := convertMessageToInput(msg, nil)
+	items, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestConvertMessageToInput_PreservesReasoningOrderAcrossToolCalls(t *testing
 		},
 	}
 
-	items, err := convertMessageToInput(msg, nil)
+	items, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestConvertMessageToInput_MultiMessageReasoningToolTextSequence(t *testing.
 
 	var sequence []ResponseInput
 	for i, msg := range messages {
-		items, err := convertMessageToInput(msg, nil)
+		items, err := convertMessageToInput(msg, inputConversion{})
 		if err != nil {
 			t.Fatalf("message %d conversion failed: %v", i+1, err)
 		}
@@ -596,7 +596,7 @@ func TestConvertMessageToInput_PhasePreservedRoundTrip(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg, nil)
+	inputs, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestConvertMessageToInput_CommentaryPhase(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg, nil)
+	inputs, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestConvertMessageToInput_NoPhaseOmitted(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg, nil)
+	inputs, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -701,7 +701,7 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 		},
 	}
 
-	inputs, err := convertMessageToInput(msg, nil)
+	inputs, err := convertMessageToInput(msg, inputConversion{})
 	if err != nil {
 		t.Fatalf("convertMessageToInput returned error: %v", err)
 	}
@@ -746,7 +746,7 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 		ToolCallID: "tool_call_err",
 		Content:    content.FromText("connection refused"),
 		IsError:    true,
-	}, nil)
+	}, inputConversion{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -766,7 +766,7 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 		ToolCallID: "tool_call_err2",
 		Content:    content.FromRawJSON(json.RawMessage(`{"error": "connection refused"}`)),
 		IsError:    true,
-	}, nil)
+	}, inputConversion{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -782,51 +782,116 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 	}
 }
 
-// The reasoning item's encrypted content is kept on the thought, next to the
-// ID the stream reported it under, so the history can replay it by value.
-func TestResponsesStream_ReasoningCapturesEncryptedContent(t *testing.T) {
+// The reasoning item's encrypted content reaches consumers that keep thoughts
+// from the stream, not only Message(): the item's last streamed piece carries
+// the content and its provenance before the thought is done.
+func TestResponsesAPI_ReasoningStreamsEncryptedContentWithProvenance(t *testing.T) {
 	sse := strings.Join([]string{
-		`data: {"type":"response.created"}`,
+		`data: {"type":"response.created","response":{"id":"resp_1"}}`,
 		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1","summary":[]},"output_index":0}`,
 		`data: {"type":"response.reasoning_summary_text.delta","delta":"Comparing.","item_id":"rs_1"}`,
+		`data: {"type":"response.reasoning_summary_text.done","text":"Comparing.","item_id":"rs_1"}`,
 		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]},"output_index":0}`,
 		`data: {"type":"response.completed"}`,
 		"",
 	}, "\n")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sse))
+	}))
+	defer ts.Close()
 
-	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
-	for range stream.Iter() {
+	stream := NewResponsesAPI("", "gpt-5").WithEndpoint(ts.URL, "Test").
+		Generate(context.Background(), content.FromText("sys"), []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	var statuses []llms.StreamStatus
+	var thoughts []content.Thought
+	for status := range stream.Iter() {
+		statuses = append(statuses, status)
+		if status == llms.StreamStatusThinking {
+			thoughts = append(thoughts, stream.Thought())
+		}
 	}
 	require.NoError(t, stream.Err())
 
+	assert.Equal(t, []llms.StreamStatus{
+		llms.StreamStatusThinking, llms.StreamStatusThinking, llms.StreamStatusThinkingDone,
+		llms.StreamStatusThinking, llms.StreamStatusThinkingDone,
+	}, statuses)
+	provenance := map[string]string{
+		"openai:reasoning_format":   "openai-responses-v1",
+		"openai:reasoning_endpoint": strings.TrimPrefix(ts.URL, "http://"),
+	}
+	assert.Equal(t, content.Thought{ID: "rs_1", Encrypted: "gAAAAenc", Metadata: provenance, Summary: true}, thoughts[len(thoughts)-1])
 	require.Len(t, stream.Message().Content, 1)
-	assert.Equal(t, &content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true}, stream.Message().Content[0])
+	assert.Equal(t, &content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Metadata: provenance, Summary: true}, stream.Message().Content[0])
 }
 
-// A thought with encrypted content replays it next to its ID, so OpenAI need
-// not look the item up in the organization that stored it. A thought recorded
-// before the content was requested has only its ID to replay by.
-func TestConvertMessageToInput_ReasoningReplaysEncryptedContent(t *testing.T) {
-	items, err := convertMessageToInput(llms.Message{
-		Role: "assistant",
-		ID:   "msg_1",
-		Content: content.Content{
-			&content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true},
-			&content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true},
-			&content.Thought{ID: "rs_legacy", Text: "Older.", Summary: true},
-			// Anthropic's redacted thinking carries no ID and is not replayed.
-			&content.Thought{Text: "(Redacted)", Encrypted: "anthropic-blob", Summary: true},
-			&content.Text{Text: "9.9"},
+// Encrypted content replays, next to the ID, only to the endpoint that
+// produced it; every other thought with an ID replays by ID alone.
+func TestConvertMessageToInput_ReasoningReplaysEncryptedContentToItsEndpoint(t *testing.T) {
+	fromOpenAI := map[string]string{"openai:reasoning_format": "openai-responses-v1", "openai:reasoning_endpoint": "api.openai.com"}
+	thought := func(id, encrypted string, metadata map[string]string) *content.Thought {
+		return &content.Thought{ID: id, Text: "Comparing.", Encrypted: encrypted, Metadata: metadata, Summary: true}
+	}
+	tests := []struct {
+		name     string
+		thought  *content.Thought
+		endpoint string
+		want     string
+	}{
+		{
+			name:     "same endpoint",
+			thought:  thought("rs_1", "gAAAAenc", fromOpenAI),
+			endpoint: "https://api.openai.com/v1/responses",
+			want:     `{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]}`,
 		},
-	}, nil)
+		{
+			name:     "same endpoint over WebSocket",
+			thought:  thought("rs_1", "gAAAAenc", fromOpenAI),
+			endpoint: "wss://api.openai.com/v1/responses",
+			want:     `{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]}`,
+		},
+		{
+			// xAI's reasoning IDs also start with rs_, so only the
+			// provenance tells the content apart.
+			name:     "OpenAI content to xAI",
+			thought:  thought("rs_1", "gAAAAenc", fromOpenAI),
+			endpoint: "https://api.x.ai/v1/responses",
+			want:     `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Comparing."}]}`,
+		},
+		{
+			name:     "content without provenance",
+			thought:  thought("rs_1", "gAAAAenc", nil),
+			endpoint: "https://api.openai.com/v1/responses",
+			want:     `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Comparing."}]}`,
+		},
+		{
+			name:     "recorded before content was requested",
+			thought:  thought("rs_legacy", "", nil),
+			endpoint: "https://api.openai.com/v1/responses",
+			want:     `{"type":"reasoning","id":"rs_legacy","summary":[{"type":"summary_text","text":"Comparing."}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := llms.Message{Role: "assistant", Content: content.Content{tt.thought}}
+			items, err := convertMessageToInput(msg, newInputConversion([]llms.Message{msg}, tt.endpoint))
+			require.NoError(t, err)
+			raw, err := json.Marshal(items)
+			require.NoError(t, err)
+			assert.JSONEq(t, `[`+tt.want+`]`, string(raw))
+		})
+	}
+}
+
+// Anthropic's redacted thinking carries content but no ID and is not
+// replayed to the Responses API.
+func TestConvertMessageToInput_SkipsThoughtWithoutID(t *testing.T) {
+	items, err := convertMessageToInput(llms.Message{Role: "assistant", Content: content.Content{
+		&content.Thought{Text: "(Redacted)", Encrypted: "anthropic-blob", Summary: true},
+	}}, newInputConversion(nil, "https://api.openai.com/v1/responses"))
 	require.NoError(t, err)
-	raw, err := json.Marshal(items)
-	require.NoError(t, err)
-	assert.JSONEq(t, `[
-		{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]},
-		{"type":"reasoning","id":"rs_legacy","summary":[{"type":"summary_text","text":"Older."}]},
-		{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"9.9"}]}
-	]`, string(raw))
+	assert.Empty(t, items)
 }
 
 func TestResponsesAPI_RequestsReasoningEncryptedContent(t *testing.T) {
@@ -844,4 +909,33 @@ func TestResponsesAPI_RequestsReasoningEncryptedContent(t *testing.T) {
 	}
 	require.NoError(t, stream.Err())
 	assert.Equal(t, []any{"reasoning.encrypted_content"}, body["include"])
+}
+
+// A Responses thought continued on Chat Completions (OpenRouter) carries its
+// format, which lets OpenRouter drop the content for an upstream that cannot
+// read it instead of failing the request.
+func TestChatCompletions_ReplaysResponsesReasoningFormat(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1","summary":[]},"output_index":0}`,
+		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[]},"output_index":0}`,
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	payload, err := NewChatCompletionsAPI("", "anthropic/claude-sonnet-4.5").
+		WithAssistantReasoningReplay().
+		BuildPayload(nil, []llms.Message{stream.Message()}, nil, nil)
+	require.NoError(t, err)
+	messages := payload["messages"].([]Message)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].ReasoningDetails, 1)
+	detail := messages[0].ReasoningDetails[0]
+	assert.Equal(t, "reasoning.encrypted", detail.Type)
+	assert.Equal(t, "gAAAAenc", detail.Data)
+	assert.Equal(t, "openai-responses-v1", detail.Format)
 }

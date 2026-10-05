@@ -815,3 +815,102 @@ func TestWebSocketStream_ChainedRequestOtherErrorIsNotResent(t *testing.T) {
 	assert.Equal(t, "invalid_encrypted_content", httpErr.ErrorCode)
 	assert.Len(t, requests, 2)
 }
+
+// The WebSocket stream records the same provenance as HTTP: the endpoint's
+// host, which is "api.openai.com" for both of OpenAI's endpoints.
+func TestWebSocketStream_ReasoningRecordsProvenance(t *testing.T) {
+	server := newTestWSServer(t, []string{
+		`{"type":"response.created","response":{"id":"resp_1"}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1","summary":[]}}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[]}}`,
+		`{"type":"response.completed","response":{}}`,
+	})
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	stream := provider.Generate(context.Background(), content.FromText("sys"), []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	var last content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			last = stream.Thought()
+		}
+	}
+	require.NoError(t, stream.Err())
+
+	want := content.Thought{ID: "rs_1", Encrypted: "gAAAAenc", Summary: true, Metadata: map[string]string{
+		"openai:reasoning_format":   "openai-responses-v1",
+		"openai:reasoning_endpoint": strings.TrimPrefix(server.URL, "http://"),
+	}}
+	assert.Equal(t, want, last)
+	assert.Equal(t, &want, stream.Message().Content[0])
+}
+
+// A turn chained to a warmup response is resent with the whole conversation
+// when the server no longer holds the warmup response.
+func TestWebSocketStream_WarmupChainNotFoundResendsFullConversation(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, "")
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	responseID, err := provider.Warmup(context.Background(), "sys", nil)
+	require.NoError(t, err)
+	require.Equal(t, "resp_1", responseID)
+
+	messages := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream := provider.Generate(context.Background(), content.FromText("sys"), messages, nil, nil)
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	require.Len(t, requests, 3)
+	<-requests
+	chained := <-requests
+	assert.Equal(t, "resp_1", chained["previous_response_id"])
+	full := <-requests
+	assert.NotContains(t, full, "previous_response_id")
+	assert.Len(t, full["input"], 1)
+	assert.Equal(t, "resp_3", provider.lastResponseID)
+}
+
+// A request rebuilt after a reconnect does not chain, so its stream has
+// nothing to resend.
+func TestWebSocketStream_ReconnectDoesNotChain(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, "")
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	turn1 := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream1 := provider.Generate(context.Background(), content.FromText("sys"), turn1, nil, nil)
+	for range stream1.Iter() {
+	}
+	require.NoError(t, stream1.Err())
+
+	// Break the connection under the provider so the chained write fails.
+	provider.conn.CloseNow()
+
+	turn2 := append(turn1,
+		llms.Message{Role: "assistant", Content: content.FromText("ok"), ID: "msg_1"},
+		llms.Message{Role: "user", Content: content.FromText("Thanks")},
+	)
+	stream2 := provider.Generate(context.Background(), content.FromText("sys"), turn2, nil, nil)
+	wsStream, ok := stream2.(*WebSocketStream)
+	require.True(t, ok)
+	assert.Nil(t, wsStream.resendUnchained)
+	for range stream2.Iter() {
+	}
+	require.NoError(t, stream2.Err())
+
+	require.Len(t, requests, 2)
+	<-requests
+	full := <-requests
+	assert.NotContains(t, full, "previous_response_id")
+	assert.Len(t, full["input"], 3)
+}

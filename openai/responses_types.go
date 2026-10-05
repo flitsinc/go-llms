@@ -797,8 +797,11 @@ type ResponseStreamEvent struct {
 	// error event
 	Error *StreamError `json:"error,omitempty"`
 	// Status is the HTTP status of a WebSocket error event: the status the
-	// request would have failed with over HTTP.
-	Status int `json:"status,omitempty"`
+	// request would have failed with over HTTP. No other documented event
+	// has a top-level "status" (response and item statuses, strings such as
+	// "completed", are nested under "response" and "item"); it stays raw so
+	// that one from a compatible endpoint cannot fail the whole event.
+	Status json.RawMessage `json:"status,omitempty"`
 
 	// usage event
 	Usage *responsesUsage `json:"usage,omitempty"`

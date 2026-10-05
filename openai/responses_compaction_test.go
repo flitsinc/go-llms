@@ -56,7 +56,7 @@ func TestConvertMessageToInput_ReplaysCompactionBeforeOutput(t *testing.T) {
 			&content.Compaction{Provider: "openai", ID: "cmp_1", Encrypted: "gAAAAenc"},
 			&content.Text{Text: "Hello"},
 		},
-	}, nil)
+	}, inputConversion{})
 	require.NoError(t, err)
 	raw, err := json.Marshal(items)
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestConvertMessageToInput_RejectsForeignCompaction(t *testing.T) {
 	_, err := convertMessageToInput(llms.Message{
 		Role:    "assistant",
 		Content: content.Content{&content.Compaction{Provider: "anthropic", Text: "Summary."}},
-	}, nil)
+	}, inputConversion{})
 	require.ErrorIs(t, err, content.ErrForeignCompaction)
 }
 

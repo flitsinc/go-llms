@@ -70,10 +70,15 @@ func streamChunkHTTPError(chunk *chatCompletionChunk) *llms.HTTPError {
 	return httpErr
 }
 
-// httpError converts a WebSocket error event, which reports a refused request
-// with the status it would have had over HTTP, into the HTTPError an HTTP
-// request returns, so callers classify both transports the same way.
-func (e *StreamError) httpError(statusCode int) *llms.HTTPError {
+// err converts an error event. A WebSocket error event reports a refused
+// request with the status it would have had over HTTP; it becomes the
+// HTTPError an HTTP request returns, so callers classify both transports the
+// same way. Without a status the event stays a plain error.
+func (e *StreamError) err(status json.RawMessage) error {
+	statusCode, _ := strconv.Atoi(rawJSONScalarString(status))
+	if statusCode == 0 {
+		return fmt.Errorf("stream error (%s): %s", e.Code, e.Message)
+	}
 	return &llms.HTTPError{
 		StatusCode: statusCode,
 		Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),

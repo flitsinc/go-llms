@@ -77,51 +77,46 @@ func isRequestTooLargeMessage(msg string) bool {
 		strings.Contains(msg, "maximum context length")
 }
 
-// IsCompactionRejected reports whether the provider refused a replayed native
-// context compaction checkpoint (a content.Compaction in the request history)
-// itself: OpenAI could not decrypt it, for example after a change of
-// organization, or Anthropic rejected the block. The checkpoint stays unusable
-// however often the request is repeated, so the caller should drop it and
-// send the history it summarized instead. The answer is only meaningful for a
-// request that replayed a checkpoint.
+// IsReplayRejected reports whether the provider refused provider-bound items
+// the request replayed from earlier responses: a native context compaction
+// checkpoint (content.Compaction), a reasoning item's encrypted content, or an
+// item it resolves by ID. Such items belong to the account that produced
+// them, so they stop working when the API key moves to another OpenAI
+// organization, and they stay unusable however often the request is
+// repeated. The caller should stop replaying them: drop the checkpoints and
+// thoughts and send the history they stood for. The answer is only meaningful
+// for a request that replayed such items.
+//
+// It matches:
+//   - OpenAI's "invalid_encrypted_content" code, for a checkpoint or reasoning
+//     content it cannot decrypt (directly or relayed by a gateway);
+//   - OpenAI's answer to a replayed item ID it cannot find: HTTP 404, an
+//     "invalid_request_error" pointing at the "input" parameter;
+//   - Anthropic's refusal of a compaction block (see compactionBlockRejected).
 //
 // It does not cover a rejected compaction setting, such as a model that does
 // not support the compaction strategy: dropping the checkpoint cannot fix
 // that request.
-//
-// OpenAI reports this with the structured "invalid_encrypted_content" code.
-// Anthropic (directly and through OpenRouter's Messages endpoint) returns a
-// plain invalid_request_error, so this is a compatibility adapter that falls
-// back to the error message, as IsRequestTooLarge does.
-func (e *HTTPError) IsCompactionRejected() bool {
+func (e *HTTPError) IsReplayRejected() bool {
 	if e.ErrorCode == "invalid_encrypted_content" || e.Metadata.RawErrorCode == "invalid_encrypted_content" {
 		return true
 	}
+	if e.StatusCode == 404 && e.ErrorType == "invalid_request_error" && e.Param == "input" {
+		return true
+	}
+	return e.compactionBlockRejected()
+}
+
+// compactionBlockRejected reports whether Anthropic (directly or through
+// OpenRouter's Messages endpoint) refused a replayed compaction block. It
+// returns a plain invalid_request_error, so this is a compatibility adapter
+// that falls back to the error message, as IsRequestTooLarge does.
+func (e *HTTPError) compactionBlockRejected() bool {
 	if e.StatusCode != 400 {
 		return false
 	}
 	return (e.ErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Message)) ||
 		(e.Metadata.RawErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Metadata.RawErrorMessage))
-}
-
-// IsReplayRejected reports whether the provider refused provider-bound items
-// the request replayed from an earlier response: a native compaction
-// checkpoint (see IsCompactionRejected), an encrypted reasoning blob, or an
-// item it resolves by ID. Such items belong to the account that produced them,
-// so they stop working when the API key moves to another OpenAI organization
-// and stay unusable however often the request is repeated. The caller should
-// stop replaying them and send the conversation without them. The answer is
-// only meaningful for a request that replayed such items.
-//
-// Besides everything IsCompactionRejected covers (including OpenAI's
-// "invalid_encrypted_content" for a reasoning blob it cannot decrypt), it
-// matches OpenAI's answer to a replayed item ID it cannot find: HTTP 404, an
-// "invalid_request_error" pointing at the "input" parameter.
-func (e *HTTPError) IsReplayRejected() bool {
-	if e.IsCompactionRejected() {
-		return true
-	}
-	return e.StatusCode == 404 && e.ErrorType == "invalid_request_error" && e.Param == "input"
 }
 
 // isCompactionBlockRejectedMessage matches Anthropic's messages that point at
