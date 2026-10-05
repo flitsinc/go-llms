@@ -781,3 +781,67 @@ func TestConvertMessageToInput_ToolErrorResult(t *testing.T) {
 		t.Fatalf("expected JSON error payload to pass through unchanged, got %q", out.Output)
 	}
 }
+
+// The reasoning item's encrypted content is kept on the thought, next to the
+// ID the stream reported it under, so the history can replay it by value.
+func TestResponsesStream_ReasoningCapturesEncryptedContent(t *testing.T) {
+	sse := strings.Join([]string{
+		`data: {"type":"response.created"}`,
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1","summary":[]},"output_index":0}`,
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"Comparing.","item_id":"rs_1"}`,
+		`data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]},"output_index":0}`,
+		`data: {"type":"response.completed"}`,
+		"",
+	}, "\n")
+
+	stream := &ResponsesStream{ctx: context.Background(), model: "gpt-5", stream: strings.NewReader(sse)}
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	require.Len(t, stream.Message().Content, 1)
+	assert.Equal(t, &content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true}, stream.Message().Content[0])
+}
+
+// A thought with encrypted content replays it next to its ID, so OpenAI need
+// not look the item up in the organization that stored it. A thought recorded
+// before the content was requested has only its ID to replay by.
+func TestConvertMessageToInput_ReasoningReplaysEncryptedContent(t *testing.T) {
+	items, err := convertMessageToInput(llms.Message{
+		Role: "assistant",
+		ID:   "msg_1",
+		Content: content.Content{
+			&content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true},
+			&content.Thought{ID: "rs_1", Text: "Comparing.", Encrypted: "gAAAAenc", Summary: true},
+			&content.Thought{ID: "rs_legacy", Text: "Older.", Summary: true},
+			// Anthropic's redacted thinking carries no ID and is not replayed.
+			&content.Thought{Text: "(Redacted)", Encrypted: "anthropic-blob", Summary: true},
+			&content.Text{Text: "9.9"},
+		},
+	}, nil)
+	require.NoError(t, err)
+	raw, err := json.Marshal(items)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[{"type":"summary_text","text":"Comparing."}]},
+		{"type":"reasoning","id":"rs_legacy","summary":[{"type":"summary_text","text":"Older."}]},
+		{"type":"message","id":"msg_1","role":"assistant","content":[{"type":"output_text","text":"9.9"}]}
+	]`, string(raw))
+}
+
+func TestResponsesAPI_RequestsReasoningEncryptedContent(t *testing.T) {
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	stream := NewResponsesAPI("", "gpt-5").WithEndpoint(ts.URL, "Test").
+		Generate(context.Background(), content.FromText("sys"), []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+	assert.Equal(t, []any{"reasoning.encrypted_content"}, body["include"])
+}

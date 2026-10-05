@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/coder/websocket"
@@ -17,6 +18,11 @@ type WebSocketStream struct {
 	ctx                     context.Context
 	conn                    *websocket.Conn
 	onDone                  func(responseID string)
+	// resendUnchained sends the whole conversation without
+	// previous_response_id. It is set when the request chained to an earlier
+	// response and is used at most once, when the server no longer holds
+	// that response.
+	resendUnchained func() error
 }
 
 var (
@@ -109,6 +115,9 @@ func (s *WebSocketStream) Iter() func(yield func(llms.StreamStatus) bool) {
 			}
 
 			if s.processEvent(event, data, yield) {
+				if s.retryUnchained() {
+					continue
+				}
 				if s.onDone != nil && s.err == nil {
 					s.onDone(s.responseID)
 				}
@@ -116,4 +125,26 @@ func (s *WebSocketStream) Iter() func(yield func(llms.StreamStatus) bool) {
 			}
 		}
 	}
+}
+
+// retryUnchained resends the request without previous_response_id when the
+// server refused it because it no longer holds the chained response, and
+// reports whether the stream continues with the resent request. The refusal
+// arrives before the response is created, so nothing has been yielded yet.
+func (s *WebSocketStream) retryUnchained() bool {
+	if s.resendUnchained == nil || s.responseID != "" {
+		return false
+	}
+	var httpErr *llms.HTTPError
+	if !errors.As(s.err, &httpErr) || httpErr.ErrorCode != "previous_response_not_found" {
+		return false
+	}
+	resend := s.resendUnchained
+	s.resendUnchained = nil
+	if err := resend(); err != nil {
+		s.err = err
+		return false
+	}
+	s.err = nil
+	return true
 }

@@ -76,6 +76,12 @@ func (c *responsesConfig) buildResponsesPayload(
 		}
 	}
 
+	// Ask for each reasoning item's encrypted content so the history can
+	// replay reasoning with it. A reasoning item replayed by ID alone only
+	// resolves in the organization that stored it, so that history breaks
+	// when the API key moves to another organization.
+	payload["include"] = []string{"reasoning.encrypted_content"}
+
 	// Set up .text related settings.
 	text := map[string]any{}
 

@@ -131,3 +131,34 @@ func TestParseHTTPError_EnvelopeTypeWins(t *testing.T) {
 
 	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
 }
+
+// Verbatim body OpenAI returned (2026-10-05) for a reasoning item replayed by
+// an ID the key's organization does not hold.
+func TestParseHTTPError_ParamAndReplayRejected(t *testing.T) {
+	body := `{"error":{"message":"Item with id 'rs_0645db6af0c67af0006ac3bacda14887d1b16c5fea754e94ff' not found.","type":"invalid_request_error","param":"input","code":null}}`
+	resp := &http.Response{StatusCode: 404, Status: "404 Not Found"}
+
+	httpErr, ok := parseHTTPError(resp, []byte(body))
+	if !ok {
+		t.Fatal("expected the error body to parse")
+	}
+
+	assert.Equal(t, "input", httpErr.Param)
+	assert.Equal(t, "", httpErr.ErrorCode)
+	assert.True(t, httpErr.IsReplayRejected())
+}
+
+// A null param, as OpenAI sends for an undecryptable blob, parses as empty.
+func TestParseHTTPError_NullParam(t *testing.T) {
+	body := `{"error":{"message":"The encrypted content gAAA...xxxx could not be verified. Reason: Encrypted content could not be decrypted or parsed.","type":"invalid_request_error","param":null,"code":"invalid_encrypted_content"}}`
+	resp := &http.Response{StatusCode: 400, Status: "400 Bad Request"}
+
+	httpErr, ok := parseHTTPError(resp, []byte(body))
+	if !ok {
+		t.Fatal("expected the error body to parse")
+	}
+
+	assert.Equal(t, "", httpErr.Param)
+	assert.Equal(t, "invalid_encrypted_content", httpErr.ErrorCode)
+	assert.True(t, httpErr.IsReplayRejected())
+}

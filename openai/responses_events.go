@@ -469,6 +469,7 @@ func (p *responsesEventProcessor) processEvent(
 					if summaryBuilder.Len() > 0 {
 						thought.Text = summaryBuilder.String()
 					}
+					thought.Encrypted = reasoningItem.EncryptedContent
 					if p.lastThought != nil {
 						p.lastThought = nil
 						if !yield(llms.StreamStatusThinkingDone) {
@@ -559,7 +560,9 @@ func (p *responsesEventProcessor) processEvent(
 		return true
 
 	case "error":
-		if event.Error != nil {
+		if event.Error != nil && event.Status != 0 {
+			p.err = event.Error.httpError(event.Status)
+		} else if event.Error != nil {
 			p.err = fmt.Errorf("stream error (%s): %s", event.Error.Code, event.Error.Message)
 		}
 		return true

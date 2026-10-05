@@ -608,6 +608,10 @@ Everywhere else the schema goes out as written, including Chat Completions funct
 
 Anthropic’s structured outputs reject `maxItems` and any `minItems` other than 0 or 1, so the `anthropic` package drops `maxItems` from a JSON output schema and lowers a larger `minItems` to 1. Tool schemas go out with their limits, which Claude reads as hints. Other providers receive the limits as written but enforce them unevenly, so also state a limit in the field description or the prompt: schema enforcement is a backstop, not a replacement.
 
+#### OpenAI reasoning belongs to an organization
+
+OpenAI resolves a reasoning item replayed by ID alone only in the organization that stored it, so that history fails once the API key belongs to another organization. The Responses API provider therefore asks for each reasoning item’s encrypted content, keeps it on the `content.Thought` (`Encrypted`, next to the item’s `ID`) and replays it with the item. A thought recorded before this content was requested has only its ID and can still fail this way, as can encrypted content OpenAI can no longer verify; `(*llms.HTTPError).IsReplayRejected()` reports both, and the caller should then send the conversation without the replayed reasoning and compaction checkpoints. The WebSocket provider resends the whole conversation once, without `previous_response_id`, when the server no longer holds the response it chained to.
+
 #### Anthropic doesn’t stream partial property values by default
 
 The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.

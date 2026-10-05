@@ -263,3 +263,91 @@ func TestIsCompactionRejected(t *testing.T) {
 		})
 	}
 }
+
+// The shapes are the ones OpenAI returned live (2026-10-05).
+func TestIsReplayRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		err  HTTPError
+		want bool
+	}{
+		{
+			name: "OpenAI cannot find a replayed reasoning item",
+			err: HTTPError{
+				StatusCode: 404,
+				ErrorType:  "invalid_request_error",
+				Param:      "input",
+				Message:    "Item with id 'rs_0000000000000000' not found.",
+			},
+			want: true,
+		},
+		{
+			name: "OpenAI cannot decrypt a replayed reasoning blob",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "invalid_encrypted_content",
+				ErrorType:  "invalid_request_error",
+				Message:    "The encrypted content gAAA...xxxx could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic rejected a compaction block",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.1.content.0.compaction.content: content cannot be empty",
+			},
+			want: true,
+		},
+		{
+			// Chaining is the WebSocket provider's concern, not a replayed item.
+			name: "previous response not found",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "previous_response_not_found",
+				ErrorType:  "invalid_request_error",
+				Param:      "previous_response_id",
+				Message:    "Previous response with id 'resp_0000000000000000' not found.",
+			},
+			want: false,
+		},
+		{
+			name: "404 pointing at another parameter",
+			err: HTTPError{
+				StatusCode: 404,
+				ErrorType:  "invalid_request_error",
+				Param:      "model",
+				Message:    "The model 'gpt-0' does not exist or you do not have access to it.",
+			},
+			want: false,
+		},
+		{
+			name: "invalid input that is not a missing item",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "invalid_value",
+				ErrorType:  "invalid_request_error",
+				Param:      "input",
+				Message:    "Invalid value: 'foo'.",
+			},
+			want: false,
+		},
+		{
+			name: "404 without a parameter",
+			err: HTTPError{
+				StatusCode: 404,
+				ErrorType:  "invalid_request_error",
+				Message:    "Not found.",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.IsReplayRejected(); got != tt.want {
+				t.Errorf("IsReplayRejected() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

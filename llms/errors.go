@@ -18,6 +18,7 @@ type HTTPError struct {
 	Status     string            // Full status text (e.g., "429 Too Many Requests")
 	ErrorCode  string            // Provider-specific error code from the response body
 	ErrorType  string            // Provider-specific error type (e.g., "rate_limit_error")
+	Param      string            // Request parameter the error points at, when the provider names one (e.g., "input")
 	Message    string            // Human-readable error message
 	Metadata   HTTPErrorMetadata // Optional upstream-provider diagnostics
 }
@@ -101,6 +102,26 @@ func (e *HTTPError) IsCompactionRejected() bool {
 	}
 	return (e.ErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Message)) ||
 		(e.Metadata.RawErrorType == "invalid_request_error" && isCompactionBlockRejectedMessage(e.Metadata.RawErrorMessage))
+}
+
+// IsReplayRejected reports whether the provider refused provider-bound items
+// the request replayed from an earlier response: a native compaction
+// checkpoint (see IsCompactionRejected), an encrypted reasoning blob, or an
+// item it resolves by ID. Such items belong to the account that produced them,
+// so they stop working when the API key moves to another OpenAI organization
+// and stay unusable however often the request is repeated. The caller should
+// stop replaying them and send the conversation without them. The answer is
+// only meaningful for a request that replayed such items.
+//
+// Besides everything IsCompactionRejected covers (including OpenAI's
+// "invalid_encrypted_content" for a reasoning blob it cannot decrypt), it
+// matches OpenAI's answer to a replayed item ID it cannot find: HTTP 404, an
+// "invalid_request_error" pointing at the "input" parameter.
+func (e *HTTPError) IsReplayRejected() bool {
+	if e.IsCompactionRejected() {
+		return true
+	}
+	return e.StatusCode == 404 && e.ErrorType == "invalid_request_error" && e.Param == "input"
 }
 
 // isCompactionBlockRejectedMessage matches Anthropic's messages that point at

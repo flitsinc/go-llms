@@ -796,6 +796,9 @@ type ResponseStreamEvent struct {
 
 	// error event
 	Error *StreamError `json:"error,omitempty"`
+	// Status is the HTTP status of a WebSocket error event: the status the
+	// request would have failed with over HTTP.
+	Status int `json:"status,omitempty"`
 
 	// usage event
 	Usage *responsesUsage `json:"usage,omitempty"`
@@ -809,4 +812,6 @@ type ResponseStreamEvent struct {
 type StreamError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	Param   string `json:"param,omitempty"`
 }

@@ -470,7 +470,17 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 					continue
 				}
 				flushOutput()
-				reasoning := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
+				// The encrypted content carries the reasoning itself, so OpenAI
+				// need not find the item in the organization that stored it.
+				// The ID still goes along: OpenAI checks it against the
+				// content, and refuses a stored message replayed by ID without
+				// the reasoning item that preceded it. A thought recorded
+				// before the content was requested has only its ID, which
+				// resolves only in the storing organization. A thought without
+				// an ID did not come from the Responses API (Anthropic's
+				// redacted thinking also carries Encrypted) and is skipped
+				// above.
+				reasoning := Reasoning{Type: "reasoning", ID: v.ID, EncryptedContent: v.Encrypted, Summary: []ReasoningSummary{}}
 				if v.Text != "" {
 					reasoning.Summary = append(reasoning.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
 				}

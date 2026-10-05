@@ -14,6 +14,7 @@ type openAIError struct {
 	Code     json.RawMessage     `json:"code"`
 	Message  string              `json:"message"`
 	Type     string              `json:"type"`
+	Param    json.RawMessage     `json:"param"`
 	Metadata openAIErrorMetadata `json:"metadata"`
 }
 
@@ -48,6 +49,7 @@ func (e openAIError) httpError(statusCode int, status string) *llms.HTTPError {
 		Status:     status,
 		ErrorCode:  rawJSONScalarString(e.Code),
 		ErrorType:  errType,
+		Param:      rawJSONScalarString(e.Param),
 		Message:    e.Message,
 		Metadata:   metadata,
 	}
@@ -66,6 +68,20 @@ func streamChunkHTTPError(chunk *chatCompletionChunk) *llms.HTTPError {
 		httpErr.Metadata.ProviderName = chunk.Provider
 	}
 	return httpErr
+}
+
+// httpError converts a WebSocket error event, which reports a refused request
+// with the status it would have had over HTTP, into the HTTPError an HTTP
+// request returns, so callers classify both transports the same way.
+func (e *StreamError) httpError(statusCode int) *llms.HTTPError {
+	return &llms.HTTPError{
+		StatusCode: statusCode,
+		Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),
+		ErrorCode:  e.Code,
+		ErrorType:  e.Type,
+		Param:      e.Param,
+		Message:    e.Message,
+	}
 }
 
 func parseHTTPError(resp *http.Response, bodyBytes []byte) (*llms.HTTPError, bool) {
