@@ -33,6 +33,13 @@ type ValueSchema struct {
 	Description string `json:"description,omitempty"`
 	// Items defines the schema for elements within an array. Only used when Type is "array".
 	Items *ValueSchema `json:"items,omitempty"`
+	// MinItems is the fewest elements an array may hold. Only used when Type
+	// is "array". A pointer, so an explicit 0 is encoded rather than omitted.
+	MinItems *int `json:"minItems,omitempty"`
+	// MaxItems is the most elements an array may hold. Only used when Type is
+	// "array". Providers that decode against the schema stop the array here;
+	// adapters remove it for providers that reject it.
+	MaxItems *int `json:"maxItems,omitempty"`
 	// Properties defines the schema for properties within an object. Only used when Type is "object".
 	// Note: We use an ordered map to preserve insertion order from callers (e.g., TS clients).
 	Properties *jsonmap.Map `json:"properties,omitempty"`
@@ -329,6 +336,12 @@ func validateField(fieldSchema ValueSchema, data any) error {
 		}
 		if fieldSchema.Items == nil {
 			return errors.New("schema error: missing item schema for array")
+		}
+		if fieldSchema.MinItems != nil && len(items) < *fieldSchema.MinItems {
+			return fmt.Errorf("array has %d items, fewer than the minimum of %d", len(items), *fieldSchema.MinItems)
+		}
+		if fieldSchema.MaxItems != nil && len(items) > *fieldSchema.MaxItems {
+			return fmt.Errorf("array has %d items, more than the maximum of %d", len(items), *fieldSchema.MaxItems)
 		}
 		itemSchema := *fieldSchema.Items
 		for _, item := range items {

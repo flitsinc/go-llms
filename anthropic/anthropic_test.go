@@ -856,6 +856,59 @@ func TestAnthropic_ToolChoice_Mapping(t *testing.T) {
 	})
 }
 
+// The request relaxes array limits in the output schema only: a tool's input
+// schema is not strict, Anthropic accepts the limits there, and the model reads
+// them as guidance, so it goes out as declared.
+func TestAnthropic_ArrayLimitsInPayload(t *testing.T) {
+	const declared = `{
+		"type": "object",
+		"properties": {"fruits": {"type": "array", "minItems": 5, "maxItems": 8, "items": {"type": "string"}}},
+		"required": ["fruits"],
+		"additionalProperties": false
+	}`
+	var parameters tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(declared), &parameters))
+	toolSchema := tools.FunctionSchema{Name: "save_fruits", Description: "Save fruits", Parameters: parameters}
+	tb := tools.Box(tools.External("Save fruits", &toolSchema, func(r tools.Runner, params json.RawMessage) tools.Result {
+		return tools.SuccessFromString("ok")
+	}))
+	var output tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(declared), &output))
+
+	payloadCh := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		payloadCh <- m
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	m := New("key", "claude-haiku-4-5").WithEndpoint(ts.URL, "Test")
+	stream := m.Generate(context.Background(), nil, nil, tb, &output)
+	require.NoError(t, stream.Err())
+	payload := <-payloadCh
+
+	toolsArr := payload["tools"].([]any)
+	require.Len(t, toolsArr, 1)
+	inputSchema, err := json.Marshal(toolsArr[0].(map[string]any)["input_schema"])
+	require.NoError(t, err)
+	assert.JSONEq(t, declared, string(inputSchema))
+
+	format := payload["output_config"].(map[string]any)["format"].(map[string]any)
+	outputSchema, err := json.Marshal(format["schema"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "object",
+		"properties": {"fruits": {"type": "array", "minItems": 1, "items": {"type": "string"}}},
+		"required": ["fruits"],
+		"additionalProperties": false
+	}`, string(outputSchema))
+}
+
 func TestGenerate_UnsupportedContentReturnsStreamError(t *testing.T) {
 	m := New("key", "claude-3-sonnet")
 

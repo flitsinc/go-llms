@@ -439,3 +439,92 @@ func TestChatCompletionsPayloadWithStrictToolsPadsFunctionTools(t *testing.T) {
 	assert.JSONEq(t, optionalFieldSchemaPadded, schemaJSON(t, function["parameters"]))
 	assert.Equal(t, map[string]any{"type": "custom", "name": "note", "description": "Write a note", "format": map[string]any{"type": "text"}}, toolsArr[1])
 }
+
+const arrayLimitsSchema = `{
+	"type": "object",
+	"properties": {
+		"fruits": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
+		"notes": {"type": "array", "maxItems": 2, "items": {"type": "string"}}
+	},
+	"required": ["fruits"],
+	"additionalProperties": false
+}`
+
+const arrayLimitsSchemaPadded = `{
+	"type": "object",
+	"properties": {
+		"fruits": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
+		"notes": {"anyOf": [{"type": "array", "maxItems": 2, "items": {"type": "string"}}, {"type": "null"}]}
+	},
+	"required": ["fruits", "notes"],
+	"additionalProperties": false
+}`
+
+// OpenAI strict mode enforces array length limits while decoding, so padding
+// keeps them: on a required array as written, and on an optional one inside
+// the anyOf that lets the model send null instead.
+func TestStrictSchemaKeepsArrayLimits(t *testing.T) {
+	assert.JSONEq(t, arrayLimitsSchemaPadded, strictSchemaJSON(t, arrayLimitsSchema))
+
+	// Limits on the typed levels (an array root and its items) are kept too.
+	minItems, maxItems := 0, 4
+	root := tools.ValueSchema{
+		Type:     "array",
+		MinItems: &minItems,
+		MaxItems: &maxItems,
+		Items:    &tools.ValueSchema{Type: "array", MaxItems: &maxItems, Items: &tools.ValueSchema{Type: "string"}},
+	}
+	format := TextResponseFormat{Type: "json_schema", Name: "structured_output", Schema: &root, Strict: true}
+	encoded := payloadField(t, format).(map[string]any)
+	assert.JSONEq(t, `{
+		"type": "array",
+		"minItems": 0,
+		"maxItems": 4,
+		"items": {"type": "array", "maxItems": 4, "items": {"type": "string"}}
+	}`, schemaJSON(t, encoded["schema"]))
+}
+
+// Every OpenAI-compatible payload sends array limits: strict tools and JSON
+// output padded with the limits kept, and non-strict Chat Completions tools
+// (the path Claude takes through OpenRouter) as declared.
+func TestPayloadsSendArrayLimits(t *testing.T) {
+	limitsToolbox := func(t *testing.T) *tools.Toolbox {
+		schema := tools.FunctionSchema{Name: "save_fruits", Description: "Save fruits", Parameters: decodeValueSchema(t, arrayLimitsSchema)}
+		return tools.Box(tools.External("Save fruits", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		}))
+	}
+
+	t.Run("Responses", func(t *testing.T) {
+		output := decodeValueSchema(t, arrayLimitsSchema)
+		payload, err := NewResponsesAPI("", "gpt-5.4-mini").buildResponsesPayload(nil, "", limitsToolbox(t), &output)
+		require.NoError(t, err)
+
+		tool := payloadField(t, payload["tools"]).([]any)[0].(map[string]any)
+		assert.Equal(t, true, tool["strict"])
+		assert.JSONEq(t, arrayLimitsSchemaPadded, schemaJSON(t, tool["parameters"]))
+		format := payloadField(t, payload["text"]).(map[string]any)["format"].(map[string]any)
+		assert.JSONEq(t, arrayLimitsSchemaPadded, schemaJSON(t, format["schema"]))
+	})
+
+	t.Run("Chat Completions", func(t *testing.T) {
+		output := decodeValueSchema(t, arrayLimitsSchema)
+		payload, err := NewChatCompletionsAPI("", "anthropic/claude-haiku-4-5").BuildPayload(nil, nil, limitsToolbox(t), &output)
+		require.NoError(t, err)
+
+		function := payloadField(t, payload["tools"]).([]any)[0].(map[string]any)["function"].(map[string]any)
+		assert.NotContains(t, function, "strict")
+		assert.JSONEq(t, arrayLimitsSchema, schemaJSON(t, function["parameters"]))
+		jsonSchema := payloadField(t, payload["response_format"]).(map[string]any)["json_schema"].(map[string]any)
+		assert.JSONEq(t, arrayLimitsSchemaPadded, schemaJSON(t, jsonSchema["schema"]))
+	})
+
+	t.Run("Chat Completions with strict tools", func(t *testing.T) {
+		payload, err := NewChatCompletionsAPI("", "openai/gpt-6-luna").WithStrictTools().BuildPayload(nil, nil, limitsToolbox(t), nil)
+		require.NoError(t, err)
+
+		function := payloadField(t, payload["tools"]).([]any)[0].(map[string]any)["function"].(map[string]any)
+		assert.Equal(t, true, function["strict"])
+		assert.JSONEq(t, arrayLimitsSchemaPadded, schemaJSON(t, function["parameters"]))
+	})
+}

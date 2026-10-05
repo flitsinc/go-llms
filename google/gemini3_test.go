@@ -2528,3 +2528,72 @@ func TestSanitizeSchemaForGemini_PreservesEnums(t *testing.T) {
 		t.Errorf("nested kind enum = %v, want [a b]", kindSchema["enum"])
 	}
 }
+
+// Gemini enforces array length limits in a responseSchema, and Vertex accepts
+// them in function declarations (enforced with mode ANY, guidance with AUTO),
+// so both go out with the limits. The declaration's sanitizing round trip
+// through tools.ValueSchema keeps them at every level it rebuilds.
+func TestGeminiPayloadKeepsArrayLimits(t *testing.T) {
+	const declared = `{
+		"type": "object",
+		"properties": {
+			"fruits": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
+			"grid": {"type": "array", "maxItems": 2, "items": {"type": "array", "minItems": 0, "maxItems": 4, "items": {"type": "integer"}}},
+			"ids": {"anyOf": [{"type": "string"}, {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "string"}}]}
+		},
+		"required": ["fruits"]
+	}`
+	decode := func() tools.ValueSchema {
+		var schema tools.ValueSchema
+		if err := json.Unmarshal([]byte(declared), &schema); err != nil {
+			t.Fatal(err)
+		}
+		return schema
+	}
+	var want any
+	if err := json.Unmarshal([]byte(declared), &want); err != nil {
+		t.Fatal(err)
+	}
+
+	payloadCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		json.NewDecoder(r.Body).Decode(&payload)
+		payloadCh <- payload
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}` + "\n"))
+	}))
+	defer server.Close()
+
+	schema := tools.FunctionSchema{Name: "save_fruits", Description: "Save fruits", Parameters: decode()}
+	tb := tools.Box(tools.External("Save fruits", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
+		return tools.SuccessFromString("ok")
+	}))
+	output := decode()
+
+	model := New("gemini-3-flash").WithGeminiAPI("fake-key")
+	model.endpoint = server.URL
+	stream := model.Generate(context.Background(), nil, []llms.Message{
+		{Role: "user", Content: content.FromText("test")},
+	}, tb, &output)
+	if err := stream.Err(); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	payload := <-payloadCh
+
+	declarations := payload["tools"].(map[string]any)["functionDeclarations"].([]any)
+	parameters := declarations[0].(map[string]any)["parameters"]
+	if !reflect.DeepEqual(parameters, want) {
+		got, _ := json.Marshal(parameters)
+		t.Errorf("function declaration parameters = %s, want %s", got, declared)
+	}
+
+	responseSchema := payload["generationConfig"].(map[string]any)["responseSchema"]
+	if !reflect.DeepEqual(responseSchema, want) {
+		got, _ := json.Marshal(responseSchema)
+		t.Errorf("responseSchema = %s, want %s", got, declared)
+	}
+}

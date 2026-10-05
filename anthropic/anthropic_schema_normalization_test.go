@@ -233,3 +233,64 @@ func TestNormalizeOutputSchemaForAnthropic_ErrorsOnCyclicSchema(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to marshal schema")
 }
+
+// Anthropic structured outputs answer a maxItems, or a minItems above 1, with
+// a 400, so the output schema drops maxItems and lowers minItems to 1 at every
+// level: typed fields on the root, items and anyOf, and raw keywords inside
+// properties. A minItems of 0 or 1 is sent as written.
+func TestNormalizeOutputSchemaForAnthropic_RelaxesArrayLimits(t *testing.T) {
+	var schema tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"type": "object",
+		"properties": {
+			"tags": {"type": "array", "minItems": 5, "maxItems": 8, "items": {"type": "string"}},
+			"steps": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"}},
+			"notes": {"type": "array", "minItems": 0, "items": {"type": "string"}},
+			"ids": {"anyOf": [
+				{"type": "string"},
+				{"type": "array", "minItems": 2, "maxItems": 100, "items": {"type": "string"}}
+			]},
+			"grid": {"type": ["array", "null"], "items": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "integer"}}},
+			"maxItems": {"type": "integer", "description": "A property named like the keyword is kept."}
+		},
+		"required": ["tags"]
+	}`), &schema))
+	minItems, maxItems := 2, 4
+	root := tools.ValueSchema{
+		Type:     "array",
+		MinItems: &minItems,
+		MaxItems: &maxItems,
+		Items:    &schema,
+	}
+
+	normalized, err := json.Marshal(mustNormalizeOutputSchemaForAnthropic(t, &root))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"type": "array",
+		"minItems": 1,
+		"items": {
+			"type": "object",
+			"properties": {
+				"tags": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+				"steps": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+				"notes": {"type": "array", "minItems": 0, "items": {"type": "string"}},
+				"ids": {"anyOf": [
+					{"type": "string"},
+					{"type": "array", "minItems": 1, "items": {"type": "string"}}
+				]},
+				"grid": {"type": ["array", "null"], "items": {"type": "array", "minItems": 1, "items": {"type": "integer"}}},
+				"maxItems": {"type": "integer", "description": "A property named like the keyword is kept."}
+			},
+			"required": ["tags"],
+			"additionalProperties": false
+		}
+	}`, string(normalized))
+
+	// The caller's schema, which a toolbox may share across providers, keeps
+	// its limits.
+	assert.Equal(t, 2, *root.MinItems)
+	assert.Equal(t, 4, *root.MaxItems)
+	original, err := json.Marshal(schema)
+	require.NoError(t, err)
+	assert.Contains(t, string(original), `"tags":{"type":"array","minItems":5,"maxItems":8`)
+}
