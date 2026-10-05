@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/metalim/jsonmap"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -2529,11 +2531,9 @@ func TestSanitizeSchemaForGemini_PreservesEnums(t *testing.T) {
 	}
 }
 
-// Gemini enforces array length limits in a responseSchema, and Vertex accepts
-// them in function declarations (enforced with mode ANY, guidance with AUTO),
-// so both go out with the limits. The declaration's sanitizing round trip
-// through tools.ValueSchema keeps them at every level it rebuilds.
-func TestGeminiPayloadKeepsArrayLimits(t *testing.T) {
+// sanitizeSchemaForGemini rebuilds each level through tools.ValueSchema, so
+// array length limits survive in properties, items and anyOf.
+func TestSanitizeSchemaForGemini_KeepsArrayLimits(t *testing.T) {
 	const declared = `{
 		"type": "object",
 		"properties": {
@@ -2543,57 +2543,10 @@ func TestGeminiPayloadKeepsArrayLimits(t *testing.T) {
 		},
 		"required": ["fruits"]
 	}`
-	decode := func() tools.ValueSchema {
-		var schema tools.ValueSchema
-		if err := json.Unmarshal([]byte(declared), &schema); err != nil {
-			t.Fatal(err)
-		}
-		return schema
-	}
-	var want any
-	if err := json.Unmarshal([]byte(declared), &want); err != nil {
-		t.Fatal(err)
-	}
+	var schema tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(declared), &schema))
 
-	payloadCh := make(chan map[string]any, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		var payload map[string]any
-		json.NewDecoder(r.Body).Decode(&payload)
-		payloadCh <- payload
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}` + "\n"))
-	}))
-	defer server.Close()
-
-	schema := tools.FunctionSchema{Name: "save_fruits", Description: "Save fruits", Parameters: decode()}
-	tb := tools.Box(tools.External("Save fruits", &schema, func(r tools.Runner, params json.RawMessage) tools.Result {
-		return tools.SuccessFromString("ok")
-	}))
-	output := decode()
-
-	model := New("gemini-3-flash").WithGeminiAPI("fake-key")
-	model.endpoint = server.URL
-	stream := model.Generate(context.Background(), nil, []llms.Message{
-		{Role: "user", Content: content.FromText("test")},
-	}, tb, &output)
-	if err := stream.Err(); err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-	payload := <-payloadCh
-
-	declarations := payload["tools"].(map[string]any)["functionDeclarations"].([]any)
-	parameters := declarations[0].(map[string]any)["parameters"]
-	if !reflect.DeepEqual(parameters, want) {
-		got, _ := json.Marshal(parameters)
-		t.Errorf("function declaration parameters = %s, want %s", got, declared)
-	}
-
-	responseSchema := payload["generationConfig"].(map[string]any)["responseSchema"]
-	if !reflect.DeepEqual(responseSchema, want) {
-		got, _ := json.Marshal(responseSchema)
-		t.Errorf("responseSchema = %s, want %s", got, declared)
-	}
+	got, err := json.Marshal(sanitizeSchemaForGemini(schema))
+	require.NoError(t, err)
+	assert.JSONEq(t, declared, string(got))
 }

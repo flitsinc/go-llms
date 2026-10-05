@@ -604,6 +604,10 @@ OpenAI’s strict mode (Responses API function tools, and JSON outputs on both O
 
 Everywhere else the schema goes out as written, including Chat Completions function tools, which are not sent strict unless you call `WithStrictTools()`. Do call it for Chat Completions endpoints that serve OpenAI models (including OpenRouter’s `openai/*` models): OpenAI treats function tools as strict even without the flag, so an unpadded schema makes the model invent a value for every optional field. Don’t pad schemas yourself for other providers: forced to fill an optional field it wants to leave out, Claude sometimes writes an empty value, which Anthropic streams as invalid argument JSON (`"field": ,`).
 
+#### Array length limits under Anthropic structured outputs
+
+Anthropic’s structured outputs reject `maxItems` and any `minItems` other than 0 or 1, so the `anthropic` package drops `maxItems` from a JSON output schema and lowers a larger `minItems` to 1. Tool schemas go out with their limits, which Claude reads as hints. Other providers receive the limits as written but enforce them unevenly, so also state a limit in the field description or the prompt: schema enforcement is a backstop, not a replacement.
+
 #### Anthropic doesn’t stream partial property values by default
 
 The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.

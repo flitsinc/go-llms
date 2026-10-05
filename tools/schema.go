@@ -26,6 +26,13 @@ type FunctionSchema struct {
 // ValueSchema represents a schema for a value within the function's parameters.
 // It corresponds to a subset of the JSON Schema specification, defining the type
 // and constraints of a parameter field or the parameter object itself.
+//
+// Decoding into ValueSchema drops every keyword without a field here at each
+// typed level (the root, Items, AnyOf), and Gemini's function-declaration
+// sanitizer also decodes property schemas through it. A new field therefore
+// reaches every provider, so check each adapter's schema policy (Anthropic's
+// output normalization, OpenAI strict padding, Gemini's sanitizer) and strip
+// or rewrite the keyword where a provider rejects it.
 type ValueSchema struct {
 	// Type specifies the data type of the value (e.g., "string", "integer", "object", "array", "boolean", "number").
 	Type string `json:"type,omitempty"`
@@ -34,11 +41,15 @@ type ValueSchema struct {
 	// Items defines the schema for elements within an array. Only used when Type is "array".
 	Items *ValueSchema `json:"items,omitempty"`
 	// MinItems is the fewest elements an array may hold. Only used when Type
-	// is "array". A pointer, so an explicit 0 is encoded rather than omitted.
+	// is "array". A pointer like MaxItems, so a declared limit, 0 included, is
+	// encoded as written.
 	MinItems *int `json:"minItems,omitempty"`
 	// MaxItems is the most elements an array may hold. Only used when Type is
-	// "array". Providers that decode against the schema stop the array here;
-	// adapters remove it for providers that reject it.
+	// "array". A pointer because 0 (the array must be empty) differs from
+	// absent (no limit).
+	//
+	// Both limits must be JSON integers: a non-integer literal such as 3.0
+	// fails to decode the whole schema, unlike Enum, which is []any.
 	MaxItems *int `json:"maxItems,omitempty"`
 	// Properties defines the schema for properties within an object. Only used when Type is "object".
 	// Note: We use an ordered map to preserve insertion order from callers (e.g., TS clients).
@@ -336,12 +347,6 @@ func validateField(fieldSchema ValueSchema, data any) error {
 		}
 		if fieldSchema.Items == nil {
 			return errors.New("schema error: missing item schema for array")
-		}
-		if fieldSchema.MinItems != nil && len(items) < *fieldSchema.MinItems {
-			return fmt.Errorf("array has %d items, fewer than the minimum of %d", len(items), *fieldSchema.MinItems)
-		}
-		if fieldSchema.MaxItems != nil && len(items) > *fieldSchema.MaxItems {
-			return fmt.Errorf("array has %d items, more than the maximum of %d", len(items), *fieldSchema.MaxItems)
 		}
 		itemSchema := *fieldSchema.Items
 		for _, item := range items {

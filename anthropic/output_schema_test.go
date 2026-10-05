@@ -237,15 +237,16 @@ func TestNormalizeOutputSchemaForAnthropic_ErrorsOnCyclicSchema(t *testing.T) {
 // Anthropic structured outputs answer a maxItems, or a minItems above 1, with
 // a 400, so the output schema drops maxItems and lowers minItems to 1 at every
 // level: typed fields on the root, items and anyOf, and raw keywords inside
-// properties. A minItems of 0 or 1 is sent as written.
+// properties. A minItems of 0 or 1, or one that is not a number above 1, is
+// sent as written.
 func TestNormalizeOutputSchemaForAnthropic_RelaxesArrayLimits(t *testing.T) {
-	var schema tools.ValueSchema
-	require.NoError(t, json.Unmarshal([]byte(`{
+	const declared = `{
 		"type": "object",
 		"properties": {
 			"tags": {"type": "array", "minItems": 5, "maxItems": 8, "items": {"type": "string"}},
 			"steps": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"}},
 			"notes": {"type": "array", "minItems": 0, "items": {"type": "string"}},
+			"invalid": {"type": "array", "minItems": -1, "items": {"type": "string"}},
 			"ids": {"anyOf": [
 				{"type": "string"},
 				{"type": "array", "minItems": 2, "maxItems": 100, "items": {"type": "string"}}
@@ -254,7 +255,9 @@ func TestNormalizeOutputSchemaForAnthropic_RelaxesArrayLimits(t *testing.T) {
 			"maxItems": {"type": "integer", "description": "A property named like the keyword is kept."}
 		},
 		"required": ["tags"]
-	}`), &schema))
+	}`
+	var schema tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(declared), &schema))
 	minItems, maxItems := 2, 4
 	root := tools.ValueSchema{
 		Type:     "array",
@@ -274,6 +277,7 @@ func TestNormalizeOutputSchemaForAnthropic_RelaxesArrayLimits(t *testing.T) {
 				"tags": {"type": "array", "minItems": 1, "items": {"type": "string"}},
 				"steps": {"type": "array", "minItems": 1, "items": {"type": "string"}},
 				"notes": {"type": "array", "minItems": 0, "items": {"type": "string"}},
+				"invalid": {"type": "array", "minItems": -1, "items": {"type": "string"}},
 				"ids": {"anyOf": [
 					{"type": "string"},
 					{"type": "array", "minItems": 1, "items": {"type": "string"}}
@@ -292,5 +296,5 @@ func TestNormalizeOutputSchemaForAnthropic_RelaxesArrayLimits(t *testing.T) {
 	assert.Equal(t, 4, *root.MaxItems)
 	original, err := json.Marshal(schema)
 	require.NoError(t, err)
-	assert.Contains(t, string(original), `"tags":{"type":"array","minItems":5,"maxItems":8`)
+	assert.JSONEq(t, declared, string(original))
 }

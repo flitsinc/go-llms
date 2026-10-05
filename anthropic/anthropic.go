@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/metalim/jsonmap"
 	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
-	"github.com/flitsinc/go-llms/internal/schematree"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -161,58 +159,6 @@ func (m *Model) Model() string {
 
 func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
-}
-
-// normalizeOutputSchemaForAnthropic returns a deep-normalized schema for Anthropic
-// structured outputs without mutating the caller's schema.
-func normalizeOutputSchemaForAnthropic(schema *tools.ValueSchema) (any, error) {
-	tree, err := schematree.Of(schema)
-	if err != nil {
-		return nil, err
-	}
-	schematree.WalkObjects(tree, func(node *jsonmap.Map) {
-		// Anthropic requires additionalProperties: false on all object schemas.
-		if schematree.TypeIncludes(node, "object") || jsonMapLooksLikeObject(node) {
-			node.Set("additionalProperties", false)
-		}
-		relaxArrayLimitsForAnthropic(node)
-	})
-	return tree, nil
-}
-
-// relaxArrayLimitsForAnthropic rewrites a schema node's array length limits
-// into the ones Anthropic structured outputs accept. Anthropic supports only a
-// minItems of 0 or 1 and no maxItems, and answers anything else with a 400
-// ("For 'array' type, property 'maxItems' is not supported", "'minItems'
-// values other than 0 or 1 are not supported"; see
-// https://platform.claude.com/docs/en/build-with-claude/structured-outputs).
-// So maxItems is dropped and a larger minItems is lowered to 1, which keeps
-// the non-empty guarantee Anthropic can enforce and still admits every array
-// the original limits admit. The keywords mean nothing on a non-array node, so
-// they are rewritten wherever they appear.
-//
-// Tool input schemas are not strict and keep their limits: Anthropic accepts
-// them there, and the model reads them as guidance.
-func relaxArrayLimitsForAnthropic(node *jsonmap.Map) {
-	node.Delete("maxItems")
-	minItems, ok := node.Get("minItems")
-	if !ok {
-		return
-	}
-	if n, ok := minItems.(json.Number); ok {
-		if value, err := n.Float64(); err == nil && value > 1 {
-			node.Set("minItems", json.Number("1"))
-		}
-	}
-}
-
-func jsonMapLooksLikeObject(node *jsonmap.Map) bool {
-	for _, key := range []string{"properties", "patternProperties", "required", "dependencies", "dependentSchemas"} {
-		if _, ok := node.Get(key); ok {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Model) Generate(

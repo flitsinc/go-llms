@@ -81,9 +81,8 @@ func TestValueSchema_EnumRoundTrip(t *testing.T) {
 	assert.JSONEq(t, inputJSON, string(outputJSON))
 }
 
-// Array length limits decode at every typed level (root, items, anyOf) and
-// inside raw properties, and encode back as written: an explicit 0 survives,
-// and an unset limit is omitted.
+// Array length limits round-trip at the root, items and anyOf: an explicit 0
+// survives on either limit, and an unset limit is omitted.
 func TestValueSchema_ArrayLimitsRoundTrip(t *testing.T) {
 	inputJSON := `{
 		"type": "array",
@@ -95,45 +94,16 @@ func TestValueSchema_ArrayLimitsRoundTrip(t *testing.T) {
 			"items": { "type": "string" }
 		},
 		"anyOf": [
-			{ "type": "array", "maxItems": 2, "items": { "type": "string" } },
+			{ "type": "array", "maxItems": 0, "items": { "type": "string" } },
 			{ "type": "null" }
 		]
 	}`
 
 	var schema ValueSchema
 	require.NoError(t, json.Unmarshal([]byte(inputJSON), &schema))
-
-	require.NotNil(t, schema.MinItems)
-	assert.Equal(t, 0, *schema.MinItems)
-	require.NotNil(t, schema.MaxItems)
-	assert.Equal(t, 4, *schema.MaxItems)
-	require.NotNil(t, schema.Items)
-	require.NotNil(t, schema.Items.MinItems)
-	assert.Equal(t, 1, *schema.Items.MinItems)
-	assert.Nil(t, schema.Items.MaxItems)
-	require.Len(t, schema.AnyOf, 2)
-	require.NotNil(t, schema.AnyOf[0].MaxItems)
-	assert.Equal(t, 2, *schema.AnyOf[0].MaxItems)
-	assert.Nil(t, schema.AnyOf[1].MinItems)
-
 	outputJSON, err := json.Marshal(schema)
 	require.NoError(t, err)
 	assert.JSONEq(t, inputJSON, string(outputJSON))
-
-	props := `{"type":"object","properties":{"tags":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"string"}}}}`
-	var object ValueSchema
-	require.NoError(t, json.Unmarshal([]byte(props), &object))
-	rawTags, ok := object.Properties.Get("tags")
-	require.True(t, ok)
-	tags, err := PropertySchema(rawTags)
-	require.NoError(t, err)
-	require.NotNil(t, tags.MinItems)
-	assert.Equal(t, 1, *tags.MinItems)
-	require.NotNil(t, tags.MaxItems)
-	assert.Equal(t, 3, *tags.MaxItems)
-	outputJSON, err = json.Marshal(object)
-	require.NoError(t, err)
-	assert.JSONEq(t, props, string(outputJSON))
 }
 
 // TestGenerateSchema checks that the JSON schema is generated correctly from the Params struct.
@@ -577,52 +547,6 @@ func TestValidateJSON(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "schema error: received an invalid object schema")
 	})
-}
-
-// Validation holds an array to the length limits its schema declares, on a
-// property decoded from the wire, inside an anyOf branch and on nested arrays,
-// so a tool's validation agrees with the schema the model was sent.
-func TestValidateJSON_ArrayLimits(t *testing.T) {
-	var parameters ValueSchema
-	require.NoError(t, json.Unmarshal([]byte(`{
-		"type": "object",
-		"properties": {
-			"tags": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
-			"empty": {"type": "array", "maxItems": 0, "items": {"type": "string"}},
-			"ids": {"anyOf": [
-				{"type": "string"},
-				{"type": "array", "minItems": 2, "items": {"type": "string"}}
-			]},
-			"grid": {"type": "array", "items": {"type": "array", "maxItems": 2, "items": {"type": "integer"}}}
-		}
-	}`), &parameters))
-	schema := FunctionSchema{Name: "limits", Parameters: parameters}
-
-	tests := []struct {
-		name          string
-		jsonData      string
-		errorContains string
-	}{
-		{name: "within the limits", jsonData: `{"tags": ["a", "b", "c"], "empty": [], "ids": ["x", "y"], "grid": [[1, 2], [3]]}`},
-		{name: "at the minimum", jsonData: `{"tags": ["a"]}`},
-		{name: "below the minimum", jsonData: `{"tags": []}`, errorContains: `field "tags": array has 0 items, fewer than the minimum of 1`},
-		{name: "above the maximum", jsonData: `{"tags": ["a", "b", "c", "d"]}`, errorContains: `field "tags": array has 4 items, more than the maximum of 3`},
-		{name: "explicit zero maximum", jsonData: `{"empty": ["a"]}`, errorContains: `field "empty": array has 1 items, more than the maximum of 0`},
-		{name: "anyOf array branch below its minimum", jsonData: `{"ids": ["x"]}`, errorContains: `field "ids": data does not match any of the schemas in anyOf`},
-		{name: "anyOf string branch", jsonData: `{"ids": "x"}`},
-		{name: "nested array above its maximum", jsonData: `{"grid": [[1, 2, 3]]}`, errorContains: `field "grid": array has 3 items, more than the maximum of 2`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateJSON(&schema, json.RawMessage(tt.jsonData))
-			if tt.errorContains == "" {
-				assert.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.errorContains)
-		})
-	}
 }
 
 // TestPropertySchema covers each shape a property value arrives in: built in

@@ -38,6 +38,22 @@ func TestAnthropicE2E(t *testing.T) {
 			return tools.Success(nil)
 		},
 	)
+	// A tool with array length limits, which tools.Func cannot declare.
+	const limitedToolSchema = `{
+		"type": "object",
+		"properties": {"fruits": {"type": "array", "minItems": 5, "maxItems": 8, "items": {"type": "string"}}},
+		"required": ["fruits"],
+		"additionalProperties": false
+	}`
+	var limitedParameters tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(limitedToolSchema), &limitedParameters))
+	limitedTool := tools.External(
+		"Save fruits",
+		&tools.FunctionSchema{Name: "save_fruits", Description: "Save fruits", Parameters: limitedParameters},
+		func(r tools.Runner, params json.RawMessage) tools.Result {
+			return tools.SuccessFromString("ok")
+		},
+	)
 	// --- End Tool Definition ---
 
 	testCases := []struct {
@@ -133,6 +149,26 @@ func TestAnthropicE2E(t *testing.T) {
 				require.True(t, ok)
 				assert.Equal(t, "auto", toolChoice["type"])
 				assert.Equal(t, float64(150), body["max_tokens"])
+			},
+		},
+		{
+			// Only the output schema is relaxed for Anthropic: a tool's
+			// input_schema goes out with its array limits as declared.
+			name: "Tool input schema keeps array limits",
+			messages: []llms.Message{
+				{Role: "user", Content: content.FromText("Save some fruits")},
+			},
+			toolbox:   tools.Box(limitedTool),
+			maxTokens: 100,
+			verifyRequest: func(t *testing.T, headers http.Header, body map[string]any) {
+				toolsList, ok := body["tools"].([]any)
+				require.True(t, ok)
+				require.Len(t, toolsList, 1)
+				toolDef, ok := toolsList[0].(map[string]any)
+				require.True(t, ok)
+				inputSchema, err := json.Marshal(toolDef["input_schema"])
+				require.NoError(t, err)
+				assert.JSONEq(t, limitedToolSchema, string(inputSchema))
 			},
 		},
 		{
