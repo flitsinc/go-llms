@@ -372,7 +372,7 @@ func reasoningDetailsFromContent(c content.Content) []ReasoningDetail {
 			ID:        t.ID,
 			Signature: t.Signature,
 		}
-		if format := t.Metadata["openai:reasoning_format"]; format != "" {
+		if format := t.Metadata[reasoningFormatKey]; format != "" {
 			detail.Format = format
 		}
 		if idx, ok := thoughtReasoningIndex(t); ok {

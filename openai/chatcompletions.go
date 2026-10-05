@@ -812,7 +812,7 @@ func (s *ChatCompletionsStream) mergeReasoningMetadata(thought *content.Thought,
 func reasoningDetailMetadata(rd ReasoningDetail) map[string]string {
 	var metadata map[string]string
 	if rd.Format != "" {
-		metadata = map[string]string{"openai:reasoning_format": rd.Format}
+		metadata = map[string]string{reasoningFormatKey: rd.Format}
 	}
 	if rd.Index != nil {
 		if metadata == nil {
