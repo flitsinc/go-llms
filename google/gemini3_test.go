@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/metalim/jsonmap"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/flitsinc/go-llms/content"
 	"github.com/flitsinc/go-llms/llms"
@@ -2527,4 +2529,24 @@ func TestSanitizeSchemaForGemini_PreservesEnums(t *testing.T) {
 	if !reflect.DeepEqual(kindSchema["enum"], []any{"a", "b"}) {
 		t.Errorf("nested kind enum = %v, want [a b]", kindSchema["enum"])
 	}
+}
+
+// sanitizeSchemaForGemini rebuilds each level through tools.ValueSchema, so
+// array length limits survive in properties, items and anyOf.
+func TestSanitizeSchemaForGemini_KeepsArrayLimits(t *testing.T) {
+	const declared = `{
+		"type": "object",
+		"properties": {
+			"fruits": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
+			"grid": {"type": "array", "maxItems": 2, "items": {"type": "array", "minItems": 0, "maxItems": 4, "items": {"type": "integer"}}},
+			"ids": {"anyOf": [{"type": "string"}, {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "string"}}]}
+		},
+		"required": ["fruits"]
+	}`
+	var schema tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(declared), &schema))
+
+	got, err := json.Marshal(sanitizeSchemaForGemini(schema))
+	require.NoError(t, err)
+	assert.JSONEq(t, declared, string(got))
 }

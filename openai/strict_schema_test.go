@@ -170,7 +170,8 @@ func TestStrictSchemaKeepsUnmodelledKeywordsAndPropertyOrder(t *testing.T) {
 		"properties": {
 			"zeta": {"type": "string", "const": "fixed"},
 			"alpha": {"type": "string", "format": "date-time"},
-			"mid": {"type": "integer", "minimum": 1}
+			"mid": {"type": "integer", "minimum": 1},
+			"tags": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}}
 		},
 		"required": ["zeta"]
 	}`)
@@ -180,9 +181,10 @@ func TestStrictSchemaKeepsUnmodelledKeywordsAndPropertyOrder(t *testing.T) {
 		"properties": {
 			"zeta": {"type": "string", "const": "fixed"},
 			"alpha": {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
-			"mid": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]}
+			"mid": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+			"tags": {"anyOf": [{"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}}, {"type": "null"}]}
 		},
-		"required": ["zeta", "alpha", "mid"]
+		"required": ["zeta", "alpha", "mid", "tags"]
 	}`, padded)
 	assert.Less(t, strings.Index(padded, `"zeta"`), strings.Index(padded, `"alpha"`))
 	assert.Less(t, strings.Index(padded, `"alpha"`), strings.Index(padded, `"mid"`))

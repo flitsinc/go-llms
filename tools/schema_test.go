@@ -81,6 +81,31 @@ func TestValueSchema_EnumRoundTrip(t *testing.T) {
 	assert.JSONEq(t, inputJSON, string(outputJSON))
 }
 
+// Array length limits round-trip at the root, items and anyOf: an explicit 0
+// survives on either limit, and an unset limit is omitted.
+func TestValueSchema_ArrayLimitsRoundTrip(t *testing.T) {
+	inputJSON := `{
+		"type": "array",
+		"minItems": 0,
+		"maxItems": 4,
+		"items": {
+			"type": "array",
+			"minItems": 1,
+			"items": { "type": "string" }
+		},
+		"anyOf": [
+			{ "type": "array", "maxItems": 0, "items": { "type": "string" } },
+			{ "type": "null" }
+		]
+	}`
+
+	var schema ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(inputJSON), &schema))
+	outputJSON, err := json.Marshal(schema)
+	require.NoError(t, err)
+	assert.JSONEq(t, inputJSON, string(outputJSON))
+}
+
 // TestGenerateSchema checks that the JSON schema is generated correctly from the Params struct.
 // Moved from tool_test.go
 func TestGenerateSchema(t *testing.T) {

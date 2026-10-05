@@ -10,11 +10,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/metalim/jsonmap"
 	"golang.org/x/oauth2"
 
 	"github.com/flitsinc/go-llms/content"
-	"github.com/flitsinc/go-llms/internal/schematree"
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
@@ -161,31 +159,6 @@ func (m *Model) Model() string {
 
 func (m *Model) SetHTTPClient(client *http.Client) {
 	m.httpClient = client
-}
-
-// normalizeOutputSchemaForAnthropic returns a deep-normalized schema for Anthropic
-// structured outputs without mutating the caller's schema.
-func normalizeOutputSchemaForAnthropic(schema *tools.ValueSchema) (any, error) {
-	tree, err := schematree.Of(schema)
-	if err != nil {
-		return nil, err
-	}
-	schematree.WalkObjects(tree, func(node *jsonmap.Map) {
-		// Anthropic requires additionalProperties: false on all object schemas.
-		if schematree.TypeIncludes(node, "object") || jsonMapLooksLikeObject(node) {
-			node.Set("additionalProperties", false)
-		}
-	})
-	return tree, nil
-}
-
-func jsonMapLooksLikeObject(node *jsonmap.Map) bool {
-	for _, key := range []string{"properties", "patternProperties", "required", "dependencies", "dependentSchemas"} {
-		if _, ok := node.Get(key); ok {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *Model) Generate(
