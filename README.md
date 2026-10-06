@@ -608,6 +608,12 @@ Everywhere else the schema goes out as written, including Chat Completions funct
 
 Anthropic’s structured outputs reject `maxItems` and any `minItems` other than 0 or 1, so the `anthropic` package drops `maxItems` from a JSON output schema and lowers a larger `minItems` to 1. Tool schemas go out with their limits, which Claude reads as hints. Other providers receive the limits as written but enforce them unevenly, so also state a limit in the field description or the prompt: schema enforcement is a backstop, not a replacement.
 
+#### OpenAI reasoning belongs to an organization
+
+OpenAI resolves a reasoning item replayed by ID alone only in the organization that stored it, so that history fails once the API key belongs to another organization. The Responses API provider therefore asks for each reasoning item’s encrypted content and keeps it on the `content.Thought` (`Encrypted`, next to the item’s `ID`), both in the streamed thought and in the message. Only the endpoint that produced the content can read it, so the thought’s `Metadata` records its `openai:reasoning_format` (`openai-responses-v1`) and `openai:reasoning_endpoint` (the API host, such as `api.openai.com` or `api.x.ai`). The Responses provider replays the content only to that endpoint and replays other thoughts by ID, and Chat Completions forwards the format so OpenRouter can drop reasoning its upstream cannot read. Keep `Metadata` when you persist thoughts.
+
+A thought recorded before this content was requested has only its ID and can still be refused after a change of organization, as can content OpenAI can no longer verify. `(*llms.HTTPError).IsReplayRejected()` reports these refusals, and those of compaction checkpoints; the caller should then send the conversation without the replayed reasoning and checkpoints. The WebSocket provider resends the whole conversation once, without `previous_response_id`, when the server no longer holds the response it chained to.
+
 #### Anthropic doesn’t stream partial property values by default
 
 The streaming API of Anthropic only sends complete string values when streaming tool calls, so if you have a tool call like `edit_file` which produces very long fields nothing will update until that field has completely finished generating.

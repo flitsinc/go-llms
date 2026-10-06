@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -168,7 +169,7 @@ func (m *ResponsesAPI) Generate(
 			Role:    "system",
 			Content: systemPrompt,
 		}
-		systemInputs, err := convertMessageToInput(systemMsg, nil)
+		systemInputs, err := convertMessageToInput(systemMsg, inputConversion{})
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert system message: %w", err))
 		}
@@ -176,9 +177,9 @@ func (m *ResponsesAPI) Generate(
 	}
 
 	// Convert messages to input items
-	customCallIDs := customToolCallIDs(messages)
+	conversion := newInputConversion(messages, m.endpoint)
 	for _, msg := range messages {
-		msgInputs, err := convertMessageToInput(msg, customCallIDs)
+		msgInputs, err := convertMessageToInput(msg, conversion)
 		if err != nil {
 			return newResponsesStreamError(fmt.Errorf("responses: failed to convert message role=%s: %w", msg.Role, err))
 		}
@@ -243,8 +244,9 @@ func (m *ResponsesAPI) Generate(
 
 	return &ResponsesStream{
 		responsesEventProcessor: responsesEventProcessor{
-			debugger:    debugger,
-			lastThought: &content.Thought{},
+			debugger:          debugger,
+			lastThought:       &content.Thought{},
+			reasoningEndpoint: reasoningEndpoint(m.endpoint),
 		},
 		ctx:    ctx,
 		model:  m.model,
@@ -395,31 +397,76 @@ func (s *ResponsesStream) Iter() func(yield func(llms.StreamStatus) bool) {
 	}
 }
 
-// customToolCallIDs collects the call IDs of assistant tool calls made
-// through the custom (grammar/text) tool protocol, so their results replay as
-// custom_tool_call_output items. Conversion callers build this once per
-// message list and pass it to convertMessageToInput, because a tool-result
-// message alone cannot tell which protocol its call used.
-func customToolCallIDs(messages []llms.Message) map[string]bool {
-	var ids map[string]bool
+// Thought metadata that records where a Responses reasoning item's encrypted
+// content came from. The content is opaque to everyone but the endpoint that
+// produced it: replayed elsewhere (OpenAI reasoning sent to xAI, or to
+// Anthropic as redacted thinking) it fails the request.
+const (
+	// reasoningFormatKey names the content's format. Chat Completions
+	// replays it as the reasoning_details "format", which lets OpenRouter
+	// drop reasoning its upstream cannot read.
+	reasoningFormatKey = "openai:reasoning_format"
+	// responsesReasoningFormat is the format of Responses API reasoning
+	// content, under the name OpenRouter uses for it.
+	responsesReasoningFormat = "openai-responses-v1"
+	// reasoningEndpointKey names the endpoint that produced the content, as
+	// returned by reasoningEndpoint.
+	reasoningEndpointKey = "openai:reasoning_endpoint"
+)
+
+// reasoningEndpoint identifies a Responses endpoint for reasoningEndpointKey:
+// its host, such as "api.openai.com" (for both the HTTP and the WebSocket
+// endpoint) or "api.x.ai".
+func reasoningEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+// inputConversion holds what converting one message of a conversation needs
+// to know beyond the message itself.
+type inputConversion struct {
+	// customCallIDs marks tool-call IDs whose calls were custom_tool_call
+	// items, so their results serialize as custom_tool_call_output. A
+	// tool-result message alone cannot tell which protocol its call used.
+	customCallIDs map[string]bool
+	// reasoningEndpoint identifies the endpoint the request goes to (see
+	// reasoningEndpoint). Reasoning content replays only to the endpoint
+	// that produced it.
+	reasoningEndpoint string
+}
+
+// newInputConversion prepares the conversion of messages for a request to
+// endpoint. Callers build it once per message list.
+func newInputConversion(messages []llms.Message, endpoint string) inputConversion {
+	conversion := inputConversion{reasoningEndpoint: reasoningEndpoint(endpoint)}
 	for _, msg := range messages {
 		for _, tc := range msg.ToolCalls {
 			if tc.Metadata["openai:item_type"] == "custom_tool_call" {
-				if ids == nil {
-					ids = map[string]bool{}
+				if conversion.customCallIDs == nil {
+					conversion.customCallIDs = map[string]bool{}
 				}
-				ids[tc.ID] = true
+				conversion.customCallIDs[tc.ID] = true
 			}
 		}
 	}
-	return ids
+	return conversion
 }
 
-// convertMessageToInput converts an llms.Message to ResponseInput items.
-// customCallIDs marks tool-call IDs whose calls were custom_tool_call items,
-// so their results serialize as custom_tool_call_output; nil is valid when
-// the conversation cannot contain custom tool calls.
-func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]ResponseInput, error) {
+// replaysEncrypted reports whether a thought's encrypted content goes to this
+// request's endpoint: only when the thought records that the same endpoint
+// produced it. Content from elsewhere, or without that record (a consumer
+// that dropped the metadata), stays behind and the thought replays by ID.
+func (c inputConversion) replaysEncrypted(t *content.Thought) bool {
+	return t.Encrypted != "" && c.reasoningEndpoint != "" && t.Metadata[reasoningEndpointKey] == c.reasoningEndpoint
+}
+
+// convertMessageToInput converts an llms.Message to ResponseInput items. The
+// zero inputConversion is valid when the conversation cannot contain custom
+// tool calls or reasoning to replay.
+func convertMessageToInput(msg llms.Message, conversion inputConversion) ([]ResponseInput, error) {
 	var items []ResponseInput
 
 	switch msg.Role {
@@ -470,7 +517,21 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 					continue
 				}
 				flushOutput()
+				// Encrypted content carries the reasoning itself, so OpenAI
+				// need not find the item in the organization that stored it.
+				// The ID still goes along: OpenAI checks it against the
+				// content, and refuses a stored message replayed by ID without
+				// the reasoning item that preceded it. Content from another
+				// endpoint is left out (see replaysEncrypted), as is the
+				// content of thoughts recorded before it was requested, which
+				// replay by ID and so resolve only in the storing
+				// organization. A thought without an ID did not come from the
+				// Responses API (Anthropic's redacted thinking also carries
+				// Encrypted) and is skipped above.
 				reasoning := Reasoning{Type: "reasoning", ID: v.ID, Summary: []ReasoningSummary{}}
+				if conversion.replaysEncrypted(v) {
+					reasoning.EncryptedContent = v.Encrypted
+				}
 				if v.Text != "" {
 					reasoning.Summary = append(reasoning.Summary, ReasoningSummary{Type: "summary_text", Text: v.Text})
 				}
@@ -552,7 +613,7 @@ func convertMessageToInput(msg llms.Message, customCallIDs map[string]bool) ([]R
 			}
 		}
 
-		if customCallIDs[msg.ToolCallID] {
+		if conversion.customCallIDs[msg.ToolCallID] {
 			items = append(items, CustomToolCallOutput{
 				Type:   "custom_tool_call_output",
 				CallID: msg.ToolCallID,

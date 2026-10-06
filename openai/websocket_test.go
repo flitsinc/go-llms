@@ -665,3 +665,252 @@ func TestWebSocketStream_Warmup(t *testing.T) {
 		t.Fatalf("expected respID 'resp_warmup', got %q", respID)
 	}
 }
+
+func TestWebSocketResponsesAPI_RequestsReasoningEncryptedContent(t *testing.T) {
+	data, err := NewWebSocketResponsesAPI("test-token", "gpt-5").buildRequestEnvelope(nil, "sys", "", nil, nil)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, []any{"reasoning.encrypted_content"}, payload["include"])
+}
+
+// A WebSocket error event carries the HTTP status the request would have
+// failed with, so it classifies like the HTTP error. The event is the one
+// OpenAI sent (2026-10-05) for a reasoning ID it could not find.
+func TestWebSocketStream_ErrorEventWithStatusIsHTTPError(t *testing.T) {
+	server := newTestWSServer(t, []string{
+		`{"type":"error","error":{"type":"invalid_request_error","code":null,"message":"Item with id 'rs_0645db6af0c67af0006ac3bacda14887d1b16c5fea754e94ff' not found. Items are not persisted when ` + "`store`" + ` is set to false. Try again with ` + "`store`" + ` set to true, or remove this item from your input.","param":"input"},"status":404}`,
+	})
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	stream := provider.Generate(context.Background(), content.FromText("sys"), []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	for range stream.Iter() {
+	}
+
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream.Err(), &httpErr)
+	assert.Equal(t, 404, httpErr.StatusCode)
+	assert.Equal(t, "404 Not Found", httpErr.Status)
+	assert.Equal(t, "invalid_request_error", httpErr.ErrorType)
+	assert.Equal(t, "input", httpErr.Param)
+	assert.True(t, httpErr.IsReplayRejected())
+}
+
+// newChainRefusingWSServer answers every request that chains to an earlier
+// response with OpenAI's previous_response_not_found error (as sent live,
+// 2026-10-05), or with errorEvent when it is set, and every other request with
+// a completed response. It records each request it reads.
+func newChainRefusingWSServer(t *testing.T, requests chan<- map[string]any, errorEvent string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+
+		for n := 1; ; n++ {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if err := json.Unmarshal(data, &req); err != nil {
+				return
+			}
+			requests <- req
+
+			events := []string{
+				fmt.Sprintf(`{"type":"response.created","response":{"id":"resp_%d"}}`, n),
+				`{"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}`,
+				`{"type":"response.output_text.delta","delta":"ok"}`,
+				`{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}}`,
+			}
+			if prev, _ := req["previous_response_id"].(string); prev != "" {
+				events = []string{errorEvent}
+				if errorEvent == "" {
+					events = []string{fmt.Sprintf(`{"type":"error","error":{"type":"invalid_request_error","code":"previous_response_not_found","message":"Previous response with id '%s' not found.","param":"previous_response_id"},"status":400}`, prev)}
+				}
+			}
+			for _, ev := range events {
+				if err := conn.Write(r.Context(), websocket.MessageText, []byte(ev)); err != nil {
+					return
+				}
+			}
+		}
+	}))
+}
+
+// When the server no longer holds the chained response, the stream sends the
+// whole conversation once without previous_response_id instead of failing.
+func TestWebSocketStream_ChainedResponseNotFoundResendsFullConversation(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, "")
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	turn1 := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream1 := provider.Generate(context.Background(), content.FromText("sys"), turn1, nil, nil)
+	for range stream1.Iter() {
+	}
+	require.NoError(t, stream1.Err())
+
+	turn2 := append(turn1,
+		llms.Message{Role: "assistant", Content: content.FromText("ok"), ID: "msg_1"},
+		llms.Message{Role: "user", Content: content.FromText("Thanks")},
+	)
+	stream2 := provider.Generate(context.Background(), content.FromText("sys"), turn2, nil, nil)
+	var statuses []llms.StreamStatus
+	for status := range stream2.Iter() {
+		statuses = append(statuses, status)
+	}
+	require.NoError(t, stream2.Err())
+	assert.Equal(t, "ok", stream2.Message().Content[0].(*content.Text).Text)
+	assert.Contains(t, statuses, llms.StreamStatusMessageStart)
+
+	require.Len(t, requests, 3)
+	<-requests
+	chained := <-requests
+	assert.Equal(t, "resp_1", chained["previous_response_id"])
+	assert.Len(t, chained["input"], 1)
+	full := <-requests
+	assert.NotContains(t, full, "previous_response_id")
+	assert.Len(t, full["input"], 3)
+
+	// The resent response becomes the next turn's chain.
+	assert.Equal(t, "resp_3", provider.lastResponseID)
+	assert.Equal(t, len(turn2), provider.lastMessageCount)
+}
+
+// Only previous_response_not_found is answered by resending: any other error
+// on a chained request fails the stream as before.
+func TestWebSocketStream_ChainedRequestOtherErrorIsNotResent(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, `{"type":"error","error":{"type":"invalid_request_error","code":"invalid_encrypted_content","message":"The encrypted content gAAA...xxxx could not be verified.","param":null},"status":400}`)
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	turn1 := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream1 := provider.Generate(context.Background(), content.FromText("sys"), turn1, nil, nil)
+	for range stream1.Iter() {
+	}
+	require.NoError(t, stream1.Err())
+
+	turn2 := append(turn1,
+		llms.Message{Role: "assistant", Content: content.FromText("ok"), ID: "msg_1"},
+		llms.Message{Role: "user", Content: content.FromText("Thanks")},
+	)
+	stream2 := provider.Generate(context.Background(), content.FromText("sys"), turn2, nil, nil)
+	for range stream2.Iter() {
+	}
+	var httpErr *llms.HTTPError
+	require.ErrorAs(t, stream2.Err(), &httpErr)
+	assert.Equal(t, "invalid_encrypted_content", httpErr.ErrorCode)
+	assert.Len(t, requests, 2)
+}
+
+// The WebSocket stream records the same provenance as HTTP: the endpoint's
+// host, which is "api.openai.com" for both of OpenAI's endpoints.
+func TestWebSocketStream_ReasoningRecordsProvenance(t *testing.T) {
+	server := newTestWSServer(t, []string{
+		`{"type":"response.created","response":{"id":"resp_1"}}`,
+		`{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1","summary":[]}}`,
+		`{"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAenc","summary":[]}}`,
+		`{"type":"response.completed","response":{}}`,
+	})
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	stream := provider.Generate(context.Background(), content.FromText("sys"), []llms.Message{{Role: "user", Content: content.FromText("hi")}}, nil, nil)
+	var last content.Thought
+	for status := range stream.Iter() {
+		if status == llms.StreamStatusThinking {
+			last = stream.Thought()
+		}
+	}
+	require.NoError(t, stream.Err())
+
+	want := content.Thought{ID: "rs_1", Encrypted: "gAAAAenc", Summary: true, Metadata: map[string]string{
+		"openai:reasoning_format":   "openai-responses-v1",
+		"openai:reasoning_endpoint": strings.TrimPrefix(server.URL, "http://"),
+	}}
+	assert.Equal(t, want, last)
+	assert.Equal(t, &want, stream.Message().Content[0])
+}
+
+// A turn chained to a warmup response is resent with the whole conversation
+// when the server no longer holds the warmup response.
+func TestWebSocketStream_WarmupChainNotFoundResendsFullConversation(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, "")
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	responseID, err := provider.Warmup(context.Background(), "sys", nil)
+	require.NoError(t, err)
+	require.Equal(t, "resp_1", responseID)
+
+	messages := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream := provider.Generate(context.Background(), content.FromText("sys"), messages, nil, nil)
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	require.Len(t, requests, 3)
+	<-requests
+	chained := <-requests
+	assert.Equal(t, "resp_1", chained["previous_response_id"])
+	full := <-requests
+	assert.NotContains(t, full, "previous_response_id")
+	assert.Len(t, full["input"], 1)
+	assert.Equal(t, "resp_3", provider.lastResponseID)
+}
+
+// A request rebuilt after a reconnect does not chain, so its stream has
+// nothing to resend.
+func TestWebSocketStream_ReconnectDoesNotChain(t *testing.T) {
+	requests := make(chan map[string]any, 10)
+	server := newChainRefusingWSServer(t, requests, "")
+	defer server.Close()
+
+	provider := NewWebSocketResponsesAPI("test-token", "gpt-5").WithEndpoint(wsEndpoint(server), "Test")
+	defer provider.Close()
+
+	turn1 := []llms.Message{{Role: "user", Content: content.FromText("Hi")}}
+	stream1 := provider.Generate(context.Background(), content.FromText("sys"), turn1, nil, nil)
+	for range stream1.Iter() {
+	}
+	require.NoError(t, stream1.Err())
+
+	// Break the connection under the provider so the chained write fails.
+	provider.conn.CloseNow()
+
+	turn2 := append(turn1,
+		llms.Message{Role: "assistant", Content: content.FromText("ok"), ID: "msg_1"},
+		llms.Message{Role: "user", Content: content.FromText("Thanks")},
+	)
+	stream2 := provider.Generate(context.Background(), content.FromText("sys"), turn2, nil, nil)
+	wsStream, ok := stream2.(*WebSocketStream)
+	require.True(t, ok)
+	assert.Nil(t, wsStream.resendUnchained)
+	for range stream2.Iter() {
+	}
+	require.NoError(t, stream2.Err())
+
+	require.Len(t, requests, 2)
+	<-requests
+	full := <-requests
+	assert.NotContains(t, full, "previous_response_id")
+	assert.Len(t, full["input"], 3)
+}

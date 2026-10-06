@@ -14,6 +14,7 @@ type openAIError struct {
 	Code     json.RawMessage     `json:"code"`
 	Message  string              `json:"message"`
 	Type     string              `json:"type"`
+	Param    json.RawMessage     `json:"param"`
 	Metadata openAIErrorMetadata `json:"metadata"`
 }
 
@@ -48,6 +49,7 @@ func (e openAIError) httpError(statusCode int, status string) *llms.HTTPError {
 		Status:     status,
 		ErrorCode:  rawJSONScalarString(e.Code),
 		ErrorType:  errType,
+		Param:      rawJSONScalarString(e.Param),
 		Message:    e.Message,
 		Metadata:   metadata,
 	}
@@ -66,6 +68,25 @@ func streamChunkHTTPError(chunk *chatCompletionChunk) *llms.HTTPError {
 		httpErr.Metadata.ProviderName = chunk.Provider
 	}
 	return httpErr
+}
+
+// err converts an error event. A WebSocket error event reports a refused
+// request with the status it would have had over HTTP; it becomes the
+// HTTPError an HTTP request returns, so callers classify both transports the
+// same way. Without a status the event stays a plain error.
+func (e *StreamError) err(status json.RawMessage) error {
+	statusCode, _ := strconv.Atoi(rawJSONScalarString(status))
+	if statusCode == 0 {
+		return fmt.Errorf("stream error (%s): %s", e.Code, e.Message)
+	}
+	return &llms.HTTPError{
+		StatusCode: statusCode,
+		Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),
+		ErrorCode:  e.Code,
+		ErrorType:  e.Type,
+		Param:      e.Param,
+		Message:    e.Message,
+	}
 }
 
 func parseHTTPError(resp *http.Response, bodyBytes []byte) (*llms.HTTPError, bool) {

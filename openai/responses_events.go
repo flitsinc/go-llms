@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/flitsinc/go-llms/content"
@@ -34,6 +35,23 @@ type responsesEventProcessor struct {
 	// lastCompaction is the most recent server-side compaction item, surfaced
 	// via StreamStatusCompaction.
 	lastCompaction content.Compaction
+	// reasoningEndpoint identifies the endpoint the response comes from (see
+	// reasoningEndpoint), recorded on each thought with encrypted content.
+	reasoningEndpoint string
+}
+
+// recordReasoningContent stores a reasoning item's encrypted content on its
+// thought together with where it came from, so a later request replays it
+// only to the endpoint that can read it.
+func (p *responsesEventProcessor) recordReasoningContent(thought *content.Thought, encrypted string) {
+	thought.Encrypted = encrypted
+	if thought.Metadata == nil {
+		thought.Metadata = map[string]string{}
+	}
+	thought.Metadata[reasoningFormatKey] = responsesReasoningFormat
+	if p.reasoningEndpoint != "" {
+		thought.Metadata[reasoningEndpointKey] = p.reasoningEndpoint
+	}
 }
 
 // Compaction returns the compaction item most recently reported with
@@ -469,6 +487,22 @@ func (p *responsesEventProcessor) processEvent(
 					if summaryBuilder.Len() > 0 {
 						thought.Text = summaryBuilder.String()
 					}
+					if reasoningItem.EncryptedContent != "" {
+						p.recordReasoningContent(thought, reasoningItem.EncryptedContent)
+						// Consumers that keep thoughts from the stream rather
+						// than from Message() only see the content through
+						// Thought(), so it streams as one more piece of the
+						// thought: empty text, the content and its provenance.
+						p.lastThought = &content.Thought{
+							ID:        thought.ID,
+							Encrypted: thought.Encrypted,
+							Metadata:  maps.Clone(thought.Metadata),
+							Summary:   true,
+						}
+						if !yield(llms.StreamStatusThinking) {
+							return true
+						}
+					}
 					if p.lastThought != nil {
 						p.lastThought = nil
 						if !yield(llms.StreamStatusThinkingDone) {
@@ -560,7 +594,7 @@ func (p *responsesEventProcessor) processEvent(
 
 	case "error":
 		if event.Error != nil {
-			p.err = fmt.Errorf("stream error (%s): %s", event.Error.Code, event.Error.Message)
+			p.err = event.Error.err(event.Status)
 		}
 		return true
 	}
