@@ -1,7 +1,5 @@
 package typesafe
 
-import "github.com/metalim/jsonmap"
-
 // Question is one typed question in a System One request. Type is "noul" for
 // a yes/no probability and "choice" for a selection; Instructions is the
 // question itself, taken from the schema property's description. Criteria
@@ -42,7 +40,7 @@ type Response struct {
 }
 
 type request struct {
-	State     *jsonmap.Map        `json:"state"`
+	State     *state              `json:"state"`
 	Model     string              `json:"model"`
 	Questions map[string]Question `json:"questions"`
 }
@@ -50,4 +48,17 @@ type request struct {
 type stateMessage struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"`
+}
+
+// imagePart is an image at the top level of the state, in the shape the API
+// reads: a data URI or a fetchable URL under image_url. The item's MIME type
+// is not sent (a data URI carries its own, and the API fetches a URL itself)
+// and its provider metadata has no System One meaning.
+type imagePart struct {
+	Type     string       `json:"type"`
+	ImageURL imageURLPart `json:"image_url"`
+}
+
+type imageURLPart struct {
+	URL string `json:"url"`
 }
