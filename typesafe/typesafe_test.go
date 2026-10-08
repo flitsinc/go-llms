@@ -157,16 +157,71 @@ func TestStateEmbedsStructuredContent(t *testing.T) {
 	assert.JSONEq(t, `{"messages": [{"role": "user", "content": ["before", {"a": 1}, "after"]}]}`, string(stateJSON))
 }
 
-func TestStateSkipsThoughtsAndRejectsMedia(t *testing.T) {
+func TestStateLiftsImagesToTheTop(t *testing.T) {
+	// The API reads an image only at the top level of the state, so an image
+	// in a message is placed before the conversation object, and the state
+	// becomes an array. The text around it keeps its place in the message.
+	state, err := stateFromLLM(content.FromText("You judge a page."), []llms.Message{
+		{Role: "user", Content: content.FromTextAndImage("Is the page red?", "data:image/png;base64,AAAA")},
+	})
+	require.NoError(t, err)
+	stateJSON, err := json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+		{"system": "You judge a page.", "messages": [{"role": "user", "content": "Is the page red?"}]}
+	]`, string(stateJSON))
+
+	// Images from every message and the system prompt go first, in order; a
+	// message that was only an image adds nothing to the conversation.
+	var system content.Content
+	system.Append("Compare the two.")
+	system.AddImage("https://example.com/a.png")
+	state, err = stateFromLLM(system, []llms.Message{
+		{Role: "user", Content: content.FromText("Which is newer?")},
+		{Role: "user", Content: content.Content{&content.ImageURL{URL: "https://example.com/b.png"}}},
+	})
+	require.NoError(t, err)
+	stateJSON, err = json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+		{"type": "image_url", "image_url": {"url": "https://example.com/b.png"}},
+		{"system": "Compare the two.", "messages": [{"role": "user", "content": "Which is newer?"}]}
+	]`, string(stateJSON))
+
+	// Only an image is still something to evaluate: the questions say what to
+	// ask of it.
+	state, err = stateFromLLM(nil, []llms.Message{
+		{Role: "user", Content: content.Content{&content.ImageURL{URL: "https://example.com/c.png"}}},
+	})
+	require.NoError(t, err)
+	stateJSON, err = json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type": "image_url", "image_url": {"url": "https://example.com/c.png"}}]`, string(stateJSON))
+
+	// Without an image the state stays the object it always was.
+	state, err = stateFromLLM(content.FromText("hello"), nil)
+	require.NoError(t, err)
+	stateJSON, err = json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"system": "hello"}`, string(stateJSON))
+}
+
+func TestStateSkipsThoughtsAndRejectsAudioAndVideo(t *testing.T) {
 	var withThought content.Content
 	withThought.Append("hello")
 	withThought.AppendThought("private reasoning")
 	state, err := stateFromLLM(withThought, nil)
 	require.NoError(t, err)
-	system, _ := state.Get("system")
-	assert.Equal(t, "hello", system)
+	stateJSON, err := json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"system": "hello"}`, string(stateJSON))
 
-	_, err = stateFromLLM(content.FromTextAndImage("look", "https://example.com/a.png"), nil)
+	_, err = stateFromLLM(content.Content{&content.AudioURL{URL: "https://example.com/a.mp3"}}, nil)
+	assert.ErrorIs(t, err, ErrNonTextContent)
+
+	_, err = stateFromLLM(nil, []llms.Message{{Role: "user", Content: content.Content{&content.VideoURL{URL: "https://example.com/a.mp4"}}}})
 	assert.ErrorIs(t, err, ErrNonTextContent)
 
 	_, err = stateFromLLM(nil, nil)

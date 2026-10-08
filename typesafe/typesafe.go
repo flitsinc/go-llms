@@ -4,7 +4,9 @@
 // The provider maps the go-llms contract onto that shape.
 //
 //   - The system prompt and messages become the request state, as a JSON
-//     object with a "system" string and a "messages" array.
+//     object with a "system" string and a "messages" array. Images are lifted
+//     out of the content and placed before that object, as the image parts a
+//     multimodal decision model reads; see [stateFromLLM].
 //   - The JSON output schema becomes the questions: one per property, with the
 //     property description as the question. See [questionsFromSchema] for the
 //     supported property types.
@@ -50,10 +52,10 @@ const DefaultEndpoint = "https://api.typesafe.ai/v1/systemone"
 // tool result reaches the provider.
 var ErrToolsUnsupported = errors.New("typesafe: tools are not supported by System One models")
 
-// ErrNonTextContent is returned when a message carries an image, audio, or
-// video item. The state accepts text and structured JSON; images, audio, and
-// video are rejected because the model cannot read them.
-var ErrNonTextContent = errors.New("typesafe: System One models accept text and structured JSON only")
+// ErrNonTextContent is returned when a message carries an audio or video
+// item. The state accepts text, structured JSON, and images; audio and video
+// are rejected because no System One model can read them.
+var ErrNonTextContent = errors.New("typesafe: System One models accept text, structured JSON, and images only")
 
 type Model struct {
 	apiKey     string
@@ -223,42 +225,70 @@ func bodySnippet(body []byte) string {
 // Structured content (content.JSON) is embedded as JSON rather than as an
 // escaped string so the model sees named fields, which is how the API's own
 // guidance says state should be shaped.
-func stateFromLLM(systemPrompt content.Content, messages []llms.Message) (*jsonmap.Map, error) {
-	state := jsonmap.New()
+//
+// Text and JSON keep their place in the conversation. Images do not: the API
+// reads an image part only at the top level of the state, not inside a
+// message, so every image is lifted out of the content it came with and the
+// state becomes an array of the image parts followed by the conversation
+// object. A multimodal model therefore sees the images before the text; a
+// text-only model ignores them. Content that was only images contributes
+// nothing to the conversation object.
+func stateFromLLM(systemPrompt content.Content, messages []llms.Message) (any, error) {
+	conversation := jsonmap.New()
+	var images []imagePart
 	if len(systemPrompt) > 0 {
-		system, err := stateContent(systemPrompt)
+		system, systemImages, err := stateContent(systemPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("system prompt: %w", err)
 		}
-		state.Set("system", system)
+		images = append(images, systemImages...)
+		if system != nil {
+			conversation.Set("system", system)
+		}
 	}
 	stateMessages := make([]stateMessage, 0, len(messages))
 	for i, msg := range messages {
 		if msg.Role == "tool" || len(msg.ToolCalls) > 0 {
 			return nil, fmt.Errorf("message %d: %w", i, ErrToolsUnsupported)
 		}
-		body, err := stateContent(msg.Content)
+		body, messageImages, err := stateContent(msg.Content)
 		if err != nil {
 			return nil, fmt.Errorf("message %d (role=%s): %w", i, msg.Role, err)
 		}
-		stateMessages = append(stateMessages, stateMessage{Role: msg.Role, Content: body})
+		images = append(images, messageImages...)
+		if body != nil {
+			stateMessages = append(stateMessages, stateMessage{Role: msg.Role, Content: body})
+		}
 	}
 	if len(stateMessages) > 0 {
-		state.Set("messages", stateMessages)
+		conversation.Set("messages", stateMessages)
 	}
-	if state.Len() == 0 {
+	if conversation.Len() == 0 && len(images) == 0 {
 		return nil, errors.New("typesafe: nothing to evaluate; provide a system prompt or a message")
+	}
+	if len(images) == 0 {
+		return conversation, nil
+	}
+	state := make([]any, 0, len(images)+1)
+	for _, image := range images {
+		state = append(state, image)
+	}
+	if conversation.Len() > 0 {
+		state = append(state, conversation)
 	}
 	return state, nil
 }
 
 // stateContent converts message content to a state value: a string when every
 // item is text, and an array of parts (strings and embedded JSON) when it is
-// not. Thoughts and cache hints carry nothing for the model and are skipped;
+// not. Images are returned apart, for the caller to place at the top of the
+// state. Thoughts and cache hints carry nothing for the model and are skipped;
 // content that is only those is an error, because there would be nothing to
-// evaluate.
-func stateContent(c content.Content) (any, error) {
+// evaluate. Content that is only images yields a nil value: the images are
+// what it carried, and there is no text to put in the conversation.
+func stateContent(c content.Content) (any, []imagePart, error) {
 	var parts []any
+	var images []imagePart
 	var text strings.Builder
 	flushText := func() {
 		if text.Len() > 0 {
@@ -273,20 +303,25 @@ func stateContent(c content.Content) (any, error) {
 		case *content.JSON:
 			flushText()
 			parts = append(parts, json.RawMessage(v.Data))
+		case *content.ImageURL:
+			images = append(images, imagePart{Type: "image_url", ImageURL: imageURLPart{URL: v.URL}})
 		case *content.Thought, *content.CacheHint:
 			continue
 		default:
-			return nil, fmt.Errorf("%w: got %s content", ErrNonTextContent, item.Type())
+			return nil, nil, fmt.Errorf("%w: got %s content", ErrNonTextContent, item.Type())
 		}
 	}
 	if parts == nil {
 		if text.Len() == 0 {
-			return nil, errors.New("typesafe: content holds nothing the model can read")
+			if len(images) > 0 {
+				return nil, images, nil
+			}
+			return nil, nil, errors.New("typesafe: content holds nothing the model can read")
 		}
-		return text.String(), nil
+		return text.String(), images, nil
 	}
 	flushText()
-	return parts, nil
+	return parts, images, nil
 }
 
 // Stream delivers the rendered answer as a single text chunk. The API is not

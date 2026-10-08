@@ -447,6 +447,11 @@ maps the regular go-llms call onto that API:
 - The system prompt and messages become the request state, as a JSON object with a
   `system` string and a `messages` array. JSON content items are embedded as JSON so the
   model sees named fields.
+- Images are lifted out of the content and placed before that object, so the state
+  becomes an array of image parts followed by the conversation. That is the one place
+  the API reads an image; a multimodal decision model sees the images first and the
+  text after, and a text-only model ignores them. Word the text accordingly ("the
+  screenshot shows..."), because an image no longer sits between the texts around it.
 - The JSON output schema becomes the questions, one per property, with the property's
   `description` as the question. The property name is not sent to the model, so the
   description must carry the full meaning.
@@ -469,7 +474,8 @@ A property listed in the schema's `required` must be answered or the request fai
 unanswered optional property is simply left out of the rendered object.
 
 Nested objects, arrays, free strings, and tools are rejected with a typed error rather
-than approximated, because the model cannot produce them. Callers that need the full
+than approximated, because the model cannot produce them; audio and video content are
+rejected because no System One model reads them. Callers that need the full
 probability distribution or confidence behind an answer can read it from the stream.
 That means calling the provider's `Generate` directly, since `llms.LLM` does not expose
 provider streams:
