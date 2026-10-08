@@ -65,8 +65,7 @@ func collect(t *testing.T, stream llms.ProviderStream) []llms.StreamStatus {
 }
 
 func TestGenerateRoundTrip(t *testing.T) {
-	// A zero jsonmap.Map cannot be decoded into, so the capture starts with one.
-	captured := request{State: jsonmap.New()}
+	var captured capturedRequest
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorization = r.Header.Get("Authorization")
@@ -103,12 +102,10 @@ func TestGenerateRoundTrip(t *testing.T) {
 	assert.Equal(t, "jev-1.13.0", captured.Model)
 
 	// The state names its parts instead of flattening everything to a string.
-	stateJSON, err := json.Marshal(captured.State)
-	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"system": "You review data model changes.",
 		"messages": [{"role": "user", "content": "const User = MVC.createModel()"}]
-	}`, string(stateJSON))
+	}`, string(captured.State))
 
 	// Every property became a question with the description as instructions,
 	// and the enum became the choice criteria.
@@ -130,6 +127,46 @@ func TestGenerateRoundTrip(t *testing.T) {
 	require.NotNil(t, response)
 	assert.InDelta(t, 0.66, *response.Answers["severity"].Confidence, 1e-9)
 	assert.InDelta(t, 0.7, response.Answers["severity"].Probabilities["error"], 1e-9)
+}
+
+// capturedRequest is the wire request as a test server sees it, with the
+// state kept raw because it is an object or an array depending on the content.
+type capturedRequest struct {
+	State     json.RawMessage     `json:"state"`
+	Model     string              `json:"model"`
+	Questions map[string]Question `json:"questions"`
+}
+
+func TestGenerateSendsImagesAtTheTopOfTheState(t *testing.T) {
+	var captured capturedRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model": "luna-decisions", "answers": {"color": {"type": "choice", "choice": "green", "probabilities": {"red": 0, "green": 1}, "confidence": 1}}, "usage": {"input_tokens": 137, "output_tokens": 0}}`))
+	}))
+	defer server.Close()
+
+	var schema tools.ValueSchema
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"object","properties":{"color":{"type":"string","enum":["red","green"],"description":"Which colour fills the image?"}},"required":["color"]}`), &schema))
+	model := New("secret", "luna-decisions").WithEndpoint(server.URL, "Test")
+	stream := model.Generate(
+		context.Background(),
+		content.FromText("You judge a page."),
+		[]llms.Message{{Role: "user", Content: content.FromTextAndImage("Look at the image.", "data:image/png;base64,AAAA")}},
+		nil,
+		&schema,
+	)
+	require.NoError(t, stream.Err())
+
+	// On the wire the state is an array: the image part first, then the
+	// conversation with the text that came with the image.
+	assert.JSONEq(t, `[
+		{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+		{"system": "You judge a page.", "messages": [{"role": "user", "content": "Look at the image."}]}
+	]`, string(captured.State))
+	assert.Equal(t, `{"color":"green"}`, stream.Text())
 }
 
 func TestStateEmbedsStructuredContent(t *testing.T) {
@@ -206,6 +243,26 @@ func TestStateLiftsImagesToTheTop(t *testing.T) {
 	stateJSON, err = json.Marshal(state)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"system": "hello"}`, string(stateJSON))
+
+	// An image lifted out of a message leaves the text and JSON around it in
+	// place, and a thought beside it is skipped as it always was.
+	var mixed content.Content
+	mixed.Append("before")
+	mixed.AppendThought("private reasoning")
+	mixed.AddImage("https://example.com/d.png")
+	mixed = append(mixed, content.FromRawJSON(json.RawMessage(`{"a":1}`))...)
+	state, err = stateFromLLM(nil, []llms.Message{{Role: "user", Content: mixed}})
+	require.NoError(t, err)
+	stateJSON, err = json.Marshal(state)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type": "image_url", "image_url": {"url": "https://example.com/d.png"}},
+		{"messages": [{"role": "user", "content": ["before", {"a": 1}]}]}
+	]`, string(stateJSON))
+
+	// An image with no URL is nothing the API could fetch.
+	_, err = stateFromLLM(nil, []llms.Message{{Role: "user", Content: content.Content{&content.ImageURL{}}}})
+	assert.ErrorIs(t, err, ErrEmptyImageURL)
 }
 
 func TestStateSkipsThoughtsAndRejectsAudioAndVideo(t *testing.T) {
@@ -219,24 +276,27 @@ func TestStateSkipsThoughtsAndRejectsAudioAndVideo(t *testing.T) {
 	assert.JSONEq(t, `{"system": "hello"}`, string(stateJSON))
 
 	_, err = stateFromLLM(content.Content{&content.AudioURL{URL: "https://example.com/a.mp3"}}, nil)
-	assert.ErrorIs(t, err, ErrNonTextContent)
+	assert.ErrorIs(t, err, ErrUnsupportedContent)
 
 	_, err = stateFromLLM(nil, []llms.Message{{Role: "user", Content: content.Content{&content.VideoURL{URL: "https://example.com/a.mp4"}}}})
-	assert.ErrorIs(t, err, ErrNonTextContent)
+	assert.ErrorIs(t, err, ErrUnsupportedContent)
+
+	_, err = stateFromLLM(nil, []llms.Message{{Role: "user", Content: content.Content{&content.Compaction{}}}})
+	assert.ErrorIs(t, err, ErrUnsupportedContent)
 
 	_, err = stateFromLLM(nil, nil)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrNothingToEvaluate)
 
 	// An empty text item is nothing to read either, so an empty system prompt
 	// fails here instead of shipping a request with an empty system.
 	_, err = stateFromLLM(content.FromText(""), nil)
-	assert.ErrorContains(t, err, "nothing the model can read")
+	assert.ErrorIs(t, err, ErrNothingToEvaluate)
 
 	// Content that is only a thought leaves nothing to evaluate.
 	var onlyThought content.Content
 	onlyThought.AppendThought("private reasoning")
 	_, err = stateFromLLM(onlyThought, nil)
-	assert.ErrorContains(t, err, "nothing the model can read")
+	assert.ErrorIs(t, err, ErrNothingToEvaluate)
 }
 
 func TestToolsAreRejected(t *testing.T) {

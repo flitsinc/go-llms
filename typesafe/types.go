@@ -40,9 +40,7 @@ type Response struct {
 }
 
 type request struct {
-	// State is the conversation object, or an array of image parts followed
-	// by it when the content carried images; see stateFromLLM.
-	State     any                 `json:"state"`
+	State     *state              `json:"state"`
 	Model     string              `json:"model"`
 	Questions map[string]Question `json:"questions"`
 }
@@ -53,7 +51,9 @@ type stateMessage struct {
 }
 
 // imagePart is an image at the top level of the state, in the shape the API
-// reads: a data URI or a fetchable URL under image_url.
+// reads: a data URI or a fetchable URL under image_url. The item's MIME type
+// is not sent (a data URI carries its own, and the API fetches a URL itself)
+// and its provider metadata has no System One meaning.
 type imagePart struct {
 	Type     string       `json:"type"`
 	ImageURL imageURLPart `json:"image_url"`
