@@ -859,14 +859,7 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 		case *content.CacheHint:
 			// Add cache control to the previous content item.
 			if i := len(cl) - 1; i >= 0 {
-				cc := &cacheControl{Type: "ephemeral"}
-				switch v.Duration {
-				case "short":
-					cc.TTL = "5m"
-				case "long":
-					cc.TTL = "1h"
-				}
-				cl[i].CacheControl = cc
+				cl[i].CacheControl = cacheControlFromHint(v)
 			}
 			continue // Skip appending empty content item
 		default:
@@ -877,8 +870,33 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 	return cl, nil
 }
 
+func cacheControlFromHint(hint *content.CacheHint) *cacheControl {
+	cc := &cacheControl{Type: "ephemeral"}
+	switch hint.Duration {
+	case "short":
+		cc.TTL = "5m"
+	case "long":
+		cc.TTL = "1h"
+	}
+	return cc
+}
+
 func messageFromLLM(m llms.Message) (message, error) {
-	apiContent, err := contentFromLLM(m.Content)
+	messageContent := m.Content
+	var toolCacheControl *cacheControl
+	if m.Role == "tool" {
+		// A tool result is one cacheable block. Its nested text and images
+		// cannot carry breakpoints, including when the result itself is empty.
+		messageContent = make(content.Content, 0, len(m.Content))
+		for _, item := range m.Content {
+			if hint, ok := item.(*content.CacheHint); ok {
+				toolCacheControl = cacheControlFromHint(hint)
+				continue
+			}
+			messageContent = append(messageContent, item)
+		}
+	}
+	apiContent, err := contentFromLLM(messageContent)
 	if err != nil {
 		return message{}, err
 	}
@@ -889,10 +907,11 @@ func messageFromLLM(m llms.Message) (message, error) {
 			Role: "user",
 			Content: []contentItem{
 				{
-					Type:      "tool_result",
-					ToolUseID: m.ToolCallID,
-					Content:   apiContent,
-					IsError:   m.IsError,
+					Type:         "tool_result",
+					ToolUseID:    m.ToolCallID,
+					Content:      apiContent,
+					IsError:      m.IsError,
+					CacheControl: toolCacheControl,
 				},
 			},
 		}, nil
