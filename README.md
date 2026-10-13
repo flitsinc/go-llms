@@ -460,6 +460,13 @@ maps the regular go-llms call onto that API:
 - The answers come back as the JSON object the schema describes, in one text chunk, so
   structured-output callers work unchanged.
 
+Some System One models refuse that conversation object and read only a state of their
+own shape; OpenRouter's Respan Span-01, for example, takes a transcript whose last
+assistant message is judged. `WithState` replaces the default state with whatever a
+builder returns from the system prompt and messages. The builder owns the conversion,
+including tool messages, which reach it instead of being refused, and its error fails
+the request before anything is sent.
+
 Supported property types:
 
 | Property type        | Question | Rendered answer                                    |

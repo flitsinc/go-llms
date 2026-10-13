@@ -40,7 +40,8 @@ type Response struct {
 }
 
 type request struct {
-	State     *state              `json:"state"`
+	// State is a *state unless the model has its own [StateFunc].
+	State     any                 `json:"state"`
 	Model     string              `json:"model"`
 	Questions map[string]Question `json:"questions"`
 }

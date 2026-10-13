@@ -6,7 +6,8 @@
 //   - The system prompt and messages become the request state, as a JSON
 //     object with a "system" string and a "messages" array. Images are lifted
 //     out of the content and sent before that object, as the image parts a
-//     multimodal decision model reads; see [state].
+//     multimodal decision model reads; see [state]. A model that only reads
+//     some other state shape gets its own builder through [Model.WithState].
 //   - The JSON output schema becomes the questions: one per property, with the
 //     property description as the question. See [questionsFromSchema] for the
 //     supported property types.
@@ -71,7 +72,15 @@ type Model struct {
 	endpoint   string
 	company    string
 	httpClient *http.Client
+	buildState StateFunc
 }
+
+// StateFunc builds a request's state from the system prompt and messages. The
+// returned value is sent as the request's "state" field, so it must marshal to
+// JSON. An error fails the request before anything is sent, and reaches the
+// caller unwrapped, so a builder can return sentinels callers match with
+// errors.Is.
+type StateFunc func(systemPrompt content.Content, messages []llms.Message) (any, error)
 
 // New creates a provider for the given model, such as "jev-latest" or a
 // pinned version like "jev-1.13.0".
@@ -89,6 +98,18 @@ func New(apiKey, model string) *Model {
 func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
 	m.company = company
+	return m
+}
+
+// WithState replaces the default state, the conversation object described in
+// the package documentation, with the value build returns. It is for a model
+// that refuses that object and only reads a state of its own shape. The
+// builder owns the whole conversion, including which content and roles it
+// accepts: tool messages and tool calls reach it instead of being refused, so
+// it decides whether its shape can carry them. A toolbox with tools is still
+// refused before the builder runs, because no System One model calls tools.
+func (m *Model) WithState(build StateFunc) *Model {
+	m.buildState = build
 	return m
 }
 
@@ -117,7 +138,13 @@ func (m *Model) Generate(
 		return &Stream{err: ErrToolsUnsupported}
 	}
 
-	requestState, err := stateFromLLM(systemPrompt, messages)
+	var requestState any
+	var err error
+	if m.buildState != nil {
+		requestState, err = m.buildState(systemPrompt, messages)
+	} else {
+		requestState, err = stateFromLLM(systemPrompt, messages)
+	}
 	if err != nil {
 		return &Stream{err: err}
 	}
