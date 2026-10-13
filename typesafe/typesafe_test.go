@@ -299,6 +299,57 @@ func TestStateSkipsThoughtsAndRejectsAudioAndVideo(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNothingToEvaluate)
 }
 
+// A model with its own state shape gets exactly what its builder returns as
+// the state, with the questions and answers unchanged. The builder sees tool
+// messages instead of the provider refusing them, and its error fails the
+// request before anything is sent, unwrapped so callers can match it.
+func TestWithStateSendsTheBuiltState(t *testing.T) {
+	var captured capturedRequest
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"span-01","answers":{"exposes_pii":{"type":"noul","noul":0.2}},"usage":{"input_tokens":20,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	errNoOutput := errors.New("no output to judge")
+	build := func(systemPrompt content.Content, messages []llms.Message) (any, error) {
+		last := messages[len(messages)-1]
+		if last.Role != "assistant" {
+			return nil, errNoOutput
+		}
+		input := make([]map[string]string, 0, len(messages))
+		for _, msg := range messages[:len(messages)-1] {
+			input = append(input, map[string]string{"role": msg.Role, "content": msg.Content[0].(*content.Text).Text})
+		}
+		return map[string]any{"input": input, "output": map[string]string{"role": "assistant", "content": last.Content[0].(*content.Text).Text}}, nil
+	}
+	model := New("secret", "span-01").WithEndpoint(server.URL, "Test").WithState(build)
+	schema := objectSchema(prop("exposes_pii", tools.ValueSchema{Type: "boolean", Description: "Does the reply expose personal data?"}))
+
+	stream := model.Generate(context.Background(), content.FromText("ignored by this builder"), []llms.Message{
+		{Role: "user", Content: content.FromText("Run the tests.")},
+		{Role: "tool", ToolCallID: "call_1", Content: content.FromText("1 failed")},
+		{Role: "assistant", Content: content.FromText("All done.")},
+	}, nil, schema)
+	require.NoError(t, stream.Err())
+	assert.JSONEq(t, `{
+		"input": [{"role": "user", "content": "Run the tests."}, {"role": "tool", "content": "1 failed"}],
+		"output": {"role": "assistant", "content": "All done."}
+	}`, string(captured.State))
+	assert.Equal(t, Question{Type: "noul", Instructions: "Does the reply expose personal data?"}, captured.Questions["exposes_pii"])
+	assert.Equal(t, `{"exposes_pii":false}`, stream.Text())
+
+	stream = model.Generate(context.Background(), nil, []llms.Message{{Role: "user", Content: content.FromText("Run the tests.")}}, nil, schema)
+	assert.ErrorIs(t, stream.Err(), errNoOutput)
+	assert.Equal(t, errNoOutput, stream.Err())
+	assert.Equal(t, 1, requests)
+}
+
 func TestToolsAreRejected(t *testing.T) {
 	model := New("secret", "jev-latest")
 
