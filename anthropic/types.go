@@ -85,9 +85,13 @@ type contentItem struct {
 
 	// Thinking related fields:
 
-	Thinking  string `json:"thinking,omitempty"`  // Claude's internal reasoning process (required for "thinking" type)
-	Signature string `json:"signature,omitempty"` // Cryptographic signature for thinking verification (required for "thinking" type)
-	Data      string `json:"data,omitempty"`      // Base64-encoded redacted thinking content (required for "redacted_thinking" type)
+	// Thinking is a pointer because the API requires the field on every
+	// "thinking" block, even an empty one: it returns empty thinking text when
+	// display is "omitted" or a summary comes back blank, and rejects a replay
+	// of that block if the field is missing.
+	Thinking  *string `json:"thinking,omitempty"`  // Claude's internal reasoning process (required for "thinking" type)
+	Signature string  `json:"signature,omitempty"` // Cryptographic signature for thinking verification (required for "thinking" type)
+	Data      string  `json:"data,omitempty"`      // Base64-encoded redacted thinking content (required for "redacted_thinking" type)
 
 	// Text content.
 	Text string `json:"text,omitempty"`

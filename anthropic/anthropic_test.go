@@ -491,6 +491,49 @@ func TestAnthropicRedactedThinkingRoundTrip(t *testing.T) {
 	assert.Equal(t, token, apiContent[0].Data)
 }
 
+// TestAnthropicEmptyThinkingRoundTrip pins that a thinking block whose text
+// came back empty is replayed with an empty "thinking" field next to its
+// signature. The API returns such blocks (display "omitted", or a summary that
+// came back blank) and rejects the whole request when the field is left out,
+// which leaves every later turn of the conversation failing the same way.
+func TestAnthropicEmptyThinkingRoundTrip(t *testing.T) {
+	const signature = "EqQBCkYIBBgCKkBEmptyThinkingSignature"
+
+	var streamContent strings.Builder
+	streamContent.WriteString(sseEvent(streamEvent{
+		Type:    "message_start",
+		Message: &messageEvent{Role: "assistant"},
+	}))
+	streamContent.WriteString(sseEvent(streamEvent{
+		Type:         "content_block_start",
+		Index:        0,
+		ContentBlock: &contentBlock{Type: "thinking"},
+	}))
+	streamContent.WriteString(sseEvent(streamEvent{
+		Type:  "content_block_delta",
+		Index: 0,
+		Delta: delta{Type: "signature_delta", Signature: signature},
+	}))
+	streamContent.WriteString(sseEvent(streamEvent{Type: "content_block_stop", Index: 0}))
+	streamContent.WriteString(sseEvent(streamEvent{Type: "message_stop"}))
+
+	stream := newTestAnthropicStream(context.Background(), "claude-opus-4-7", streamContent.String())
+	for range stream.Iter() {
+	}
+	require.NoError(t, stream.Err())
+
+	thought, ok := stream.Message().Content[0].(*content.Thought)
+	require.True(t, ok)
+	assert.Empty(t, thought.Text)
+	assert.Equal(t, signature, thought.Signature)
+
+	apiContent, err := contentFromLLM(stream.Message().Content)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(apiContent)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"type":"thinking","thinking":"","signature":"`+signature+`"}]`, string(encoded))
+}
+
 func TestContentFromLLMEdgeCases(t *testing.T) {
 	t.Run("Empty Text Content", func(t *testing.T) {
 		llmContent := content.FromText("")
