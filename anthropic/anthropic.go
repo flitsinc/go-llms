@@ -847,7 +847,8 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 				ci.Data = v.Encrypted
 			} else {
 				ci.Type = "thinking"
-				ci.Thinking = v.Text
+				thinking := v.Text
+				ci.Thinking = &thinking
 				ci.Signature = v.Signature
 			}
 		case *content.Compaction:
