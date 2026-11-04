@@ -32,17 +32,22 @@ type Model struct {
 	contextCompaction   *ContextCompaction
 	bearerAuth          bool
 	httpClient          *http.Client
+	// imageLimitOverrides replace the limits of ImageLimitsFor (see
+	// WithImageLimits).
+	imageLimitOverrides llms.ImageLimits
 
 	// Vertex AI fields
 	vertexAI    bool
 	tokenSource oauth2.TokenSource
 }
 
+const defaultEndpoint = "https://api.anthropic.com/v1/messages"
+
 func New(apiKey, model string) *Model {
 	return &Model{
 		apiKey:    apiKey,
 		model:     model,
-		endpoint:  "https://api.anthropic.com/v1/messages",
+		endpoint:  defaultEndpoint,
 		company:   "Anthropic",
 		maxTokens: 1024,
 	}
@@ -169,6 +174,10 @@ func (m *Model) Generate(
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
+
+	if err := llms.CheckImageLimits(m.company, m.model, m.imageLimits(), messages); err != nil {
+		return &Stream{err: err}
+	}
 
 	var apiMessages []message
 	for _, msg := range messages {

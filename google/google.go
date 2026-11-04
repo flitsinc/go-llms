@@ -88,21 +88,24 @@ func propertyValueSchema(raw any) (tools.ValueSchema, error) {
 }
 
 type Model struct {
-	tokenSource      oauth2.TokenSource
-	model            string
-	endpoint         string
-	maxOutputTokens  int
-	temperature      float64
-	topK             int
-	topP             float64
-	includeThoughts  bool
-	thinkingBudget   int
-	thinkingLevel    ThinkingLevel
-	mediaResolution  MediaResolution
-	modalities       []string
-	speechVoice      string
-	imageAspectRatio string
-	httpClient       *http.Client
+	tokenSource oauth2.TokenSource
+	model       string
+	endpoint    string
+	// imageLimitOverrides replace the limits of ImageLimitsFor (see
+	// WithImageLimits).
+	imageLimitOverrides llms.ImageLimits
+	maxOutputTokens     int
+	temperature         float64
+	topK                int
+	topP                float64
+	includeThoughts     bool
+	thinkingBudget      int
+	thinkingLevel       ThinkingLevel
+	mediaResolution     MediaResolution
+	modalities          []string
+	speechVoice         string
+	imageAspectRatio    string
+	httpClient          *http.Client
 
 	// streamFunctionCallArguments enables streaming of function call arguments
 	// on Vertex AI Gemini 3+ models. When true, the backend sends partial argument
@@ -255,6 +258,10 @@ func (m *Model) Generate(
 
 	if m.endpoint == "" {
 		return &Stream{err: fmt.Errorf("must call either WithVertexAI(…) or WithGenerativeLanguageAPI(…) first")}
+	}
+
+	if err := llms.CheckImageLimits(m.Company(), m.model, m.imageLimits(), messages); err != nil {
+		return &Stream{err: err}
 	}
 
 	var apiMessages []message

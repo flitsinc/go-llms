@@ -3,6 +3,7 @@ package openai
 import (
 	"fmt"
 
+	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
 
@@ -25,6 +26,9 @@ type responsesConfig struct {
 	promptCacheKey    string
 	compaction        *ContextCompaction
 	specialTools      []ResponseTool
+	// imageLimitOverrides replace the image limits of the endpoint (see
+	// WithImageLimits).
+	imageLimitOverrides llms.ImageLimits
 }
 
 // buildResponsesPayload builds the API payload map from config fields, input,
