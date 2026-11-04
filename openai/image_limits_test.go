@@ -75,7 +75,10 @@ func TestGenerateRefusesTooManyImagesBeforeSending(t *testing.T) {
 			assert.Equal(t, llms.ImageLimitTooMany, limitErr.Reason)
 			assert.Equal(t, 1, limitErr.Limit)
 			assert.Equal(t, 2, limitErr.Count)
-			assert.Equal(t, []llms.ImageRef{{Message: 0, Part: 0}, {Message: 2, Part: 0}}, limitErr.Images)
+			require.Len(t, limitErr.Images, 2)
+			assert.Same(t, messages[0].Content[0], limitErr.Images[0].Image)
+			assert.Same(t, messages[2].Content[0], limitErr.Images[1].Image)
+			assert.Equal(t, 2, limitErr.Images[1].Message)
 		})
 	}
 }

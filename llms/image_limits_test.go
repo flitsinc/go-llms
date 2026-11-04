@@ -149,6 +149,10 @@ func TestCheckImageLimits(t *testing.T) {
 			tt.want.Provider = "Anthropic"
 			tt.want.Model = "claude-test"
 			tt.want.Limits = tt.limits
+			// Each reference carries the caller's own item.
+			for i, ref := range tt.want.Images {
+				tt.want.Images[i].Image = tt.messages[ref.Message].Content[ref.Part].(*content.ImageURL)
+			}
 			assert.Equal(t, tt.want, limitErr)
 			assert.NotEmpty(t, limitErr.Error())
 		})
@@ -190,4 +194,23 @@ func TestImageLimitErrorMaxImagesThatFit(t *testing.T) {
 			assert.Equal(t, tt.wantOK, ok)
 		})
 	}
+}
+
+// A reference names the caller's own image item, so a caller can recognise
+// it by identity even after the messages it built were reordered before the
+// check.
+func TestImageRefCarriesTheCallersItem(t *testing.T) {
+	small := imageItem(pngDataURI(t, 2, 2))
+	huge := imageItem(pngDataURI(t, 8001, 1))
+	built := []Message{
+		{Role: "user", Content: content.Content{huge}},
+		{Role: "user", Content: content.Content{small}},
+	}
+	sent := []Message{built[1], built[0]}
+	err := CheckImageLimits("Anthropic", "claude-test", ImageLimits{MaxDimension: 8000}, sent)
+	var limitErr *ImageLimitError
+	require.True(t, errors.As(err, &limitErr), "got %v", err)
+	require.Len(t, limitErr.Images, 1)
+	assert.Same(t, huge, limitErr.Images[0].Image)
+	assert.Equal(t, 1, limitErr.Images[0].Message, "the position is the one Generate got")
 }

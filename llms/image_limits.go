@@ -77,12 +77,18 @@ const (
 )
 
 // ImageRef points at one image in the messages passed to
-// [Provider.Generate]: Content[Part] of messages[Message]. A tool result's
-// images are parts of its "tool" message, even where the provider nests them
-// inside a tool result block on the wire.
+// [Provider.Generate]: Image is Content[Part] of messages[Message]. A tool
+// result's images are parts of its "tool" message, even where the provider
+// nests them inside a tool result block on the wire.
+//
+// Image is the caller's own item, so a caller that keeps a pointer to each
+// image it sends can recognise the offending ones by identity, however the
+// messages were reordered, merged or rewritten between the caller and
+// Generate. Message and Part are only meaningful for the slice Generate got.
 type ImageRef struct {
 	Message int
 	Part    int
+	Image   *content.ImageURL
 }
 
 // ImageLimitError is returned, before anything is sent, when a request breaks
@@ -159,7 +165,7 @@ func CheckImageLimits(provider, model string, limits ImageLimits, messages []Mes
 	for i, msg := range messages {
 		for j, item := range msg.Content {
 			if img, ok := item.(*content.ImageURL); ok {
-				images = append(images, ImageRef{Message: i, Part: j})
+				images = append(images, ImageRef{Message: i, Part: j, Image: img})
 				urls = append(urls, img)
 			}
 		}

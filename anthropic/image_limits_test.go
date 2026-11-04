@@ -115,7 +115,9 @@ func TestGenerateRefusesImageLimitsBeforeSending(t *testing.T) {
 			assert.Equal(t, tt.reason, limitErr.Reason)
 			assert.Equal(t, tt.limit, limitErr.Limit)
 			// The first image is the first tool result: message 2, part 0.
-			assert.Equal(t, llms.ImageRef{Message: 2, Part: 0}, limitErr.Images[0])
+			assert.Equal(t, 2, limitErr.Images[0].Message)
+			assert.Equal(t, 0, limitErr.Images[0].Part)
+			assert.Same(t, tt.messages[2].Content[0], limitErr.Images[0].Image)
 		})
 	}
 }
