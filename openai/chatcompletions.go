@@ -59,7 +59,9 @@ type ChatCompletionsAPI struct {
 	// Tracks whether prompt cache retention was explicitly configured by the caller.
 	promptCacheRetentionExplicit bool
 
-	images imageLimitConfig
+	// imageLimitOverrides replace the image limits of the endpoint (see
+	// WithImageLimits).
+	imageLimitOverrides llms.ImageLimits
 }
 
 const defaultChatCompletionsEndpoint = "https://api.openai.com/v1/chat/completions"
@@ -525,7 +527,7 @@ func (m *ChatCompletionsAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
-	if err := llms.CheckImageLimits(m.company, m.model, m.images.resolve(m.endpoint), messages); err != nil {
+	if err := llms.CheckImageLimits(m.company, m.model, imageLimits(m.endpoint, m.imageLimitOverrides), messages); err != nil {
 		return &ChatCompletionsStream{err: err}
 	}
 	payload, err := m.BuildPayloadWithContext(ctx, systemPrompt, messages, toolbox, jsonOutputSchema)

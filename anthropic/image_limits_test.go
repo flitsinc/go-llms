@@ -93,7 +93,7 @@ func TestGenerateRefusesImageLimitsBeforeSending(t *testing.T) {
 		},
 		{
 			name:     "caller-supplied count limit",
-			model:    New("key", "claude-opus-4-6").WithMaxImages(3),
+			model:    New("key", "claude-opus-4-6").WithImageLimits(llms.ImageLimits{MaxImages: 3}),
 			messages: screenshotTurns(4, tiny),
 			reason:   llms.ImageLimitTooMany,
 			limit:    3,
@@ -118,6 +118,25 @@ func TestGenerateRefusesImageLimitsBeforeSending(t *testing.T) {
 			assert.Equal(t, llms.ImageRef{Message: 2, Part: 0}, limitErr.Images[0])
 		})
 	}
+}
+
+func TestModelImageLimitsByPlatform(t *testing.T) {
+	assert.Equal(t, maxImageBytes, New("key", "claude-opus-4-6").imageLimits().MaxImageBytes)
+	assert.Equal(t, maxImageBytes, New("", "claude-opus-4-6").WithVertexAI(nil, "project", "us-east5").imageLimits().MaxImageBytes)
+	assert.Zero(t, New("key", "anthropic/claude-opus-4.6").WithEndpoint("https://openrouter.ai/api/v1/messages", "OpenRouter").imageLimits().MaxImageBytes)
+	// The platform follows the endpoint the model ends up with, whatever the
+	// order of the options.
+	assert.Equal(t, maxImageBytes, New("key", "claude-opus-4-6").WithEndpoint("https://gateway.example", "Gateway").
+		WithVertexAI(nil, "project", "global").imageLimits().MaxImageBytes)
+
+	limits := New("key", "claude-future-1").WithImageLimits(llms.ImageLimits{MaxImages: 50, ManyImagesMaxDimension: 2000}).imageLimits()
+	assert.Equal(t, llms.ImageLimits{
+		MaxImages:              50,
+		MaxImageBytes:          maxImageBytes,
+		MaxDimension:           8000,
+		ManyImagesThreshold:    20,
+		ManyImagesMaxDimension: 2000,
+	}, limits, "a caller overrides the count and pixel limits of a model the table does not know")
 }
 
 func TestGenerateLeavesImageSizeToCustomEndpoints(t *testing.T) {

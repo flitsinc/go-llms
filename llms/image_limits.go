@@ -38,6 +38,24 @@ type ImageLimits struct {
 	ManyImagesMaxDimension int
 }
 
+// WithOverrides returns l with every nonzero field of overrides in place of
+// its own. Providers resolve the limits they check this way: their own table
+// for the model, overridden by what the caller set with WithImageLimits, so a
+// caller can supply or correct any limit for a model the table does not know.
+func (l ImageLimits) WithOverrides(overrides ImageLimits) ImageLimits {
+	override := func(limit *int, value int) {
+		if value != 0 {
+			*limit = value
+		}
+	}
+	override(&l.MaxImages, overrides.MaxImages)
+	override(&l.MaxImageBytes, overrides.MaxImageBytes)
+	override(&l.MaxDimension, overrides.MaxDimension)
+	override(&l.ManyImagesThreshold, overrides.ManyImagesThreshold)
+	override(&l.ManyImagesMaxDimension, overrides.ManyImagesMaxDimension)
+	return l
+}
+
 // ImageLimitReason names the limit a request broke.
 type ImageLimitReason string
 
@@ -91,6 +109,26 @@ type ImageLimitError struct {
 	// that is every image in the request, since any of them can go; for the
 	// other reasons it is each image that is too large.
 	Images []ImageRef
+}
+
+// MaxImagesThatFit returns how many images a request may carry to clear the
+// refusal, and false when sending fewer images cannot clear it because one
+// image is too large on its own. For [ImageLimitTooMany] it is the count
+// limit; for [ImageLimitManyImageDimensions] it is the many-image threshold
+// (or the count limit, if lower), at or under which the stricter dimension
+// limit no longer applies.
+func (e *ImageLimitError) MaxImagesThatFit() (int, bool) {
+	switch e.Reason {
+	case ImageLimitTooMany:
+		return e.Limits.MaxImages, true
+	case ImageLimitManyImageDimensions:
+		n := e.Limits.ManyImagesThreshold
+		if e.Limits.MaxImages > 0 && e.Limits.MaxImages < n {
+			n = e.Limits.MaxImages
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 func (e *ImageLimitError) Error() string {

@@ -50,21 +50,18 @@ func ImageLimitsFor(model string, vertexAI bool) llms.ImageLimits {
 	return llms.ImageLimits{MaxImages: maxImagesVertexAI}
 }
 
-// WithMaxImages sets the most images a request may carry, for a model whose
-// limit differs from the one [ImageLimitsFor] knows. A request with more fails
-// with an [*llms.ImageLimitError] without being sent.
-func (m *Model) WithMaxImages(n int) *Model {
-	m.maxImages = n
+// WithImageLimits overrides the image limits a request is checked against
+// before it is sent: each nonzero field replaces the limit [ImageLimitsFor]
+// would apply, for a model go-llms does not know, and fields set by earlier
+// calls stay. A request that breaks the result fails with an [*llms.ImageLimitError].
+func (m *Model) WithImageLimits(overrides llms.ImageLimits) *Model {
+	m.imageLimitOverrides = m.imageLimitOverrides.WithOverrides(overrides)
 	return m
 }
 
 // imageLimits returns the limits Generate checks a request against.
 func (m *Model) imageLimits() llms.ImageLimits {
-	limits := ImageLimitsFor(m.model, isVertexAIEndpoint(m.endpoint))
-	if m.maxImages > 0 {
-		limits.MaxImages = m.maxImages
-	}
-	return limits
+	return ImageLimitsFor(m.model, isVertexAIEndpoint(m.endpoint)).WithOverrides(m.imageLimitOverrides)
 }
 
 func isVertexAIEndpoint(endpoint string) bool {

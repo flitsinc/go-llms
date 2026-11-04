@@ -60,7 +60,7 @@ var smallContextModelsExact = []string{
 
 // ImageLimitsFor returns the image limits Claude applies to a request for
 // model on any platform, except the per-image size limit, which depends on
-// the platform (see [Model.Generate]). model may be in any of the forms
+// the platform (see [Model.WithImageLimits]). model may be in any of the forms
 // providers use: "claude-haiku-4-5-20251001", Vertex AI's
 // "claude-haiku-4-5@20251001", Bedrock's
 // "us.anthropic.claude-haiku-4-5-20251001-v1:0" or OpenRouter's
@@ -81,6 +81,28 @@ func ImageLimitsFor(model string) llms.ImageLimits {
 		limits.MaxImages = maxImagesSmallContext
 	}
 	return limits
+}
+
+// WithImageLimits overrides the image limits a request is checked against
+// before it is sent: each nonzero field replaces the limit [ImageLimitsFor]
+// (and the platform) would apply, for a model or platform go-llms does not
+// know, and fields set by earlier calls stay. A request that breaks the result
+// fails with an [*llms.ImageLimitError].
+func (m *Model) WithImageLimits(overrides llms.ImageLimits) *Model {
+	m.imageLimitOverrides = m.imageLimitOverrides.WithOverrides(overrides)
+	return m
+}
+
+// imageLimits returns the limits Generate checks a request against. The
+// per-image size limit is only known for Anthropic's own endpoint and Vertex
+// AI; an Anthropic-compatible endpoint may route to Amazon Bedrock, which
+// allows less, so it is left to the endpoint.
+func (m *Model) imageLimits() llms.ImageLimits {
+	limits := ImageLimitsFor(m.model)
+	if m.vertexAI || m.endpoint == defaultEndpoint {
+		limits.MaxImageBytes = maxImageBytes
+	}
+	return limits.WithOverrides(m.imageLimitOverrides)
 }
 
 func hasSmallContextWindow(model string) bool {

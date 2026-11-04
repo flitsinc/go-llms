@@ -154,3 +154,40 @@ func TestCheckImageLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestImageLimitsWithOverrides(t *testing.T) {
+	known := ImageLimits{MaxImages: 600, MaxImageBytes: 10 << 20, MaxDimension: 8000, ManyImagesThreshold: 20, ManyImagesMaxDimension: 3000}
+	assert.Equal(t, known, known.WithOverrides(ImageLimits{}), "no overrides keep the provider's limits")
+	assert.Equal(t,
+		ImageLimits{MaxImages: 50, MaxImageBytes: 10 << 20, MaxDimension: 8000, ManyImagesThreshold: 10, ManyImagesMaxDimension: 2000},
+		known.WithOverrides(ImageLimits{MaxImages: 50, ManyImagesThreshold: 10, ManyImagesMaxDimension: 2000}),
+	)
+	assert.Equal(t, ImageLimits{MaxImages: 5}, ImageLimits{}.WithOverrides(ImageLimits{MaxImages: 5}),
+		"a caller supplies limits a provider does not know")
+}
+
+func TestImageLimitErrorMaxImagesThatFit(t *testing.T) {
+	claude := ImageLimits{MaxImages: 100, MaxDimension: 8000, ManyImagesThreshold: 20, ManyImagesMaxDimension: 3000}
+	tests := []struct {
+		name   string
+		err    ImageLimitError
+		want   int
+		wantOK bool
+	}{
+		{"too many", ImageLimitError{Reason: ImageLimitTooMany, Limit: 100, Limits: claude}, 100, true},
+		{"many-image dimensions", ImageLimitError{Reason: ImageLimitManyImageDimensions, Limit: 3000, Limits: claude}, 20, true},
+		{"many-image threshold above the count limit", ImageLimitError{
+			Reason: ImageLimitManyImageDimensions,
+			Limits: ImageLimits{MaxImages: 10, ManyImagesThreshold: 20, ManyImagesMaxDimension: 3000},
+		}, 10, true},
+		{"one image too large", ImageLimitError{Reason: ImageLimitTooLarge, Limits: claude}, 0, false},
+		{"one image too wide", ImageLimitError{Reason: ImageLimitDimensions, Limits: claude}, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.err.MaxImagesThatFit()
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantOK, ok)
+		})
+	}
+}

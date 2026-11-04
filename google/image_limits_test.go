@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/flitsinc/go-llms/llms"
 )
 
 func TestImageLimitsFor(t *testing.T) {
@@ -29,5 +31,5 @@ func TestModelImageLimits(t *testing.T) {
 	assert.Equal(t, 3000, New("gemini-3-flash-preview").WithVertexAIAccessToken("token", "project", "global").imageLimits().MaxImages)
 	assert.Equal(t, 3000, New("gemini-3-flash-preview").WithVertexAIAccessToken("token", "project", "us-east5").imageLimits().MaxImages)
 	assert.Equal(t, 3600, New("gemini-3-flash-preview").WithGeminiAPI("key").imageLimits().MaxImages)
-	assert.Equal(t, 10, New("gemini-3-flash-preview").WithGeminiAPI("key").WithMaxImages(10).imageLimits().MaxImages)
+	assert.Equal(t, 10, New("gemini-3-flash-preview").WithGeminiAPI("key").WithImageLimits(llms.ImageLimits{MaxImages: 10}).imageLimits().MaxImages)
 }

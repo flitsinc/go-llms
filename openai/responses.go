@@ -153,7 +153,7 @@ func (m *ResponsesAPI) Generate(
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
 
-	if err := llms.CheckImageLimits(m.company, m.model, m.images.resolve(m.endpoint), messages); err != nil {
+	if err := llms.CheckImageLimits(m.company, m.model, imageLimits(m.endpoint, m.imageLimitOverrides), messages); err != nil {
 		return newResponsesStreamError(err)
 	}
 

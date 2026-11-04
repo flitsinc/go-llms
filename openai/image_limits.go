@@ -19,76 +19,41 @@ func ImageLimits() llms.ImageLimits {
 	return llms.ImageLimits{MaxImages: maxImages}
 }
 
-// imageLimitConfig holds a provider's image limit options. Without them, a
-// request to OpenAI's own API is checked against [ImageLimits] and a request
-// to another endpoint is not checked, because go-llms cannot know what an
-// OpenAI-compatible endpoint accepts.
-type imageLimitConfig struct {
-	limits    llms.ImageLimits
-	limitsSet bool
-	maxImages int
-}
-
-func (c imageLimitConfig) resolve(endpoint string) llms.ImageLimits {
-	limits := c.limits
-	if !c.limitsSet && isOpenAIEndpoint(endpoint) {
-		limits = ImageLimits()
+// imageLimits returns the limits a request to endpoint is checked against:
+// OpenAI's own for OpenAI's API and none for another endpoint, because
+// go-llms cannot know what an OpenAI-compatible endpoint accepts, overridden
+// by what the caller set with WithImageLimits.
+func imageLimits(endpoint string, overrides llms.ImageLimits) llms.ImageLimits {
+	var known llms.ImageLimits
+	if u, err := url.Parse(endpoint); err == nil && u.Hostname() == "api.openai.com" {
+		known = ImageLimits()
 	}
-	if c.maxImages > 0 {
-		limits.MaxImages = c.maxImages
-	}
-	return limits
+	return known.WithOverrides(overrides)
 }
 
-func isOpenAIEndpoint(endpoint string) bool {
-	u, err := url.Parse(endpoint)
-	return err == nil && u.Hostname() == "api.openai.com"
-}
-
-// WithImageLimits sets the image limits a request is checked against before it
-// is sent, replacing OpenAI's own for an endpoint that serves other models. A
-// request that breaks them fails with an [*llms.ImageLimitError].
-func (m *ChatCompletionsAPI) WithImageLimits(limits llms.ImageLimits) *ChatCompletionsAPI {
-	m.images.limits = limits
-	m.images.limitsSet = true
+// WithImageLimits overrides the image limits a request is checked against
+// before it is sent: each nonzero field replaces OpenAI's limit, or supplies
+// one for another endpoint, and fields set by earlier calls stay. A request
+// that breaks the result fails with an [*llms.ImageLimitError].
+func (m *ChatCompletionsAPI) WithImageLimits(overrides llms.ImageLimits) *ChatCompletionsAPI {
+	m.imageLimitOverrides = m.imageLimitOverrides.WithOverrides(overrides)
 	return m
 }
 
-// WithMaxImages sets the most images a request may carry, keeping the other
-// image limits. A request with more fails with an [*llms.ImageLimitError].
-func (m *ChatCompletionsAPI) WithMaxImages(n int) *ChatCompletionsAPI {
-	m.images.maxImages = n
+// WithImageLimits overrides the image limits a request is checked against
+// before it is sent: each nonzero field replaces OpenAI's limit, or supplies
+// one for another endpoint, and fields set by earlier calls stay. A request
+// that breaks the result fails with an [*llms.ImageLimitError].
+func (m *ResponsesAPI) WithImageLimits(overrides llms.ImageLimits) *ResponsesAPI {
+	m.imageLimitOverrides = m.imageLimitOverrides.WithOverrides(overrides)
 	return m
 }
 
-// WithImageLimits sets the image limits a request is checked against before it
-// is sent, replacing OpenAI's own for an endpoint that serves other models. A
-// request that breaks them fails with an [*llms.ImageLimitError].
-func (m *ResponsesAPI) WithImageLimits(limits llms.ImageLimits) *ResponsesAPI {
-	m.images.limits = limits
-	m.images.limitsSet = true
-	return m
-}
-
-// WithMaxImages sets the most images a request may carry, keeping the other
-// image limits. A request with more fails with an [*llms.ImageLimitError].
-func (m *ResponsesAPI) WithMaxImages(n int) *ResponsesAPI {
-	m.images.maxImages = n
-	return m
-}
-
-// WithImageLimits sets the image limits a request is checked against before it
-// is sent, replacing OpenAI's own for an endpoint that serves other models. A
-// request that breaks them fails with an [*llms.ImageLimitError].
-func (m *WebSocketResponsesAPI) WithImageLimits(limits llms.ImageLimits) *WebSocketResponsesAPI {
-	m.images.limits = limits
-	m.images.limitsSet = true
-	return m
-}
-
-// WithMaxImages sets the most images a request may carry, keeping the other
-// image limits. A request with more fails with an [*llms.ImageLimitError].
-func (m *WebSocketResponsesAPI) WithMaxImages(n int) *WebSocketResponsesAPI {
-	m.images.maxImages = n
+// WithImageLimits overrides the image limits a request is checked against
+// before it is sent: each nonzero field replaces OpenAI's limit, or supplies
+// one for another endpoint, and fields set by earlier calls stay. A request
+// that breaks the result fails with an [*llms.ImageLimitError].
+func (m *WebSocketResponsesAPI) WithImageLimits(overrides llms.ImageLimits) *WebSocketResponsesAPI {
+	m.imageLimitOverrides = m.imageLimitOverrides.WithOverrides(overrides)
 	return m
 }
