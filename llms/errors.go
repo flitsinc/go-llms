@@ -133,3 +133,41 @@ func isCompactionBlockRejectedMessage(msg string) bool {
 		strings.Contains(msg, "`compaction` block") ||
 		strings.Contains(msg, "tag 'compaction'")
 }
+
+// IsTooManyImages reports whether the provider refused the request for the
+// images it carries: more images than the model accepts in one request, or
+// more images than the many-image threshold with one larger than the stricter
+// dimension limit that applies above it. Sending fewer images clears both.
+// Providers whose limits go-llms knows refuse such requests before sending
+// them with an [*ImageLimitError]; this covers the requests that reach the
+// provider anyway, such as a model missing from a provider's table.
+//
+// The providers answer with a plain 400 invalid_request_error (or
+// INVALID_ARGUMENT on Vertex AI Gemini) and no structured code, so this is a
+// compatibility adapter that falls back to the error message, as
+// IsRequestTooLarge does (see isTooManyImagesMessage).
+func (e *HTTPError) IsTooManyImages() bool {
+	if e.StatusCode != 400 && e.Metadata.RawErrorStatusCode != 400 {
+		return false
+	}
+	return isTooManyImagesMessage(e.Message) || isTooManyImagesMessage(e.Metadata.RawErrorMessage)
+}
+
+// isTooManyImagesMessage matches the refusals observed on 2026-11-04 by
+// sending one image over each limit, directly and relayed through OpenRouter:
+//   - Anthropic, Amazon Bedrock and Microsoft Foundry for a model with a
+//     200k-token context window: "Too much media: 0 document pages + 101
+//     images > 100";
+//   - Anthropic for other models, and Claude on Vertex AI: "too many images
+//     and documents: 601 + 0 > 600";
+//   - every Claude upstream above 20 images: "messages.0.content.0.image.
+//     source.base64.data: At least one of the image dimensions exceed max
+//     allowed size for many-image requests: 3000 pixels";
+//   - Gemini on Vertex AI: "Unable to submit request because it has 3001
+//     image files but the model only supports up to 3000."
+func isTooManyImagesMessage(msg string) bool {
+	return strings.HasPrefix(msg, "Too much media: ") ||
+		strings.HasPrefix(msg, "too many images and documents: ") ||
+		strings.Contains(msg, "max allowed size for many-image requests") ||
+		strings.Contains(msg, " image files but the model only supports up to ")
+}

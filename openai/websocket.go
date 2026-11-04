@@ -318,6 +318,10 @@ func (m *WebSocketResponsesAPI) Generate(
 	toolbox *tools.Toolbox,
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
+	if err := llms.CheckImageLimits(m.company, m.model, m.images.resolve(m.endpoint), messages); err != nil {
+		return newWebSocketStreamError(err)
+	}
+
 	debugger := llms.GetDebugger(ctx)
 	if debugger == nil {
 		debugger = m.debugger

@@ -25,6 +25,7 @@ type responsesConfig struct {
 	promptCacheKey    string
 	compaction        *ContextCompaction
 	specialTools      []ResponseTool
+	images            imageLimitConfig
 }
 
 // buildResponsesPayload builds the API payload map from config fields, input,

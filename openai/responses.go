@@ -153,6 +153,10 @@ func (m *ResponsesAPI) Generate(
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
 
+	if err := llms.CheckImageLimits(m.company, m.model, m.images.resolve(m.endpoint), messages); err != nil {
+		return newResponsesStreamError(err)
+	}
+
 	// Build the input array
 	var input []ResponseInput
 

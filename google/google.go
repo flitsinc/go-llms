@@ -91,6 +91,7 @@ type Model struct {
 	tokenSource      oauth2.TokenSource
 	model            string
 	endpoint         string
+	maxImages        int
 	maxOutputTokens  int
 	temperature      float64
 	topK             int
@@ -255,6 +256,10 @@ func (m *Model) Generate(
 
 	if m.endpoint == "" {
 		return &Stream{err: fmt.Errorf("must call either WithVertexAI(…) or WithGenerativeLanguageAPI(…) first")}
+	}
+
+	if err := llms.CheckImageLimits(m.Company(), m.model, m.imageLimits(), messages); err != nil {
+		return &Stream{err: err}
 	}
 
 	var apiMessages []message

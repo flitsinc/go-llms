@@ -353,3 +353,108 @@ func TestIsReplayRejected_Reasoning(t *testing.T) {
 		})
 	}
 }
+
+func TestIsTooManyImages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  HTTPError
+		want bool
+	}{
+		{
+			name: "Anthropic count refusal for a 200k-token model",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "Too much media: 0 document pages + 101 images > 100",
+			},
+			want: true,
+		},
+		{
+			name: "Anthropic count refusal for a 1M-token model",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "too many images and documents: 601 + 0 > 600",
+			},
+			want: true,
+		},
+		{
+			name: "many-image dimension refusal",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.0.content.0.image.source.base64.data: At least one of the image dimensions exceed max allowed size for many-image requests: 3000 pixels",
+			},
+			want: true,
+		},
+		{
+			name: "Bedrock count refusal relayed by OpenRouter Chat Completions",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName:    "Amazon Bedrock",
+					RawErrorMessage: "Too much media: 0 document pages + 101 images > 100",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Gemini count refusal on Vertex AI relayed by OpenRouter",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName:       "Google",
+					RawErrorStatusCode: 400,
+					RawErrorMessage:    "Unable to submit request because it has 3001 image files but the model only supports up to 3000. Learn more: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/gemini",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "single image over the dimension limit is not about the image count",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.0.content.0.image.source.base64.data: At least one of the image dimensions exceed max allowed size: 8000 pixels",
+			},
+			want: false,
+		},
+		{
+			name: "single image over the size limit is not about the image count",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "messages.0.content.0.image.source.base64: image exceeds 10 MB maximum: 10503224 bytes > 10485760 bytes",
+			},
+			want: false,
+		},
+		{
+			name: "prompt too long",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "invalid_request_error",
+				Message:    "prompt is too long: 1203058 tokens > 1000000 maximum",
+			},
+			want: false,
+		},
+		{
+			name: "refusal text on a status that is not a request refusal",
+			err: HTTPError{
+				StatusCode: 500,
+				Message:    "Too much media: 0 document pages + 101 images > 100",
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.IsTooManyImages(); got != tt.want {
+				t.Errorf("IsTooManyImages() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

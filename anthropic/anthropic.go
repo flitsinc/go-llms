@@ -32,6 +32,11 @@ type Model struct {
 	contextCompaction   *ContextCompaction
 	bearerAuth          bool
 	httpClient          *http.Client
+	// customEndpoint is set by WithEndpoint: the request may reach a platform
+	// with other per-image size limits (see imageLimits).
+	customEndpoint bool
+	// maxImages overrides the image count limit of ImageLimitsFor when set.
+	maxImages int
 
 	// Vertex AI fields
 	vertexAI    bool
@@ -60,7 +65,31 @@ func (m *Model) WithBeta(betaFeature string) *Model {
 func (m *Model) WithEndpoint(endpoint, company string) *Model {
 	m.endpoint = endpoint
 	m.company = company
+	m.customEndpoint = true
 	return m
+}
+
+// WithMaxImages sets the most images a request may carry, for a model or
+// platform whose limit differs from the one [ImageLimitsFor] knows. A request
+// with more images fails with an [*llms.ImageLimitError] without being sent.
+func (m *Model) WithMaxImages(n int) *Model {
+	m.maxImages = n
+	return m
+}
+
+// imageLimits returns the limits Generate checks a request against. The
+// per-image size limit is only known for Anthropic's own endpoint and Vertex
+// AI; an Anthropic-compatible endpoint may route to Amazon Bedrock, which
+// allows less, so it is left to the endpoint.
+func (m *Model) imageLimits() llms.ImageLimits {
+	limits := ImageLimitsFor(m.model)
+	if m.maxImages > 0 {
+		limits.MaxImages = m.maxImages
+	}
+	if !m.customEndpoint {
+		limits.MaxImageBytes = maxImageBytes
+	}
+	return limits
 }
 
 // WithBearerAuth sends the API key as an "Authorization: Bearer" header
@@ -79,6 +108,7 @@ func (m *Model) WithBearerAuth() *Model {
 // anthropic_version is sent in the request body instead of as a header.
 func (m *Model) WithVertexAI(ts oauth2.TokenSource, projectID, location string) *Model {
 	m.vertexAI = true
+	m.customEndpoint = false
 	m.tokenSource = ts
 	m.company = "Google"
 	if location == "global" {
@@ -169,6 +199,10 @@ func (m *Model) Generate(
 	jsonOutputSchema *tools.ValueSchema,
 ) llms.ProviderStream {
 	debugger := llms.GetDebugger(ctx)
+
+	if err := llms.CheckImageLimits(m.company, m.model, m.imageLimits(), messages); err != nil {
+		return &Stream{err: err}
+	}
 
 	var apiMessages []message
 	for _, msg := range messages {
