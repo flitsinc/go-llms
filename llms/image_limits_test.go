@@ -148,6 +148,7 @@ func TestCheckImageLimits(t *testing.T) {
 			require.True(t, errors.As(err, &limitErr), "got %v", err)
 			tt.want.Provider = "Anthropic"
 			tt.want.Model = "claude-test"
+			tt.want.Limits = tt.limits
 			assert.Equal(t, tt.want, limitErr)
 			assert.NotEmpty(t, limitErr.Error())
 		})

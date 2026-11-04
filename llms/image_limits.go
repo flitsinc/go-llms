@@ -83,6 +83,10 @@ type ImageLimitError struct {
 	Limit int
 	// Count is the number of images in the request.
 	Count int
+	// Limits are all the limits the request was checked against, so a
+	// caller can tell how many images clear [ImageLimitManyImageDimensions]
+	// (Limits.ManyImagesThreshold) as well as [ImageLimitTooMany].
+	Limits ImageLimits
 	// Images are the offending images, oldest first. For [ImageLimitTooMany]
 	// that is every image in the request, since any of them can go; for the
 	// other reasons it is each image that is too large.
@@ -132,6 +136,7 @@ func CheckImageLimits(provider, model string, limits ImageLimits, messages []Mes
 			Reason:   reason,
 			Limit:    limit,
 			Count:    len(images),
+			Limits:   limits,
 			Images:   refs,
 		}
 	}
