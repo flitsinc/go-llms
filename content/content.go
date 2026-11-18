@@ -87,7 +87,9 @@ func (vu *VideoURL) GetMetadata() map[string]string {
 // a URL. Providers read a document through a part of its own (Anthropic
 // "document", OpenAI "file" and "input_file", Gemini inline data), which an
 // image part is not: Anthropic and OpenAI refuse a PDF sent as an image.
-// Filename names the document to providers that ask for one.
+// Filename names the document to providers that ask for one. A URL other
+// than a data URI reaches only providers that fetch one: Anthropic, Gemini,
+// OpenAI Responses and OpenRouter; OpenAI's own chat completions take data.
 type DocumentURL struct {
 	URL      string            `json:"document_url"`
 	MimeType string            `json:"mime_type,omitempty"`

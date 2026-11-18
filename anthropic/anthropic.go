@@ -820,12 +820,11 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 // mediaSource is the source of an image or document block: the bytes of a
 // data URI, or a URL Anthropic fetches.
 func mediaSource(url string) (*source, error) {
-	dataValue, found := strings.CutPrefix(url, "data:")
-	if !found {
+	if !strings.HasPrefix(url, "data:") {
 		return &source{Type: "url", URL: url}, nil
 	}
-	mimeType, data, found := strings.Cut(dataValue, ";base64,")
-	if !found {
+	mimeType, data, ok := content.ParseDataURI(url)
+	if !ok {
 		return nil, fmt.Errorf("unsupported data URI format %q", url)
 	}
 	return &source{Type: "base64", MediaType: mimeType, Data: data}, nil
