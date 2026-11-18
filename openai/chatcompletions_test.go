@@ -562,6 +562,43 @@ func TestBuildPayload_EncodesVideoURLContent(t *testing.T) {
 	assert.Equal(t, map[string]any{"url": "https://example.com/clip.mp4"}, videoPart["video_url"])
 }
 
+// A document goes in a "file" part, which OpenAI and OpenRouter read a PDF
+// from; an image part with a PDF in it is refused. OpenAI refuses a file part
+// without a filename, so a document that names none is named for its type.
+func TestBuildPayload_EncodesDocumentURLContent(t *testing.T) {
+	m := NewChatCompletionsAPI("", "gpt-4o")
+	payload, err := m.BuildPayload(
+		nil,
+		[]llms.Message{{
+			Role: "user",
+			Content: content.Content{
+				&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", Filename: "menu.pdf"},
+				&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0="},
+			},
+		}},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &raw))
+	messageContent := raw["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	require.Len(t, messageContent, 2)
+
+	assert.Equal(t, map[string]any{
+		"type": "file",
+		"file": map[string]any{"filename": "menu.pdf", "file_data": "data:application/pdf;base64,JVBERi0="},
+	}, messageContent[0])
+	assert.Equal(t, map[string]any{
+		"type": "file",
+		"file": map[string]any{"filename": "document.pdf", "file_data": "data:application/pdf;base64,JVBERi0="},
+	}, messageContent[1])
+}
+
 func TestBuildPayload_EncodesAudioURLContent(t *testing.T) {
 	m := NewChatCompletionsAPI("", "gpt-4o-audio-preview")
 	payload, err := m.BuildPayload(

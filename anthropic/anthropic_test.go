@@ -899,6 +899,22 @@ func TestAnthropic_ToolChoice_Mapping(t *testing.T) {
 	})
 }
 
+// A document goes in a "document" block, which Anthropic reads a PDF from;
+// an image block with a PDF in it is refused.
+func TestContentFromLLM_EncodesDocuments(t *testing.T) {
+	cl, err := contentFromLLM(content.Content{
+		&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", Filename: "menu.pdf"},
+		&content.DocumentURL{URL: "https://example.com/files/report.pdf"},
+	})
+	require.NoError(t, err)
+	require.Len(t, cl, 2)
+	assert.Equal(t, "document", cl[0].Type)
+	assert.Equal(t, "menu.pdf", cl[0].Title)
+	assert.Equal(t, &source{Type: "base64", MediaType: "application/pdf", Data: "JVBERi0="}, cl[0].Source)
+	assert.Equal(t, "document", cl[1].Type)
+	assert.Equal(t, &source{Type: "url", URL: "https://example.com/files/report.pdf"}, cl[1].Source)
+}
+
 func TestGenerate_UnsupportedContentReturnsStreamError(t *testing.T) {
 	m := New("key", "claude-3-sonnet")
 

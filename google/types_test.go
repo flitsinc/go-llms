@@ -70,6 +70,25 @@ func TestMessagesFromLLM_Google(t *testing.T) {
 			},
 		},
 		{
+			name: "User message - document (data URI)",
+			input: llms.Message{
+				Role: "user",
+				Content: content.Content{
+					&content.Text{Text: "Read:"},
+					&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", Filename: "menu.pdf"},
+				},
+			},
+			expected: []message{
+				{
+					Role: "user",
+					Parts: parts{
+						{Text: ptr("Read:")},
+						{InlineData: &inlineData{MimeType: "application/pdf", Data: "JVBERi0="}},
+					},
+				},
+			},
+		},
+		{
 			name: "User message - video (file URI)",
 			input: llms.Message{
 				Role: "user",

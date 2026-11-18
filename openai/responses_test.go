@@ -726,6 +726,20 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 	}
 }
 
+// A document goes in an "input_file" item: its bytes as a data URI in
+// file_data, or a URL in file_url. An input_image with a PDF in it is refused.
+func TestConvertContentToInputContent_EncodesDocuments(t *testing.T) {
+	inputs, err := convertContentToInputContent(content.Content{
+		&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", Filename: "menu.pdf"},
+		&content.DocumentURL{URL: "https://example.com/files/report.pdf"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []InputContent{
+		InputFile{Type: "input_file", Filename: "menu.pdf", FileData: "data:application/pdf;base64,JVBERi0="},
+		InputFile{Type: "input_file", Filename: "document.pdf", FileURL: "https://example.com/files/report.pdf"},
+	}, inputs)
+}
+
 func TestResponsesGenerate_UnsupportedVideoReturnsStreamError(t *testing.T) {
 	api := NewResponsesAPI("key", "gpt-5")
 

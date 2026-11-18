@@ -65,7 +65,8 @@ func (InputImage) inputContent() {}
 type InputFile struct {
 	Type     string `json:"type"` // "input_file"
 	FileID   string `json:"file_id,omitempty"`
-	FileData string `json:"file_data,omitempty"`
+	FileData string `json:"file_data,omitempty"` // a data URI
+	FileURL  string `json:"file_url,omitempty"`
 	Filename string `json:"filename,omitempty"`
 }
 

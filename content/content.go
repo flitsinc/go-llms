@@ -9,14 +9,15 @@ import (
 type Type string
 
 const (
-	TypeText       Type = "text"
-	TypeImageURL   Type = "image_url"
-	TypeAudioURL   Type = "audio_url"
-	TypeVideoURL   Type = "video_url"
-	TypeJSON       Type = "json"
-	TypeThought    Type = "thought"
-	TypeCacheHint  Type = "cache_hint"
-	TypeCompaction Type = "compaction"
+	TypeText        Type = "text"
+	TypeImageURL    Type = "image_url"
+	TypeAudioURL    Type = "audio_url"
+	TypeVideoURL    Type = "video_url"
+	TypeDocumentURL Type = "document_url"
+	TypeJSON        Type = "json"
+	TypeThought     Type = "thought"
+	TypeCacheHint   Type = "cache_hint"
+	TypeCompaction  Type = "compaction"
 )
 
 type Item interface {
@@ -80,6 +81,26 @@ func (vu *VideoURL) Type() Type {
 
 func (vu *VideoURL) GetMetadata() map[string]string {
 	return vu.Metadata
+}
+
+// DocumentURL is a document the model reads, such as a PDF, as a data URI or
+// a URL. Providers read a document through a part of its own (Anthropic
+// "document", OpenAI "file" and "input_file", Gemini inline data), which an
+// image part is not: Anthropic and OpenAI refuse a PDF sent as an image.
+// Filename names the document to providers that ask for one.
+type DocumentURL struct {
+	URL      string            `json:"document_url"`
+	MimeType string            `json:"mime_type,omitempty"`
+	Filename string            `json:"filename,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+func (du *DocumentURL) Type() Type {
+	return TypeDocumentURL
+}
+
+func (du *DocumentURL) GetMetadata() map[string]string {
+	return du.Metadata
 }
 
 type JSON struct {
@@ -347,6 +368,8 @@ func (c *Content) UnmarshalJSON(data []byte) error {
 			item = &AudioURL{}
 		case TypeVideoURL:
 			item = &VideoURL{}
+		case TypeDocumentURL:
+			item = &DocumentURL{}
 		case TypeJSON:
 			item = &JSON{}
 		case TypeThought:

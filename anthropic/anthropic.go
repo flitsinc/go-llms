@@ -817,6 +817,20 @@ func Tools(toolbox *tools.Toolbox) []Tool {
 	return toolDefs
 }
 
+// mediaSource is the source of an image or document block: the bytes of a
+// data URI, or a URL Anthropic fetches.
+func mediaSource(url string) (*source, error) {
+	dataValue, found := strings.CutPrefix(url, "data:")
+	if !found {
+		return &source{Type: "url", URL: url}, nil
+	}
+	mimeType, data, found := strings.Cut(dataValue, ";base64,")
+	if !found {
+		return nil, fmt.Errorf("unsupported data URI format %q", url)
+	}
+	return &source{Type: "base64", MediaType: mimeType, Data: data}, nil
+}
+
 func contentFromLLM(llmContent content.Content) (contentList, error) {
 	cl := []contentItem{}
 	for _, item := range llmContent {
@@ -830,23 +844,20 @@ func contentFromLLM(llmContent content.Content) (contentList, error) {
 			ci.Type = "text"
 			ci.Text = v.Text
 		case *content.ImageURL:
-			ci.Type = "image"
-			if dataValue, found := strings.CutPrefix(v.URL, "data:"); found {
-				mimeType, data, found := strings.Cut(dataValue, ";base64,")
-				if !found {
-					return nil, fmt.Errorf("unsupported data URI format %q", v.URL)
-				}
-				ci.Source = &source{
-					Type:      "base64",
-					MediaType: mimeType,
-					Data:      data,
-				}
-			} else {
-				ci.Source = &source{
-					Type: "url",
-					URL:  v.URL,
-				}
+			src, err := mediaSource(v.URL)
+			if err != nil {
+				return nil, err
 			}
+			ci.Type = "image"
+			ci.Source = src
+		case *content.DocumentURL:
+			src, err := mediaSource(v.URL)
+			if err != nil {
+				return nil, err
+			}
+			ci.Type = "document"
+			ci.Source = src
+			ci.Title = v.Filename
 		case *content.JSON:
 			ci.Type = "text"
 			ci.Text = string(v.Data)

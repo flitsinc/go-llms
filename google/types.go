@@ -138,7 +138,7 @@ type part struct {
 
 type parts []part
 
-// mediaPart builds a Gemini part from a media URL (image/audio/video). Data URIs are
+// mediaPart builds a Gemini part from a media URL (image/audio/video/document). Data URIs are
 // sent as inlineData; public URLs go through fileData. Gemini uses the mime type to
 // decide how to interpret the bytes, so image/audio/video all go through the same
 // container with a different mime.
@@ -177,6 +177,12 @@ func convertContent(c content.Content) (parts, error) {
 				return nil, err
 			}
 		case *content.VideoURL:
+			var err error
+			pp, err = mediaPart(v.URL, v.MimeType)
+			if err != nil {
+				return nil, err
+			}
+		case *content.DocumentURL:
 			var err error
 			pp, err = mediaPart(v.URL, v.MimeType)
 			if err != nil {

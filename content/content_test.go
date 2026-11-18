@@ -165,6 +165,12 @@ func TestContentRoundTrip(t *testing.T) {
 			content: FromRawJSON(json.RawMessage(`{"foo":"bar"}`)),
 		},
 		{
+			name: "document",
+			content: Content{
+				&DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", MimeType: "application/pdf", Filename: "menu.pdf"},
+			},
+		},
+		{
 			name: "provider compaction checkpoints",
 			content: Content{
 				&Compaction{Provider: "anthropic", Text: "Summary.", Signature: "sig"},
