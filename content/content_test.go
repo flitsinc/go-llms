@@ -47,6 +47,14 @@ func TestContentMarshalJSON(t *testing.T) {
 			},
 			want: `[{"mime_type":"video/mp4","type":"video_url","video_url":"https://example.com/clip.mp4"}]`,
 		},
+		{
+			// Stored conversations hold this shape, so a renamed key would lose their documents.
+			name: "document url",
+			content: Content{
+				&DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", MimeType: "application/pdf", Filename: "menu.pdf"},
+			},
+			want: `[{"document_url":"data:application/pdf;base64,JVBERi0=","filename":"menu.pdf","mime_type":"application/pdf","type":"document_url"}]`,
+		},
 	}
 
 	for _, tt := range tests {

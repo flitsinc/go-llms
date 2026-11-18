@@ -143,9 +143,9 @@ type parts []part
 // decide how to interpret the bytes, so image/audio/video all go through the same
 // container with a different mime.
 func mediaPart(url, mimeType string) (part, error) {
-	if dataValue, found := strings.CutPrefix(url, "data:"); found {
-		parsedMime, data, found := strings.Cut(dataValue, ";base64,")
-		if !found {
+	if strings.HasPrefix(url, "data:") {
+		parsedMime, data, ok := content.ParseDataURI(url)
+		if !ok {
 			return part{}, fmt.Errorf("unsupported data URI format %q", url)
 		}
 		return part{InlineData: &inlineData{parsedMime, data}}, nil

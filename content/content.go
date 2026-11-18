@@ -83,8 +83,9 @@ func (vu *VideoURL) GetMetadata() map[string]string {
 	return vu.Metadata
 }
 
-// DocumentURL is a document the model reads, such as a PDF, as a data URI or
-// a URL. Providers read a document through a part of its own (Anthropic
+// DocumentURL is a PDF the model reads, as a data URI or a URL. (Anthropic
+// reads other document types from other source shapes, which no caller needs
+// yet.) Providers read a document through a part of its own (Anthropic
 // "document", OpenAI "file" and "input_file", Gemini inline data), which an
 // image part is not: Anthropic and OpenAI refuse a PDF sent as an image.
 // Filename names the document to providers that ask for one. A URL other

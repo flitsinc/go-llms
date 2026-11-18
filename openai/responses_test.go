@@ -728,16 +728,24 @@ func TestConvertMessageToInput_PhaseWithReasoningAndToolCalls(t *testing.T) {
 
 // A document goes in an "input_file" item: its bytes as a data URI in
 // file_data, or a URL in file_url. An input_image with a PDF in it is refused.
+// OpenAI reads the file's type from its name, so a document that names none
+// is named for its type: the declared one over a guess from the URL's path.
 func TestConvertContentToInputContent_EncodesDocuments(t *testing.T) {
 	inputs, err := convertContentToInputContent(content.Content{
 		&content.DocumentURL{URL: "data:application/pdf;base64,JVBERi0=", Filename: "menu.pdf"},
 		&content.DocumentURL{URL: "https://example.com/files/report.pdf"},
+		&content.DocumentURL{URL: "https://cdn.example.com/blobs/8f3a.bin", MimeType: "application/pdf"},
+		&content.DocumentURL{URL: "https://cdn.example.com/blobs/8f3a"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []InputContent{
-		InputFile{Type: "input_file", Filename: "menu.pdf", FileData: "data:application/pdf;base64,JVBERi0="},
-		InputFile{Type: "input_file", Filename: "document.pdf", FileURL: "https://example.com/files/report.pdf"},
-	}, inputs)
+	encoded, err := json.Marshal(inputs)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type":"input_file","filename":"menu.pdf","file_data":"data:application/pdf;base64,JVBERi0="},
+		{"type":"input_file","filename":"document.pdf","file_url":"https://example.com/files/report.pdf"},
+		{"type":"input_file","filename":"document.pdf","file_url":"https://cdn.example.com/blobs/8f3a.bin"},
+		{"type":"input_file","filename":"document","file_url":"https://cdn.example.com/blobs/8f3a"}
+	]`, string(encoded))
 }
 
 func TestResponsesGenerate_UnsupportedVideoReturnsStreamError(t *testing.T) {
