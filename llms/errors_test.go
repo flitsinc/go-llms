@@ -117,6 +117,47 @@ func TestIsRequestTooLarge(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "Gemini token limit via OpenRouter metadata",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName:    "Google AI Studio",
+					RawErrorCode:    "400",
+					RawErrorType:    "INVALID_ARGUMENT",
+					RawErrorMessage: "The input token count exceeds the maximum number of tokens allowed 1048576.",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Gemini token limit from the Gemini API",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorType:  "INVALID_ARGUMENT",
+				Message:    "The input token count (1204111) exceeds the maximum number of tokens allowed (1048576).",
+			},
+			want: true,
+		},
+		{
+			// Gemini refuses an unsupported file type with the same status and
+			// codes as a token overflow, so the status alone must not count.
+			name: "Gemini unsupported MIME type via OpenRouter metadata",
+			err: HTTPError{
+				StatusCode: 400,
+				ErrorCode:  "400",
+				Message:    "Provider returned error",
+				Metadata: HTTPErrorMetadata{
+					ProviderName:    "Google AI Studio",
+					RawErrorCode:    "400",
+					RawErrorType:    "INVALID_ARGUMENT",
+					RawErrorMessage: "Unsupported mime type: application/zip in contents.inline_data. Only image/*, text/*, video/*, audio/*, and document MIME types are supported.",
+				},
+			},
+			want: false,
+		},
+		{
 			name: "unrelated 400 error",
 			err: HTTPError{
 				StatusCode: 400,
