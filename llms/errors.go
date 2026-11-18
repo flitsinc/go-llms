@@ -72,9 +72,17 @@ func isRequestTooLargeCode(code string) bool {
 	return false
 }
 
+// isRequestTooLargeMessage is a compatibility adapter for providers that send
+// a context overflow with no structured code of its own, so only the message
+// says it: Anthropic's "prompt is too long", OpenAI-compatible gateways'
+// "maximum context length", and Gemini's "The input token count (N) exceeds
+// the maximum number of tokens allowed (M)" (OpenRouter relays it without the
+// parentheses), which arrives as a plain 400 INVALID_ARGUMENT, the status
+// Gemini also gives an unsupported MIME type.
 func isRequestTooLargeMessage(msg string) bool {
 	return strings.Contains(msg, "prompt is too long") ||
-		strings.Contains(msg, "maximum context length")
+		strings.Contains(msg, "maximum context length") ||
+		strings.Contains(msg, "exceeds the maximum number of tokens allowed")
 }
 
 // IsReplayRejected reports whether the provider refused provider-bound items
