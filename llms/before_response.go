@@ -149,6 +149,13 @@ func cloneContent(c content.Content) content.Content {
 				MimeType: v.MimeType,
 				Metadata: cloneMetadata(v.Metadata),
 			})
+		case *content.DocumentURL:
+			out = append(out, &content.DocumentURL{
+				URL:      v.URL,
+				MimeType: v.MimeType,
+				Filename: v.Filename,
+				Metadata: cloneMetadata(v.Metadata),
+			})
 		case *content.JSON:
 			out = append(out, &content.JSON{Data: append([]byte(nil), v.Data...)})
 		case *content.Thought:

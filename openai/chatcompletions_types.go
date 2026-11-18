@@ -37,6 +37,13 @@ type videoURL struct {
 	URL string `json:"url"`
 }
 
+// filePart is a document in a "file" content part. FileData is a data URI;
+// OpenRouter also takes a URL there.
+type filePart struct {
+	Filename string `json:"filename"`
+	FileData string `json:"file_data"`
+}
+
 // CacheControl represents a cache control directive on a content part.
 type CacheControl struct {
 	Type string `json:"type"`
@@ -50,6 +57,7 @@ type ContentPart struct {
 	ImageURL     *imageURL     `json:"image_url,omitempty"`
 	InputAudio   *inputAudio   `json:"input_audio,omitempty"`
 	VideoURL     *videoURL     `json:"video_url,omitempty"`
+	File         *filePart     `json:"file,omitempty"`
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
@@ -94,6 +102,9 @@ func convertContentWithOptions(c content.Content, opts chatMessageEncodingOption
 		case *content.VideoURL:
 			cp.Type = "video_url"
 			cp.VideoURL = &videoURL{URL: v.URL}
+		case *content.DocumentURL:
+			cp.Type = "file"
+			cp.File = &filePart{Filename: documentFilename(v), FileData: v.URL}
 		case *content.JSON:
 			cp.Type = "text"
 			text := string(v.Data)

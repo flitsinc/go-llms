@@ -653,6 +653,14 @@ func convertContentToInputContent(c content.Content) ([]InputContent, error) {
 				ImageURL: v.URL,
 				Detail:   "auto",
 			})
+		case *content.DocumentURL:
+			file := InputFile{Type: "input_file", Filename: documentFilename(v)}
+			if strings.HasPrefix(v.URL, "data:") {
+				file.FileData = v.URL
+			} else {
+				file.FileURL = v.URL
+			}
+			inputContent = append(inputContent, file)
 		case *content.JSON:
 			inputContent = append(inputContent, InputText{
 				Type: "input_text",
