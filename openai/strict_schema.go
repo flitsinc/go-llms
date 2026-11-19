@@ -91,28 +91,18 @@ func padStrictSchemaAt(node *jsonmap.Map, key string) {
 	}
 }
 
-// MarshalJSON sends a function tool with a Declaration as that declaration,
-// and a Strict function tool with `"strict": true` inside its function object
-// and its parameters padded; other tools encode as declared.
-func (t Tool) MarshalJSON() ([]byte, error) {
-	type plain Tool
-	if t.Declaration != nil {
-		return json.Marshal(struct {
-			Type     string          `json:"type"`
-			Function json.RawMessage `json:"function"`
-		}{t.Type, t.Declaration})
-	}
-	if !t.Strict || t.Function == nil {
-		return json.Marshal(plain(t))
-	}
-	tree, err := schematree.Of(plain(t))
+// marshalStrictTool encodes tool, a Chat Completions function tool named name
+// converted to a type without Tool's MarshalJSON, with `"strict": true` inside
+// its function object and its parameters padded.
+func marshalStrictTool(tool any, name string) ([]byte, error) {
+	tree, err := schematree.Of(tool)
 	if err != nil {
 		return nil, err
 	}
 	function, _ := tree.Get("function")
 	functionNode, ok := function.(*jsonmap.Map)
 	if !ok {
-		return nil, fmt.Errorf("openai chat: function tool %q encodes without a function object", t.Function.Name)
+		return nil, fmt.Errorf("openai chat: function tool %q encodes without a function object", name)
 	}
 	functionNode.Set("strict", true)
 	padStrictSchemaAt(functionNode, "parameters")

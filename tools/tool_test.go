@@ -341,9 +341,42 @@ func TestExternalDeclaredToolKeepsItsDeclaration(t *testing.T) {
 	params := json.RawMessage(`{"title":""}`)
 	require.NoError(t, tool.Run(&runner{}, params).Error())
 	assert.Equal(t, params, received)
+}
 
-	assert.PanicsWithValue(t, "ExternalDeclared requires a JSON declaration", func() {
-		ExternalDeclared("Task", &schema, json.RawMessage(`{"name":`), nil)
+// A Go caller that builds a schema without decoding it has no declaration,
+// and gets the tool External returns.
+func TestExternalDeclaredToolWithoutADeclarationIsExternal(t *testing.T) {
+	schema := FunctionSchema{Name: "task", Description: "Start a task", Parameters: ValueSchema{Type: "object"}}
+	for _, declaration := range []json.RawMessage{nil, {}, json.RawMessage(`null`), json.RawMessage(" null\n")} {
+		tool := ExternalDeclared("Task", &schema, declaration, nil)
+		assert.Equal(t, "task", tool.FuncName())
+		assert.Equal(t, "Start a task", tool.Description())
+		_, declared := tool.Grammar().(DeclaredJSONGrammar)
+		assert.False(t, declared, "declaration %q", declaration)
+		grammar, ok := tool.Grammar().(JSONGrammar)
+		require.True(t, ok, "the grammar is %T", tool.Grammar())
+		assert.Same(t, &schema, grammar.Schema())
+		assert.True(t, grammar.SkipValidation())
+	}
+}
+
+// A declaration must be a JSON object declaring the schema's own name, which
+// tool choice and the toolbox go by, or the model would call a tool by a name
+// nothing answers to.
+func TestExternalDeclaredRefusesADeclarationOfAnotherTool(t *testing.T) {
+	schema := FunctionSchema{Name: "task", Parameters: ValueSchema{Type: "object"}}
+	assert.PanicsWithValue(t, `ExternalDeclared requires a declaration named "task", not "other"`, func() {
+		ExternalDeclared("Task", &schema, json.RawMessage(`{"name":"other"}`), nil)
+	})
+	// Matched case-sensitively, as a server decoding the declaration does.
+	assert.PanicsWithValue(t, `ExternalDeclared requires a declaration named "task", not ""`, func() {
+		ExternalDeclared("Task", &schema, json.RawMessage(`{"Name":"task"}`), nil)
+	})
+	for _, declaration := range []string{`{"name":`, `[]`, `"task"`, `1`, `{"name":1}`} {
+		assert.Panics(t, func() { ExternalDeclared("Task", &schema, json.RawMessage(declaration), nil) }, declaration)
+	}
+	assert.PanicsWithValue(t, "ExternalDeclared requires a non-nil schema", func() {
+		ExternalDeclared("Task", nil, json.RawMessage(`{"name":"task"}`), nil)
 	})
 }
 

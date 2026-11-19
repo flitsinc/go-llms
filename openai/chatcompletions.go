@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,11 @@ import (
 	"github.com/flitsinc/go-llms/llms"
 	"github.com/flitsinc/go-llms/tools"
 )
+
+// ErrStrictDeclaredTools refuses a function tool that would be sent both as its
+// declaration (WithDeclaredTools) and strict (WithStrictTools): strict mode
+// pads a schema, and a declared tool is sent as its declaration, unpadded.
+var ErrStrictDeclaredTools = errors.New("openai chat: a declared tool cannot also be strict")
 
 type ChatCompletionsAPI struct {
 	accessToken string
@@ -144,13 +150,15 @@ func (m *ChatCompletionsAPI) WithStrictTools() *ChatCompletionsAPI {
 }
 
 // WithDeclaredTools sends each function tool its caller declared in JSON
-// (tools.ExternalDeclared) as that declaration, every member kept in its
-// order, instead of re-encoding its schema, which fixes the members' order
-// and drops keywords ValueSchema has no field for. Use it for a server
-// that renders the tools it receives into the prompt, such as vLLM through a
-// chat template, when the model should read the tools as their caller wrote
-// them. Other tools encode as usual. A declared tool cannot also be padded for
-// strict mode, so BuildPayload refuses WithStrictTools with it.
+// (tools.ExternalDeclared) as that declaration instead of re-encoding its
+// schema: the same JSON value, members in the declared order, compacted, with
+// HTML characters escaped. Re-encoding imposes ValueSchema's member order and
+// drops the keywords ValueSchema has no field for. Use it for a server that
+// renders the tools it receives into the prompt, such as vLLM through a chat
+// template, when the model should read each tool's own declaration. Other
+// tools encode as usual. A declaration cannot be padded for strict mode, so
+// under WithStrictTools BuildPayload refuses a declared tool with
+// ErrStrictDeclaredTools.
 func (m *ChatCompletionsAPI) WithDeclaredTools() *ChatCompletionsAPI {
 	m.declaredTools = true
 	return m
@@ -300,18 +308,14 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	}
 
 	if toolbox != nil {
-		if m.strictTools && m.declaredTools {
-			return nil, fmt.Errorf("openai chat: declared tools cannot also be strict")
-		}
 		// Build tools first.
-		apiTools, err := toolsFromToolbox(toolbox, toolEncoding{flatCustomTools: m.flatCustomTools, declaredTools: m.declaredTools})
+		apiTools, err := toolsFromToolbox(toolbox, toolEncoding{
+			flatCustomTools: m.flatCustomTools,
+			strictTools:     m.strictTools,
+			declaredTools:   m.declaredTools,
+		})
 		if err != nil {
 			return nil, err
-		}
-		if m.strictTools {
-			for i := range apiTools {
-				apiTools[i].Strict = apiTools[i].Function != nil
-			}
 		}
 		// Always include full tools for cacheability; constrain with tool_choice
 		if len(m.serverTools) > 0 {
@@ -1224,8 +1228,12 @@ type toolEncoding struct {
 	// flatCustomTools declares custom tools in the flat Responses-API shape
 	// (see WithFlatCustomTools).
 	flatCustomTools bool
+	// strictTools sends function tools strict, with padded parameters (see
+	// WithStrictTools).
+	strictTools bool
 	// declaredTools sends a function tool its caller declared in JSON as that
-	// declaration (see WithDeclaredTools).
+	// declaration (see WithDeclaredTools). A declared tool cannot also be
+	// strict.
 	declaredTools bool
 }
 
@@ -1261,8 +1269,11 @@ func toolsFromToolbox(toolbox *tools.Toolbox, encoding toolEncoding) ([]Tool, er
 			if schema == nil {
 				continue
 			}
-			apiTool := Tool{Type: "function", Function: schema}
+			apiTool := Tool{Type: "function", Function: schema, Strict: encoding.strictTools}
 			if declared, ok := g.(tools.DeclaredJSONGrammar); ok && encoding.declaredTools {
+				if apiTool.Strict {
+					return nil, fmt.Errorf("%w: %q", ErrStrictDeclaredTools, t.FuncName())
+				}
 				apiTool.Declaration = declared.Declaration()
 			}
 			apiTools = append(apiTools, apiTool)
