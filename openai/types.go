@@ -64,6 +64,9 @@ type Tool struct {
 	// Strict sends a function tool with `"strict": true` and its parameters
 	// padded for strict mode (see WithStrictTools). Ignored for custom tools.
 	Strict bool `json:"-"`
+	// Declaration sends a function tool as the JSON function declaration its
+	// caller wrote instead of Function (see WithDeclaredTools).
+	Declaration json.RawMessage `json:"-"`
 }
 
 type CustomToolSchema struct {

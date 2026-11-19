@@ -72,6 +72,33 @@ func External(label string, schema *FunctionSchema, fn func(r Runner, params jso
 	return t
 }
 
+// ExternalDeclared returns an External tool that also keeps declaration, the
+// JSON function declaration (name, description, parameters and any other
+// member) that schema was decoded from, as its caller wrote it. Its grammar
+// is a DeclaredJSONGrammar, so a provider that can show the model the
+// caller's own text sends the declaration instead of re-encoding schema
+// (openai.ChatCompletionsAPI.WithDeclaredTools). Decoding fixes a schema's
+// member order and drops the keywords ValueSchema has no field for, which
+// the re-encoded schema then lacks.
+func ExternalDeclared(label string, schema *FunctionSchema, declaration json.RawMessage, fn func(r Runner, params json.RawMessage) Result) Tool {
+	if schema == nil {
+		panic("ExternalDeclared requires a non-nil schema")
+	}
+	if !json.Valid(declaration) {
+		panic("ExternalDeclared requires a JSON declaration")
+	}
+	return &tool{
+		label:       label,
+		description: schema.Description,
+		funcName:    schema.Name,
+		fn:          fn,
+		grammar: &declaredJSONGrammar{
+			JSONGrammar: NewJSONGrammarWithSchema(schema, true /*skipValidation*/),
+			declaration: declaration,
+		},
+	}
+}
+
 type tool struct {
 	label, description, funcName string
 
@@ -157,6 +184,22 @@ func (g *jsonGrammarImpl) Schema() *FunctionSchema {
 }
 
 func (g *jsonGrammarImpl) SkipValidation() bool { return g.skipValidation }
+
+// DeclaredJSONGrammar is the JSONGrammar of a tool its caller declared in
+// JSON (ExternalDeclared).
+type DeclaredJSONGrammar interface {
+	JSONGrammar
+	// Declaration returns the function declaration Schema was decoded from,
+	// as its caller wrote it.
+	Declaration() json.RawMessage
+}
+
+type declaredJSONGrammar struct {
+	JSONGrammar
+	declaration json.RawMessage
+}
+
+func (g *declaredJSONGrammar) Declaration() json.RawMessage { return g.declaration }
 
 // NewJSONGrammar constructs a JSON grammar that will lazily generate a schema
 // using reflection over the provided params type.

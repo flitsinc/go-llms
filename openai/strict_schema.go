@@ -91,10 +91,17 @@ func padStrictSchemaAt(node *jsonmap.Map, key string) {
 	}
 }
 
-// MarshalJSON sends a Strict function tool with `"strict": true` inside its
-// function object and its parameters padded; other tools encode as declared.
+// MarshalJSON sends a function tool with a Declaration as that declaration,
+// and a Strict function tool with `"strict": true` inside its function object
+// and its parameters padded; other tools encode as declared.
 func (t Tool) MarshalJSON() ([]byte, error) {
 	type plain Tool
+	if t.Declaration != nil {
+		return json.Marshal(struct {
+			Type     string          `json:"type"`
+			Function json.RawMessage `json:"function"`
+		}{t.Type, t.Declaration})
+	}
 	if !t.Strict || t.Function == nil {
 		return json.Marshal(plain(t))
 	}

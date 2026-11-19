@@ -42,6 +42,9 @@ type ChatCompletionsAPI struct {
 	// When true, send function tools strict, with padded parameters (see
 	// WithStrictTools).
 	strictTools bool
+	// When true, send each function tool its caller declared in JSON as that
+	// declaration (see WithDeclaredTools).
+	declaredTools bool
 
 	customPayloadValues map[string]any
 	customHeaders       map[string]string
@@ -137,6 +140,19 @@ func (m *ChatCompletionsAPI) WithFlatCustomTools() *ChatCompletionsAPI {
 // it off for them.
 func (m *ChatCompletionsAPI) WithStrictTools() *ChatCompletionsAPI {
 	m.strictTools = true
+	return m
+}
+
+// WithDeclaredTools sends each function tool its caller declared in JSON
+// (tools.ExternalDeclared) as that declaration, every member kept in its
+// order, instead of re-encoding its schema, which fixes the members' order
+// and drops keywords ValueSchema has no field for. Use it for a server
+// that renders the tools it receives into the prompt, such as vLLM through a
+// chat template, when the model should read the tools as their caller wrote
+// them. Other tools encode as usual. A declared tool cannot also be padded for
+// strict mode, so BuildPayload refuses WithStrictTools with it.
+func (m *ChatCompletionsAPI) WithDeclaredTools() *ChatCompletionsAPI {
+	m.declaredTools = true
 	return m
 }
 
@@ -284,8 +300,11 @@ func (m *ChatCompletionsAPI) BuildPayload(
 	}
 
 	if toolbox != nil {
+		if m.strictTools && m.declaredTools {
+			return nil, fmt.Errorf("openai chat: declared tools cannot also be strict")
+		}
 		// Build tools first.
-		apiTools, err := toolsFromToolbox(toolbox, m.flatCustomTools)
+		apiTools, err := toolsFromToolbox(toolbox, toolEncoding{flatCustomTools: m.flatCustomTools, declaredTools: m.declaredTools})
 		if err != nil {
 			return nil, err
 		}
@@ -1200,13 +1219,23 @@ func (m *ChatCompletionsAPI) chatAllowedToolEntries(names []string, apiTools []T
 	return allowed
 }
 
-func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, error) {
+// toolEncoding is how toolsFromToolbox declares a toolbox's tools.
+type toolEncoding struct {
+	// flatCustomTools declares custom tools in the flat Responses-API shape
+	// (see WithFlatCustomTools).
+	flatCustomTools bool
+	// declaredTools sends a function tool its caller declared in JSON as that
+	// declaration (see WithDeclaredTools).
+	declaredTools bool
+}
+
+func toolsFromToolbox(toolbox *tools.Toolbox, encoding toolEncoding) ([]Tool, error) {
 	// customTool builds a custom tool declaration. The flat form mirrors the
 	// Responses API ({"type":"custom","name":…,"format":{"type":"grammar",
 	// "syntax":…,"definition":…}}) for endpoints that forward the tools array
 	// there; the nested form is Chat Completions' own wrapper.
 	customTool := func(t tools.Tool, format map[string]any) Tool {
-		if flatCustomTools {
+		if encoding.flatCustomTools {
 			if format["type"] == "grammar" {
 				grammar := format["grammar"].(map[string]any)
 				format = map[string]any{
@@ -1228,9 +1257,15 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, err
 	for _, t := range toolbox.All() {
 		switch g := t.Grammar().(type) {
 		case tools.JSONGrammar:
-			if schema := g.Schema(); schema != nil {
-				apiTools = append(apiTools, Tool{Type: "function", Function: schema})
+			schema := g.Schema()
+			if schema == nil {
+				continue
 			}
+			apiTool := Tool{Type: "function", Function: schema}
+			if declared, ok := g.(tools.DeclaredJSONGrammar); ok && encoding.declaredTools {
+				apiTool.Declaration = declared.Declaration()
+			}
+			apiTools = append(apiTools, apiTool)
 		case tools.TextGrammar:
 			apiTools = append(apiTools, customTool(t, map[string]any{"type": "text"}))
 		case tools.LarkGrammar:
@@ -1257,7 +1292,7 @@ func toolsFromToolbox(toolbox *tools.Toolbox, flatCustomTools bool) ([]Tool, err
 }
 
 func Tools(toolbox *tools.Toolbox) []Tool {
-	apiTools, err := toolsFromToolbox(toolbox, false)
+	apiTools, err := toolsFromToolbox(toolbox, toolEncoding{})
 	if err != nil {
 		panic(err)
 	}

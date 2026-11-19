@@ -317,6 +317,45 @@ func TestExternalTool(t *testing.T) {
 	assert.JSONEq(t, expectedResult, string(resultJSON), "External tool result mismatch (string value)")
 }
 
+// An ExternalDeclared tool is an External tool whose grammar also hands back
+// the declaration its schema was decoded from.
+func TestExternalDeclaredToolKeepsItsDeclaration(t *testing.T) {
+	declaration := json.RawMessage(`{"name":"task","description":"Start a task","parameters":{"type":"object","required":["title"],"properties":{"title":{"type":"string","minLength":1}}}}`)
+	var schema FunctionSchema
+	require.NoError(t, json.Unmarshal(declaration, &schema))
+	var received json.RawMessage
+	tool := ExternalDeclared("Task", &schema, declaration, func(r Runner, params json.RawMessage) Result {
+		received = params
+		return SuccessFromString("ok")
+	})
+
+	assert.Equal(t, "task", tool.FuncName())
+	assert.Equal(t, "Start a task", tool.Description())
+	grammar, ok := tool.Grammar().(DeclaredJSONGrammar)
+	require.True(t, ok, "the grammar is %T", tool.Grammar())
+	assert.Same(t, &schema, grammar.Schema())
+	assert.Equal(t, declaration, grammar.Declaration())
+	assert.True(t, grammar.SkipValidation(), "the caller validates, as for External")
+
+	// The handler gets the arguments as sent, like an External tool's.
+	params := json.RawMessage(`{"title":""}`)
+	require.NoError(t, tool.Run(&runner{}, params).Error())
+	assert.Equal(t, params, received)
+
+	assert.PanicsWithValue(t, "ExternalDeclared requires a JSON declaration", func() {
+		ExternalDeclared("Task", &schema, json.RawMessage(`{"name":`), nil)
+	})
+}
+
+// External and Func tools have no declaration to send.
+func TestOnlyExternalDeclaredToolsHaveADeclaration(t *testing.T) {
+	schema := FunctionSchema{Name: "task", Parameters: ValueSchema{Type: "object"}}
+	_, external := External("Task", &schema, nil).Grammar().(DeclaredJSONGrammar)
+	assert.False(t, external)
+	_, function := Func("Task", "Start a task", "task", func(r Runner, p Params) Result { return SuccessFromString("ok") }).Grammar().(DeclaredJSONGrammar)
+	assert.False(t, function)
+}
+
 // TestFuncTool_RawMessageParam tests using Func with json.RawMessage as the param type.
 func TestFuncTool_RawMessageParam(t *testing.T) {
 	var receivedParams json.RawMessage
