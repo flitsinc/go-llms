@@ -64,6 +64,32 @@ type Tool struct {
 	// Strict sends a function tool with `"strict": true` and its parameters
 	// padded for strict mode (see WithStrictTools). Ignored for custom tools.
 	Strict bool `json:"-"`
+	// Declaration sends a function tool as this JSON function declaration
+	// instead of Function (see WithDeclaredTools): the same JSON value, members
+	// in the declared order, compacted, with HTML characters (and U+2028,
+	// U+2029) escaped, as encoding/json writes a json.RawMessage. A tool with a
+	// Declaration cannot also be Strict (ErrStrictDeclaredTools).
+	Declaration json.RawMessage `json:"-"`
+}
+
+// MarshalJSON sends a function tool with a Declaration as that declaration,
+// a Strict function tool strict with its parameters padded, and any other tool
+// with its fields as they are.
+func (t Tool) MarshalJSON() ([]byte, error) {
+	type plain Tool
+	if t.Declaration != nil {
+		if t.Strict {
+			return nil, ErrStrictDeclaredTools
+		}
+		return json.Marshal(struct {
+			Type     string          `json:"type"`
+			Function json.RawMessage `json:"function"`
+		}{t.Type, t.Declaration})
+	}
+	if !t.Strict || t.Function == nil {
+		return json.Marshal(plain(t))
+	}
+	return marshalStrictTool(plain(t), t.Function.Name)
 }
 
 type CustomToolSchema struct {

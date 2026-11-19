@@ -59,17 +59,73 @@ func Func[Params any](label, description, funcName string, fn func(r Runner, par
 // handler function receives raw JSON parameters. This is suitable for external
 // tools where schema generation via reflection is not possible or desired.
 func External(label string, schema *FunctionSchema, fn func(r Runner, params json.RawMessage) Result) Tool {
+	return externalTool("External", label, schema, nil, fn)
+}
+
+// ExternalDeclared returns an External tool that also keeps declaration, the
+// JSON function declaration (name, description, parameters and any other
+// member) that schema was decoded from. Its grammar is a DeclaredJSONGrammar,
+// so a provider that can show the model the caller's own declaration sends it
+// instead of re-encoding schema (openai.ChatCompletionsAPI.WithDeclaredTools):
+// the same JSON value, members in the declared order, compacted, with HTML
+// characters escaped. Decoding imposes ValueSchema's member order on schema
+// and drops the keywords ValueSchema has no field for, so the re-encoded
+// schema differs from the declaration.
+//
+// An empty or null declaration is none, and the tool is the one External
+// returns. Any other declaration must be a JSON object whose "name" member
+// (matched case-sensitively, empty when absent) equals schema.Name, the name
+// tool choice and the toolbox go by; ExternalDeclared panics otherwise, as it
+// does for a nil schema.
+func ExternalDeclared(label string, schema *FunctionSchema, declaration json.RawMessage, fn func(r Runner, params json.RawMessage) Result) Tool {
+	return externalTool("ExternalDeclared", label, schema, declaration, fn)
+}
+
+// externalTool builds the tool External and ExternalDeclared return, and
+// names constructor in its panics. A nil declaration declares nothing.
+func externalTool(constructor, label string, schema *FunctionSchema, declaration json.RawMessage, fn func(r Runner, params json.RawMessage) Result) Tool {
 	if schema == nil {
-		panic("External requires a non-nil schema")
+		panic(constructor + " requires a non-nil schema")
 	}
-	t := &tool{
+	grammar := NewJSONGrammarWithSchema(schema, true /*skipValidation*/)
+	if declares(constructor, schema.Name, declaration) {
+		grammar = &declaredJSONGrammar{JSONGrammar: grammar, declaration: declaration}
+	}
+	return &tool{
 		label:       label,
 		description: schema.Description, // Use description from schema
 		funcName:    schema.Name,        // Use name from schema
 		fn:          fn,                 // Handler directly accepts raw JSON
-		grammar:     NewJSONGrammarWithSchema(schema, true /*skipValidation*/),
+		grammar:     grammar,
 	}
-	return t
+}
+
+// declares reports whether declaration declares a function: false when it is
+// empty or null, true when it is a JSON object whose "name" member is name,
+// and a panic naming constructor otherwise. It reads the "name" member
+// case-sensitively, as encoding/json/v2 and vLLM's request models do
+// (decoding into a struct with encoding/json would match "Name" too).
+func declares(constructor, name string, declaration json.RawMessage) bool {
+	if len(declaration) == 0 {
+		return false
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(declaration, &members); err != nil {
+		panic(fmt.Sprintf("%s requires a declaration that is a JSON object: %v", constructor, err))
+	}
+	if members == nil {
+		return false // null
+	}
+	var declared string
+	if raw, ok := members["name"]; ok {
+		if err := json.Unmarshal(raw, &declared); err != nil {
+			panic(fmt.Sprintf("%s requires a declaration whose name is a string: %v", constructor, err))
+		}
+	}
+	if declared != name {
+		panic(fmt.Sprintf("%s requires a declaration named %q, not %q", constructor, name, declared))
+	}
+	return true
 }
 
 type tool struct {
@@ -157,6 +213,21 @@ func (g *jsonGrammarImpl) Schema() *FunctionSchema {
 }
 
 func (g *jsonGrammarImpl) SkipValidation() bool { return g.skipValidation }
+
+// DeclaredJSONGrammar is the JSONGrammar of a tool its caller declared in
+// JSON (ExternalDeclared).
+type DeclaredJSONGrammar interface {
+	JSONGrammar
+	// Declaration returns the function declaration Schema was decoded from.
+	Declaration() json.RawMessage
+}
+
+type declaredJSONGrammar struct {
+	JSONGrammar
+	declaration json.RawMessage
+}
+
+func (g *declaredJSONGrammar) Declaration() json.RawMessage { return g.declaration }
 
 // NewJSONGrammar constructs a JSON grammar that will lazily generate a schema
 // using reflection over the provided params type.
