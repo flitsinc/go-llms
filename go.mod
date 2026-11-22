@@ -1,13 +1,13 @@
 module github.com/flitsinc/go-llms
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/maja42/goval v1.6.0
 	github.com/metalim/jsonmap v0.5.0
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/image v0.35.0
+	golang.org/x/image v0.45.0
 	golang.org/x/oauth2 v0.34.0
 )
 
